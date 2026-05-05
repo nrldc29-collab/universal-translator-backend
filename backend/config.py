@@ -54,6 +54,13 @@ def get_allowed_origins() -> list[str]:
     return [origin.strip() for origin in origins.split(",") if origin.strip()]
 
 
+def get_allowed_origin_regex() -> str:
+    return os.getenv(
+        "ALLOWED_ORIGIN_REGEX",
+        r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?",
+    )
+
+
 def get_backend_host() -> str:
     return os.getenv("BACKEND_HOST", "127.0.0.1")
 

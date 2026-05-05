@@ -4,7 +4,24 @@ import { Mic, Radio, Square, Languages } from 'lucide-react';
 import './styles.css';
 import { registerServiceWorker } from './pwa';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+function isLocalHost(hostname) {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.startsWith('192.168.') ||
+    hostname.startsWith('10.') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  );
+}
+
+function defaultApiUrl() {
+  if (isLocalHost(window.location.hostname)) {
+    return `${window.location.protocol}//${window.location.hostname}:8000`;
+  }
+  return 'https://your-backend.up.railway.app';
+}
+
+const API_URL = (import.meta.env.VITE_API_URL || defaultApiUrl()).replace(/\/+$/, '');
 const WS_BASE_URL = (import.meta.env.VITE_WS_URL || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')).replace(/\/+$/, '');
 const WS_AUDIO_URL = import.meta.env.VITE_WS_AUDIO_URL || `${WS_BASE_URL}/ws/audio`;
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';

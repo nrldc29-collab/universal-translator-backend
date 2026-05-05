@@ -6,7 +6,7 @@ from time import time
 
 import logging
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, WebSocket
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
@@ -16,6 +16,7 @@ from starlette.websockets import WebSocketDisconnect
 from backend.conversation import ConversationBrain
 from backend.config import (
     LANGUAGES,
+    get_allowed_origin_regex,
     get_allowed_origins,
     get_frontend_url,
     get_max_audio_mb,
@@ -77,6 +78,7 @@ app = FastAPI(title="Universal Translator", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_allowed_origins(),
+    allow_origin_regex=get_allowed_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,8 +89,13 @@ conversation_brain = ConversationBrain()
 
 
 @app.get("/")
-def root():
-    return RedirectResponse(get_frontend_url())
+def root(request: Request):
+    frontend_url = get_frontend_url()
+    if frontend_url == "http://127.0.0.1:5173":
+        host = request.headers.get("host", "").split(":", 1)[0]
+        if host and host not in {"0.0.0.0", "::"}:
+            frontend_url = f"{request.url.scheme}://{host}:5173"
+    return RedirectResponse(frontend_url)
 
 
 @app.get("/health")
