@@ -1,0 +1,59 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: production
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 8000
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
+      JWT_SECRET: ${JWT_SECRET:-change-me}
+      USERS: ${USERS:-demo:demo}
+      USER_TIERS: ${USER_TIERS:-demo:free}
+      SESSION_MINUTES: ${SESSION_MINUTES:-480}
+      REQUESTS_PER_MINUTE: ${REQUESTS_PER_MINUTE:-20}
+      FREE_DAILY_AUDIO_MINUTES: ${FREE_DAILY_AUDIO_MINUTES:-10}
+      MAX_AUDIO_MB: ${MAX_AUDIO_MB:-25}
+      MAX_AUDIO_SECONDS: ${MAX_AUDIO_SECONDS:-300}
+      USE_GPU: "1"
+      GPU_COST_MODE: ${GPU_COST_MODE:-balanced}
+      STT_MAX_CONCURRENCY: ${STT_MAX_CONCURRENCY:-1}
+      STT_QUEUE_MAX_DEPTH: ${STT_QUEUE_MAX_DEPTH:-8}
+      MAX_ACTIVE_STREAMS_PER_USER: ${MAX_ACTIVE_STREAMS_PER_USER:-2}
+      WHISPER_BEAM_SIZE: ${WHISPER_BEAM_SIZE:-1}
+      TTS_CHUNK_CHARS: ${TTS_CHUNK_CHARS:-55}
+      VAD_RECENT_CHUNKS: ${VAD_RECENT_CHUNKS:-3}
+      VAD_SILENT_CHECKS: ${VAD_SILENT_CHECKS:-1}
+      NEAR_ZERO_LATENCY_MODE: ${NEAR_ZERO_LATENCY_MODE:-1}
+      STREAM_HOT_PATH_LOGGING: ${STREAM_HOT_PATH_LOGGING:-0}
+      PARTIAL_STT_MIN_BYTES: ${PARTIAL_STT_MIN_BYTES:-12000}
+      PARTIAL_STT_INTERVAL_MS: ${PARTIAL_STT_INTERVAL_MS:-900}
+      MIN_SPEECH_BYTES: ${MIN_SPEECH_BYTES:-18000}
+      SPEECH_MERGE_MS: ${SPEECH_MERGE_MS:-300}
+      STREAM_BUFFER_MAX_MB: ${STREAM_BUFFER_MAX_MB:-12}
+      SEMANTIC_HISTORY_LIMIT: ${SEMANTIC_HISTORY_LIMIT:-12}
+      TOPIC_LIMIT: ${TOPIC_LIMIT:-25}
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-1800}
+      SESSION_HISTORY_LIMIT: ${SESSION_HISTORY_LIMIT:-20}
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: float16
+      WHISPER_MODEL_SIZE: base
+    volumes:
+      - ./models:/app/models
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

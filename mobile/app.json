@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Universal Translator",
+    "slug": "universal-translator-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "universaltranslator",
+    "privacy": "unlisted",
+    "ios": {
+      "bundleIdentifier": "com.yourcompany.universaltranslator",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Universal Translator uses your microphone to record speech for translation."
+      }
+    },
+    "android": {
+      "package": "com.yourcompany.universaltranslator",
+      "permissions": ["RECORD_AUDIO", "INTERNET"]
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Universal Translator uses your microphone to record speech for translation."
+        }
+      ]
+    ],
+    "extra": {
+      "apiUrl": "http://192.168.12.243:8000",
+      "eas": {
+        "projectId": "replace-with-eas-project-id"
+      }
+    }
+  }
+}

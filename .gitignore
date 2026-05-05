@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Node / frontend / Expo
+node_modules/
+dist/
+web-build/
+.expo/
+.vercel/
+.vite/
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+
+# Generated model/audio artifacts
+models/whisper/*
+models/translation/*
+models/tts/*
+!models/.gitkeep
+!models/whisper/.gitkeep
+!models/translation/.gitkeep
+!models/tts/.gitkeep
+models/uploads/
+models/output.wav
+logs/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.tmp

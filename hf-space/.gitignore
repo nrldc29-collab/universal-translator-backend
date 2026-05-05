@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.gradio/
+.cache/
+*.wav
+*.mp3
+*.m4a
+*.webm

@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: universal-translator-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - BACKEND_HOST=0.0.0.0
+      - BACKEND_PORT=8000
+      - USE_GPU=1
+      - WHISPER_DEVICE=cuda
+      - WHISPER_COMPUTE_TYPE=float16
+      - WHISPER_MODEL_SIZE=base
+      - STT_MAX_CONCURRENCY=2
+      - WHISPER_BEAM_SIZE=1
+      - ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,https://frontend-one-henna-99jlsna6ki.vercel.app,https://frontend-qftj8v2jh-nrldc29-9295s-projects.vercel.app,https://anai.wok
+    volumes:
+      - ./models:/app/models  # Cache downloaded models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
