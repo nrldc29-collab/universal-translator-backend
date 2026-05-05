@@ -5,7 +5,8 @@ import './styles.css';
 import { registerServiceWorker } from './pwa';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
-const WS_URL = API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
+const WS_BASE_URL = (import.meta.env.VITE_WS_URL || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')).replace(/\/+$/, '');
+const WS_AUDIO_URL = import.meta.env.VITE_WS_AUDIO_URL || `${WS_BASE_URL}/ws/audio`;
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 const INITIAL_SESSION_ID = localStorage.getItem('translator_session_id') || crypto.randomUUID();
 const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 250);
@@ -275,7 +276,7 @@ function App() {
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     setMicPermission('granted');
-    const socket = new WebSocket(withAuthToken(`${WS_URL}/ws/audio`, authToken));
+    const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
     socket.onopen = () => {
@@ -404,7 +405,7 @@ function App() {
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     setMicPermission('granted');
-    const socket = new WebSocket(withAuthToken(`${WS_URL}/ws/audio`, authToken));
+    const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     const source = speaker === 'A' ? sourceLanguage : targetLanguage;
     const target = speaker === 'A' ? targetLanguage : sourceLanguage;
     refs.manualClose = false;
@@ -650,4 +651,3 @@ function App() {
 }
 
 createRoot(document.getElementById('root')).render(<App />);
-

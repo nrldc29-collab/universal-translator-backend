@@ -45,7 +45,8 @@ Then update `frontend/vercel.json`:
 ```json
 {
   "env": {
-    "VITE_API_URL": "https://YOUR-RAILWAY-DOMAIN.up.railway.app"
+    "VITE_API_URL": "https://YOUR-RAILWAY-DOMAIN.up.railway.app",
+    "VITE_WS_AUDIO_URL": "wss://YOUR-RAILWAY-DOMAIN.up.railway.app/ws/audio"
   }
 }
 ```

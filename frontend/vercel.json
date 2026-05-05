@@ -3,6 +3,7 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "env": {
-    "VITE_API_URL": "https://anai.wok"
+    "VITE_API_URL": "https://your-backend.up.railway.app",
+    "VITE_WS_AUDIO_URL": "wss://your-backend.up.railway.app/ws/audio"
   }
 }
