@@ -142,6 +142,10 @@ def get_vad_silent_checks() -> int:
     return int(os.getenv("VAD_SILENT_CHECKS", "1"))
 
 
+def get_vad_force_final_seconds() -> float:
+    return float(os.getenv("VAD_FORCE_FINAL_SECONDS", "1.2"))
+
+
 def get_near_zero_latency_mode() -> bool:
     return os.getenv("NEAR_ZERO_LATENCY_MODE", "0") == "1"
 

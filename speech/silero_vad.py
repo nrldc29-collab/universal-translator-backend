@@ -3,8 +3,9 @@ from tempfile import NamedTemporaryFile
 
 
 class SileroVoiceActivityDetector:
-    def __init__(self, threshold: float = 0.5):
+    def __init__(self, threshold: float = 0.3, min_speech_duration_ms: int = 200):
         self.threshold = threshold
+        self.min_speech_duration_ms = min_speech_duration_ms
         self._model = None
         self._utils = None
 
@@ -36,7 +37,13 @@ class SileroVoiceActivityDetector:
         read_audio = utils[2]
 
         wav = read_audio(str(path), sampling_rate=16000)
-        speech_timestamps = get_speech_timestamps(wav, model, threshold=self.threshold, sampling_rate=16000)
+        speech_timestamps = get_speech_timestamps(
+            wav,
+            model,
+            threshold=self.threshold,
+            min_speech_duration_ms=self.min_speech_duration_ms,
+            sampling_rate=16000,
+        )
         speech_seconds = sum((item["end"] - item["start"]) / 16000 for item in speech_timestamps)
 
         return {

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import re
@@ -6,7 +7,21 @@ from time import time
 from uuid import uuid4
 
 from backend.conversation import ConversationBrain
-from backend.config import get_max_active_streams_per_user, get_max_audio_seconds, get_min_speech_bytes, get_near_zero_latency_mode, get_partial_stt_interval_ms, get_partial_stt_min_bytes, get_speech_merge_ms, get_stream_buffer_max_mb, get_stream_hot_path_logging, get_tts_chunk_chars, get_vad_recent_chunks, get_vad_silent_checks
+from backend.config import (
+    get_max_active_streams_per_user,
+    get_max_audio_seconds,
+    get_min_speech_bytes,
+    get_near_zero_latency_mode,
+    get_partial_stt_interval_ms,
+    get_partial_stt_min_bytes,
+    get_speech_merge_ms,
+    get_stream_buffer_max_mb,
+    get_stream_hot_path_logging,
+    get_tts_chunk_chars,
+    get_vad_force_final_seconds,
+    get_vad_recent_chunks,
+    get_vad_silent_checks,
+)
 from backend.observability import observability
 from backend.pipeline import TranslationResult
 from backend.security import usage_limiter
@@ -90,6 +105,14 @@ async def websocket_audio_translation(
     last_partial_at = 0.0
     partial_text = ""
 
+    def reset_segment_state() -> None:
+        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at
+        audio_chunks = bytearray()
+        recent_chunks = []
+        speech_started = False
+        silent_checks = 0
+        last_speech_at = 0.0
+
     async def emit_partial_pipeline() -> None:
         nonlocal last_partial_at, partial_text
         if not get_near_zero_latency_mode():
@@ -118,36 +141,28 @@ async def websocket_audio_translation(
             observability.record_event("near_zero_partial", identity=identity, speaker=speaker, latency_seconds=time() - partial_started_at)
 
     async def finalize_segment():
-        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, speaker
+        nonlocal speaker
         segment_started_at = time()
 
         if not audio_chunks:
             await websocket.send_json({"type": "error", "message": "No audio received."})
+            reset_segment_state()
             return
 
         if len(audio_chunks) < get_min_speech_bytes():
             await websocket.send_json({"type": "stage", "stage": "smoothing", "message": "Ignoring very short speech burst."})
-            audio_chunks = bytearray()
-            recent_chunks = []
-            speech_started = False
-            silent_checks = 0
+            reset_segment_state()
             return
 
         estimated_seconds = max(1, len(audio_chunks) / 16000)
         if estimated_seconds > get_max_audio_seconds():
             await websocket.send_json({"type": "error", "message": f"Audio segment exceeds {get_max_audio_seconds()} second limit."})
-            audio_chunks = bytearray()
-            recent_chunks = []
-            speech_started = False
-            silent_checks = 0
+            reset_segment_state()
             return
         quota_allowed, remaining_seconds = usage_limiter.check_audio_seconds(identity, estimated_seconds)
         if not quota_allowed:
             await websocket.send_json({"type": "error", "message": f"Daily audio quota exceeded. Remaining seconds: {int(remaining_seconds)}"})
-            audio_chunks = bytearray()
-            recent_chunks = []
-            speech_started = False
-            silent_checks = 0
+            reset_segment_state()
             return
 
         decision = conversation_brain.request_turn(speaker)
@@ -161,10 +176,7 @@ async def websocket_audio_translation(
             "playback_owner": decision.playback_owner,
         })
         if not decision.allowed:
-            audio_chunks = bytearray()
-            recent_chunks = []
-            speech_started = False
-            silent_checks = 0
+            reset_segment_state()
             return
 
         upload_dir = Path("models/uploads")
@@ -254,6 +266,7 @@ async def websocket_audio_translation(
         )
         shared_session = session_registry.record_turn(session_id, identity, speaker, source_text, translated_text, semantic_context)
         await websocket.send_json({"type": "session_sync", "session": shared_session})
+        print("FINAL TRIGGERED", flush=True)
         await websocket.send_json({"type": "final", "speaker": speaker, "semantic_context": semantic_context, "session": shared_session, **result.__dict__})
         observability.observe_latency("streaming_segment", time() - segment_started_at)
         observability.record_event("streaming_segment", identity=identity, speaker=speaker, latency_seconds=time() - segment_started_at)
@@ -270,15 +283,21 @@ async def websocket_audio_translation(
             "playback_owner": complete_decision.playback_owner,
         })
 
-        audio_chunks = bytearray()
-        recent_chunks = []
-        speech_started = False
-        silent_checks = 0
+        reset_segment_state()
         audio_path.unlink(missing_ok=True)
 
     try:
         while True:
-            message = await websocket.receive()
+            try:
+                message = await asyncio.wait_for(websocket.receive(), timeout=0.25)
+            except asyncio.TimeoutError:
+                if speech_started and audio_chunks and last_speech_at and time() - last_speech_at > get_vad_force_final_seconds():
+                    print("FORCE FINAL", flush=True)
+                    await finalize_segment()
+                continue
+
+            if message.get("type") == "websocket.disconnect":
+                raise WebSocketDisconnect(message.get("code", 1000))
 
             if "text" in message:
                 payload = json.loads(message["text"])
@@ -315,10 +334,7 @@ async def websocket_audio_translation(
                     source_language = payload.get("source_language", "en")
                     target_language = payload.get("target_language", "es")
                     session_state = session_registry.bind(session_id, speaker, identity, source_language, target_language)
-                    audio_chunks = bytearray()
-                    recent_chunks = []
-                    speech_started = False
-                    silent_checks = 0
+                    reset_segment_state()
                     await websocket.send_json({
                         "type": "session_restored",
                         "session": session_state,
@@ -331,10 +347,7 @@ async def websocket_audio_translation(
 
                 if message_type == "cancel":
                     conversation_brain.cancel(speaker)
-                    audio_chunks = bytearray()
-                    recent_chunks = []
-                    speech_started = False
-                    silent_checks = 0
+                    reset_segment_state()
                     await websocket.send_json({"type": "cancelled"})
 
             if "bytes" in message:
@@ -349,10 +362,7 @@ async def websocket_audio_translation(
                 observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="audio_chunk", chunk_bytes=len(chunk), total_audio_bytes=len(audio_chunks))
                 if len(audio_chunks) > max_buffer_bytes:
                     await websocket.send_json({"type": "error", "message": "Audio buffer limit reached. Please speak in shorter turns."})
-                    audio_chunks = bytearray()
-                    recent_chunks = []
-                    speech_started = False
-                    silent_checks = 0
+                    reset_segment_state()
                     continue
                 recent_chunks.append(chunk)
                 recent_chunks = recent_chunks[-get_vad_recent_chunks():]
