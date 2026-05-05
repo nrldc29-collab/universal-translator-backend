@@ -14,9 +14,9 @@ h1 { font-size: 48px; margin: 0 0 12px; }
 h2 { margin-top: 0; }
 .status-stack { display: grid; gap: 8px; justify-items: end; }
 .status { background: #0ea5e9; color: white; border-radius: 999px; padding: 10px 16px; font-weight: 700; white-space: nowrap; }
-.status.online, .status.mic-granted { background: #22c55e; color: #04210e; }
-.status.offline, .status.mic-denied { background: #dc2626; }
-.status.checking, .status.mic-unknown { background: #64748b; }
+.status.online, .status.mic-granted, .status.mic-available { background: #22c55e; color: #04210e; }
+.status.offline, .status.mic-denied, .status.mic-unavailable { background: #dc2626; }
+.status.checking, .status.mic-checking, .status.mic-unknown { background: #64748b; }
 .controls, .duplex-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .onboarding-actions, .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
 label { display: grid; gap: 8px; color: #b6c4dc; font-weight: 700; }

@@ -32,7 +32,7 @@ function App() {
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState('Ready');
   const [connectionStatus, setConnectionStatus] = useState('checking');
-  const [micPermission, setMicPermission] = useState('unknown');
+  const [micPermission, setMicPermission] = useState('checking');
   const [recording, setRecording] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -82,6 +82,23 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMicPermission('unavailable');
+      return;
+    }
+
+    setMicPermission('available');
+    navigator.permissions?.query?.({ name: 'microphone' })
+      .then((permission) => {
+        setMicPermission(permission.state === 'denied' ? 'denied' : 'available');
+        permission.onchange = () => {
+          setMicPermission(permission.state === 'denied' ? 'denied' : 'available');
+        };
+      })
+      .catch(() => setMicPermission('available'));
+  }, []);
+
+  useEffect(() => {
     const handleBeforeInstallPrompt = (event) => {
       event.preventDefault();
       setInstallPrompt(event);
@@ -114,7 +131,7 @@ function App() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
-      setMicPermission('granted');
+      setMicPermission('available');
       setStatus('Microphone ready');
     } catch {
       setMicPermission('denied');
@@ -209,7 +226,7 @@ function App() {
   async function startRecording() {
     if (recording || processing) return;
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    setMicPermission('granted');
+    setMicPermission('available');
     chunksRef.current = [];
     recordingStoppedRef.current = false;
     const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
@@ -275,7 +292,7 @@ function App() {
     }
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    setMicPermission('granted');
+    setMicPermission('available');
     const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
@@ -404,7 +421,7 @@ function App() {
     }
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    setMicPermission('granted');
+    setMicPermission('available');
     const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     const source = speaker === 'A' ? sourceLanguage : targetLanguage;
     const target = speaker === 'A' ? targetLanguage : sourceLanguage;

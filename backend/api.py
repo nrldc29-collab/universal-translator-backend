@@ -9,6 +9,7 @@ import logging
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
@@ -16,6 +17,7 @@ from backend.conversation import ConversationBrain
 from backend.config import (
     LANGUAGES,
     get_allowed_origins,
+    get_frontend_url,
     get_max_audio_mb,
     get_max_audio_seconds,
     get_whisper_compute_type,
@@ -82,6 +84,11 @@ app.add_middleware(
 pipeline = UniversalTranslatorPipeline()
 vad = SileroVoiceActivityDetector()
 conversation_brain = ConversationBrain()
+
+
+@app.get("/")
+def root():
+    return RedirectResponse(get_frontend_url())
 
 
 @app.get("/health")

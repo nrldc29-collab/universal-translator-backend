@@ -62,6 +62,10 @@ def get_backend_port() -> int:
     return int(os.getenv("BACKEND_PORT") or os.getenv("PORT", "8000"))
 
 
+def get_frontend_url() -> str:
+    return os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")
+
+
 def is_production() -> bool:
     return os.getenv("ENVIRONMENT", "development").lower() == "production"
 
