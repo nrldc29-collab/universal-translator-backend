@@ -5,6 +5,9 @@ from contextlib import asynccontextmanager
 from html import escape
 import json
 from time import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request as UrlRequest, urlopen
 
 import logging
 
@@ -47,6 +50,17 @@ metrics = {
 }
 logger = logging.getLogger("universal_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+HOP_BY_HOP_HEADERS = {
+    "connection",
+    "content-length",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
 
 
 class TextTranslationRequest(BaseModel):
@@ -62,41 +76,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
-@asynccontextmanager
-async def lifespan(app_instance: FastAPI):
-    runtime_state["models"] = {
-        "whisper_device": get_whisper_device(),
-        "whisper_compute_type": get_whisper_compute_type(),
-        "whisper_model_size": get_whisper_model_size(),
-        "tts": "piper",
-        "vad": "silero",
-    }
-    runtime_state["ready"] = True
-    yield
-    runtime_state["ready"] = False
-
-
-app = FastAPI(title="Universal Translator", lifespan=lifespan)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=get_allowed_origins(),
-    allow_origin_regex=get_allowed_origin_regex(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-pipeline = UniversalTranslatorPipeline()
-vad = SileroVoiceActivityDetector()
-conversation_brain = ConversationBrain()
-
-
-@app.get("/")
-def root(request: Request):
+def _local_frontend_url(request: Request) -> str:
     frontend_url = get_frontend_url()
     if frontend_url == "http://127.0.0.1:5173":
         host = request.headers.get("host", "").split(":", 1)[0]
-        if host and host not in {"0.0.0.0", "::"}:
-            frontend_url = f"{request.url.scheme}://{host}:5173"
+        if host in {"localhost", "127.0.0.1"} or host.startswith(("192.168.", "10.", "172.")):
+            return f"{request.url.scheme}://{host}:5173"
+    return frontend_url
+
+
+def _frontend_launcher(frontend_url: str) -> HTMLResponse:
     frontend_href = escape(frontend_url, quote=True)
     frontend_js = json.dumps(frontend_url)
     return HTMLResponse(f"""<!doctype html>
@@ -148,6 +137,68 @@ def root(request: Request):
     <script>window.location.replace({frontend_js});</script>
   </body>
 </html>""")
+
+
+def _frontend_proxy_response(content: bytes, status_code: int, upstream_headers) -> Response:
+    headers = {}
+    media_type = None
+    for name, value in upstream_headers.items():
+        lower_name = name.lower()
+        if lower_name == "content-type":
+            media_type = value
+        elif lower_name not in HOP_BY_HOP_HEADERS:
+            headers[name] = value
+    return Response(content=content, status_code=status_code, media_type=media_type, headers=headers)
+
+
+def _proxy_frontend(request: Request, full_path: str = "") -> Response:
+    frontend_url = _local_frontend_url(request).rstrip("/")
+    path = quote(full_path, safe="/@._-")
+    upstream_url = f"{frontend_url}/{path}" if path else f"{frontend_url}/"
+    if request.url.query:
+        upstream_url = f"{upstream_url}?{request.url.query}"
+
+    try:
+        upstream_request = UrlRequest(upstream_url, headers={"User-Agent": "UniversalTranslatorLocalProxy/1.0"})
+        with urlopen(upstream_request, timeout=8) as upstream:
+            return _frontend_proxy_response(upstream.read(), upstream.status, upstream.headers)
+    except HTTPError as exc:
+        return _frontend_proxy_response(exc.read(), exc.code, exc.headers)
+    except URLError:
+        return _frontend_launcher(frontend_url)
+
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    runtime_state["models"] = {
+        "whisper_device": get_whisper_device(),
+        "whisper_compute_type": get_whisper_compute_type(),
+        "whisper_model_size": get_whisper_model_size(),
+        "tts": "piper",
+        "vad": "silero",
+    }
+    runtime_state["ready"] = True
+    yield
+    runtime_state["ready"] = False
+
+
+app = FastAPI(title="Universal Translator", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_allowed_origins(),
+    allow_origin_regex=get_allowed_origin_regex(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+pipeline = UniversalTranslatorPipeline()
+vad = SileroVoiceActivityDetector()
+conversation_brain = ConversationBrain()
+
+
+@app.get("/")
+def root(request: Request):
+    return _proxy_frontend(request)
 
 
 @app.get("/health")
@@ -331,3 +382,8 @@ async def websocket_audio(websocket: WebSocket):
         observability.record_event("websocket_error", identity=identity, mode="audio")
         logger.exception("audio_websocket_error identity=%s", identity)
         await websocket.close(code=1011, reason="Internal WebSocket error")
+
+
+@app.get("/{full_path:path}")
+def frontend_dev_asset(full_path: str, request: Request):
+    return _proxy_frontend(request, full_path)
