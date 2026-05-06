@@ -103,6 +103,8 @@ function App() {
   const [sessionId, setSessionId] = useState(INITIAL_SESSION_ID);
   const [sharedSession, setSharedSession] = useState(null);
   const [analytics, setAnalytics] = useState(null);
+  const [diagnostics, setDiagnostics] = useState(null);
+  const [diagnosticsStatus, setDiagnosticsStatus] = useState('checking');
   const [installPrompt, setInstallPrompt] = useState(null);
   const [pwaInstalled, setPwaInstalled] = useState(window.matchMedia?.('(display-mode: standalone)').matches || false);
   const mediaRecorderRef = useRef(null);
@@ -125,6 +127,10 @@ function App() {
         setStatus('Backend offline');
         setConnectionStatus('offline');
       });
+  }, []);
+
+  useEffect(() => {
+    loadDiagnostics();
   }, []);
 
   useEffect(() => {
@@ -242,6 +248,19 @@ function App() {
     }
     setAnalytics(await response.json());
     setStatus('Analytics refreshed');
+  }
+
+  async function loadDiagnostics() {
+    setDiagnosticsStatus('checking');
+    try {
+      const response = await fetch(`${API_URL}/diagnostics`);
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Diagnostics unavailable'));
+      const data = await response.json();
+      setDiagnostics(data);
+      setDiagnosticsStatus(data.ready ? 'online' : 'checking');
+    } catch {
+      setDiagnosticsStatus('offline');
+    }
   }
 
   function logout() {
@@ -608,6 +627,26 @@ function App() {
           <div className={`status mic-${micPermission}`}>Mic {micPermission}</div>
           <div className="status">PWA {pwaInstalled ? 'installed' : 'ready'}</div>
           <div className="status">{status}</div>
+        </div>
+      </section>
+
+      <section className="card diagnostics">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">System check</p>
+            <h2>Runtime diagnostics</h2>
+          </div>
+          <button onClick={loadDiagnostics}>Refresh Check</button>
+        </div>
+        <div className="diagnostic-grid">
+          <p><strong>Backend:</strong> {diagnosticsStatus}</p>
+          <p><strong>Frontend:</strong> {diagnostics?.frontend?.reachable ? `reachable (${diagnostics.frontend.status_code})` : diagnostics?.frontend?.error || '-'}</p>
+          <p><strong>Served from:</strong> {diagnostics?.served_from || '-'}</p>
+          <p><strong>Frontend target:</strong> {diagnostics?.frontend?.target || '-'}</p>
+          <p><strong>Whisper:</strong> {diagnostics?.models?.whisper_model_size || '-'} / {diagnostics?.models?.whisper_device || '-'}</p>
+          <p><strong>VAD final:</strong> {diagnostics?.streaming?.vad_force_final_seconds ?? '-'}s</p>
+          <p><strong>Audio limit:</strong> {diagnostics?.limits?.max_audio_seconds ?? '-'}s / {diagnostics?.limits?.max_audio_mb ?? '-'}MB</p>
+          <p><strong>STT queue:</strong> {diagnostics?.queues?.stt?.active ?? '-'} active, {diagnostics?.queues?.stt?.queued ?? '-'} queued</p>
         </div>
       </section>
 

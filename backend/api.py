@@ -26,6 +26,10 @@ from backend.config import (
     get_frontend_url,
     get_max_audio_mb,
     get_max_audio_seconds,
+    get_min_speech_bytes,
+    get_speech_merge_ms,
+    get_vad_force_final_seconds,
+    get_vad_silent_checks,
     get_whisper_compute_type,
     get_whisper_device,
     get_whisper_model_size,
@@ -212,6 +216,47 @@ def ready():
         "ready": runtime_state["ready"],
         "uptime_seconds": round(time() - runtime_state["started_at"], 2),
         "models": runtime_state["models"],
+    }
+
+
+@app.get("/diagnostics")
+def diagnostics(request: Request):
+    frontend_url = _local_frontend_url(request).rstrip("/")
+    frontend = {
+        "target": frontend_url,
+        "reachable": False,
+        "status_code": None,
+    }
+    try:
+        upstream_request = UrlRequest(f"{frontend_url}/", headers={"User-Agent": "UniversalTranslatorDiagnostics/1.0"})
+        with urlopen(upstream_request, timeout=1.5) as upstream:
+            frontend["reachable"] = 200 <= upstream.status < 500
+            frontend["status_code"] = upstream.status
+    except Exception as exc:
+        frontend["error"] = exc.__class__.__name__
+
+    return {
+        "status": "ok",
+        "ready": runtime_state["ready"],
+        "uptime_seconds": round(time() - runtime_state["started_at"], 2),
+        "served_from": str(request.base_url).rstrip("/"),
+        "frontend": frontend,
+        "models": runtime_state["models"],
+        "streaming": {
+            "websocket_path": "/ws/audio",
+            "vad_silent_checks": get_vad_silent_checks(),
+            "vad_force_final_seconds": get_vad_force_final_seconds(),
+            "speech_merge_ms": get_speech_merge_ms(),
+            "min_speech_bytes": get_min_speech_bytes(),
+        },
+        "limits": {
+            "max_audio_mb": get_max_audio_mb(),
+            "max_audio_seconds": get_max_audio_seconds(),
+        },
+        "queues": {
+            "stt": pipeline.stt.queue_snapshot(),
+        },
+        "sessions": session_registry.snapshot(),
     }
 
 
