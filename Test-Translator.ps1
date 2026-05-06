@@ -1,0 +1,158 @@
+param(
+    [string]$BaseUrl = "http://127.0.0.1:8000",
+    [int]$TimeoutSec = 30
+)
+
+$ErrorActionPreference = "Stop"
+$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Python = Join-Path $Root "venv\Scripts\python.exe"
+$Failures = @()
+$BaseUrl = $BaseUrl.TrimEnd("/")
+
+function Add-Pass {
+    param([string]$Name, [string]$Detail = "")
+    if ($Detail) {
+        Write-Output "PASS $Name - $Detail"
+    } else {
+        Write-Output "PASS $Name"
+    }
+}
+
+function Add-Fail {
+    param([string]$Name, [string]$Detail)
+    $script:Failures += "$Name - $Detail"
+    Write-Output "FAIL $Name - $Detail"
+}
+
+function Invoke-SmokeCheck {
+    param(
+        [string]$Name,
+        [scriptblock]$Check
+    )
+    try {
+        $detail = & $Check
+        Add-Pass -Name $Name -Detail $detail
+    } catch {
+        Add-Fail -Name $Name -Detail $_.Exception.Message
+    }
+}
+
+function Get-WebSocketUrl {
+    param([string]$Url)
+    if ($Url.StartsWith("https://")) {
+        return "wss://$($Url.Substring(8))/ws/audio"
+    }
+    if ($Url.StartsWith("http://")) {
+        return "ws://$($Url.Substring(7))/ws/audio"
+    }
+    throw "Unsupported BaseUrl scheme: $Url"
+}
+
+Write-Output ""
+Write-Output "Universal Translator smoke test"
+Write-Output "Target: $BaseUrl"
+Write-Output ""
+
+Invoke-SmokeCheck "Backend health" {
+    $health = Invoke-RestMethod -Uri "$BaseUrl/health" -TimeoutSec $TimeoutSec
+    if ($health.status -ne "ok") {
+        throw "Expected status ok, got $($health.status)"
+    }
+    "status ok"
+}
+
+Invoke-SmokeCheck "Diagnostics" {
+    $diagnostics = Invoke-RestMethod -Uri "$BaseUrl/diagnostics" -TimeoutSec $TimeoutSec
+    if (-not $diagnostics.ready) {
+        throw "Backend is not ready"
+    }
+    if (-not $diagnostics.frontend.reachable) {
+        throw "Frontend proxy is not reachable"
+    }
+    "ready, frontend $($diagnostics.frontend.status_code)"
+}
+
+Invoke-SmokeCheck "Frontend app shell" {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/" -TimeoutSec $TimeoutSec
+    if ($response.Content -notmatch "/src/main.jsx") {
+        throw "App shell does not reference /src/main.jsx"
+    }
+    "index loaded"
+}
+
+Invoke-SmokeCheck "Frontend module" {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/src/main.jsx" -TimeoutSec $TimeoutSec
+    if ($response.Content -notmatch "Run Self Test") {
+        throw "Current frontend module is missing browser self-test UI"
+    }
+    "self-test UI present"
+}
+
+Invoke-SmokeCheck "PWA assets" {
+    $manifest = Invoke-RestMethod -Uri "$BaseUrl/manifest.json" -TimeoutSec $TimeoutSec
+    if ($manifest.display -ne "standalone") {
+        throw "Manifest display is not standalone"
+    }
+    $serviceWorker = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/sw.js" -TimeoutSec $TimeoutSec
+    if ($serviceWorker.Content -notmatch "live-translator-v3") {
+        throw "Service worker is not cache v3"
+    }
+    "manifest and service worker ok"
+}
+
+Invoke-SmokeCheck "Text translation" {
+    $body = @{
+        text = "hello world"
+        source_language = "en"
+        target_language = "es"
+        synthesize_audio = $false
+    } | ConvertTo-Json
+    $result = Invoke-RestMethod -Uri "$BaseUrl/translate/text" -Method Post -ContentType "application/json" -Body $body -TimeoutSec ([Math]::Max($TimeoutSec, 180))
+    if (-not $result.translated_text) {
+        throw "Translated text was empty"
+    }
+    $result.translated_text
+}
+
+Invoke-SmokeCheck "Audio WebSocket" {
+    if (-not (Test-Path $Python)) {
+        throw "Missing venv Python at $Python"
+    }
+    $wsUrl = Get-WebSocketUrl -Url $BaseUrl
+    $wsScript = @'
+import asyncio
+import json
+import sys
+import websockets
+
+async def main():
+    url = sys.argv[1]
+    async with websockets.connect(url, open_timeout=10) as ws:
+        ready = json.loads(await ws.recv())
+        if ready.get("type") != "ready":
+            raise RuntimeError(f"Expected ready, got {ready}")
+        await ws.send(json.dumps({"type": "ping"}))
+        pong = json.loads(await ws.recv())
+        if pong.get("type") != "pong":
+            raise RuntimeError(f"Expected pong, got {pong}")
+        print("pong")
+
+asyncio.run(main())
+'@
+    $output = $wsScript | & $Python - $wsUrl
+    if (($output -join "`n") -notmatch "pong") {
+        throw "WebSocket did not return pong"
+    }
+    "pong"
+}
+
+Write-Output ""
+if ($Failures.Count) {
+    Write-Output "Smoke test failed:"
+    foreach ($failure in $Failures) {
+        Write-Output "  $failure"
+    }
+    exit 1
+}
+
+Write-Output "Smoke test passed."
