@@ -14,16 +14,24 @@ function isLocalHost(hostname) {
   );
 }
 
+function isSameOriginBackendHost(hostname) {
+  return hostname.endsWith('.trycloudflare.com');
+}
+
 function defaultApiUrl() {
   if (isLocalHost(window.location.hostname)) {
     return `${window.location.protocol}//${window.location.hostname}:8000`;
   }
+  if (isSameOriginBackendHost(window.location.hostname)) {
+    return window.location.origin;
+  }
   return 'https://your-backend.up.railway.app';
 }
 
-const API_URL = (import.meta.env.VITE_API_URL || defaultApiUrl()).replace(/\/+$/, '');
-const WS_BASE_URL = (import.meta.env.VITE_WS_URL || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')).replace(/\/+$/, '');
-const WS_AUDIO_URL = import.meta.env.VITE_WS_AUDIO_URL || `${WS_BASE_URL}/ws/audio`;
+const SAME_ORIGIN_BACKEND = isSameOriginBackendHost(window.location.hostname);
+const API_URL = (SAME_ORIGIN_BACKEND ? defaultApiUrl() : (import.meta.env.VITE_API_URL || defaultApiUrl())).replace(/\/+$/, '');
+const WS_BASE_URL = (SAME_ORIGIN_BACKEND ? API_URL : (import.meta.env.VITE_WS_URL || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'))).replace(/\/+$/, '');
+const WS_AUDIO_URL = SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (import.meta.env.VITE_WS_AUDIO_URL || `${WS_BASE_URL}/ws/audio`);
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 const INITIAL_SESSION_ID = localStorage.getItem('translator_session_id') || crypto.randomUUID();
 const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 250);
