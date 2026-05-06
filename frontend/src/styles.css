@@ -21,6 +21,7 @@ h2 { margin-top: 0; }
 .section-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
 .diagnostic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .onboarding-actions, .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.actions.compact-actions { margin-top: 0; justify-content: flex-end; }
 label { display: grid; gap: 8px; color: #b6c4dc; font-weight: 700; }
 select, textarea, input { width: 100%; box-sizing: border-box; border: 1px solid rgba(148,163,184,.35); border-radius: 16px; background: #081527; color: #e5ecff; padding: 14px; font: inherit; min-height: 48px; }
 textarea { min-height: 160px; resize: vertical; }

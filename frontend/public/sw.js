@@ -1,5 +1,5 @@
-const CACHE_NAME = 'live-translator-v2';
-const RUNTIME_CACHE = 'live-translator-runtime-v2';
+const CACHE_NAME = 'live-translator-v3';
+const RUNTIME_CACHE = 'live-translator-runtime-v3';
 const OFFLINE_URL = '/offline.html';
 const APP_SHELL = ['/', '/manifest.json', '/icon.svg', OFFLINE_URL];
 
@@ -35,17 +35,14 @@ self.addEventListener('fetch', (event) => {
   if (requestUrl.origin !== self.location.origin) return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => caches.match(OFFLINE_URL));
-    })
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request).then((response) => response || caches.match(OFFLINE_URL)))
   );
 });

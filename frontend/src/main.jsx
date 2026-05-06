@@ -105,6 +105,12 @@ function App() {
   const [analytics, setAnalytics] = useState(null);
   const [diagnostics, setDiagnostics] = useState(null);
   const [diagnosticsStatus, setDiagnosticsStatus] = useState('checking');
+  const [selfTest, setSelfTest] = useState({
+    status: 'idle',
+    translation: '-',
+    websocket: '-',
+    message: 'Not run yet',
+  });
   const [installPrompt, setInstallPrompt] = useState(null);
   const [pwaInstalled, setPwaInstalled] = useState(window.matchMedia?.('(display-mode: standalone)').matches || false);
   const mediaRecorderRef = useRef(null);
@@ -261,6 +267,76 @@ function App() {
     } catch {
       setDiagnosticsStatus('offline');
     }
+  }
+
+  function testAudioSocket() {
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
+      const timeout = window.setTimeout(() => {
+        socket.close();
+        reject(new Error('Audio socket timed out'));
+      }, 6000);
+
+      socket.onopen = () => {
+        socket.send(JSON.stringify({ type: 'ping' }));
+      };
+      socket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type !== 'pong') return;
+        window.clearTimeout(timeout);
+        socket.close();
+        resolve('pong');
+      };
+      socket.onerror = () => {
+        window.clearTimeout(timeout);
+        reject(new Error('Audio socket failed'));
+      };
+    });
+  }
+
+  async function runSelfTest() {
+    setSelfTest({ status: 'running', translation: 'checking', websocket: 'checking', message: 'Running checks...' });
+    setStatus('Running self test...');
+
+    const next = {
+      status: 'online',
+      translation: '-',
+      websocket: '-',
+      message: 'Self-test passed',
+    };
+    const failures = [];
+
+    try {
+      const response = await fetch(`${API_URL}/translate/text`, {
+        method: 'POST',
+        headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ text: 'hello world', source_language: 'en', target_language: 'es', synthesize_audio: false }),
+      });
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Translation test failed'));
+      const data = await response.json();
+      if (!data.translated_text?.trim()) throw new Error('Translation returned empty text');
+      next.translation = data.translated_text;
+    } catch (error) {
+      next.translation = 'failed';
+      failures.push(error.message || 'Translation test failed');
+    }
+
+    try {
+      next.websocket = await testAudioSocket();
+    } catch (error) {
+      next.websocket = 'failed';
+      failures.push(error.message || 'Audio socket test failed');
+    }
+
+    if (failures.length) {
+      next.status = 'offline';
+      next.message = failures.join(' / ');
+      setStatus('Self-test failed');
+    } else {
+      setStatus('Self-test passed');
+    }
+
+    setSelfTest(next);
   }
 
   function logout() {
@@ -636,7 +712,10 @@ function App() {
             <p className="eyebrow">System check</p>
             <h2>Runtime diagnostics</h2>
           </div>
-          <button onClick={loadDiagnostics}>Refresh Check</button>
+          <div className="actions compact-actions">
+            <button onClick={loadDiagnostics}>Refresh Check</button>
+            <button disabled={selfTest.status === 'running'} onClick={runSelfTest}>Run Self Test</button>
+          </div>
         </div>
         <div className="diagnostic-grid">
           <p><strong>Backend:</strong> {diagnosticsStatus}</p>
@@ -647,6 +726,9 @@ function App() {
           <p><strong>VAD final:</strong> {diagnostics?.streaming?.vad_force_final_seconds ?? '-'}s</p>
           <p><strong>Audio limit:</strong> {diagnostics?.limits?.max_audio_seconds ?? '-'}s / {diagnostics?.limits?.max_audio_mb ?? '-'}MB</p>
           <p><strong>STT queue:</strong> {diagnostics?.queues?.stt?.active ?? '-'} active, {diagnostics?.queues?.stt?.queued ?? '-'} queued</p>
+          <p><strong>Translation test:</strong> {selfTest.translation}</p>
+          <p><strong>Audio socket:</strong> {selfTest.websocket}</p>
+          <p><strong>Self-test:</strong> {selfTest.message}</p>
         </div>
       </section>
 
