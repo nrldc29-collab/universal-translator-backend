@@ -43,23 +43,23 @@ for live audio because Railway serves the page over HTTPS.
 
 ## Required Variables
 
-Set these in Railway service variables:
+Generate fresh Railway variables with:
 
-```text
-ENVIRONMENT=production
-USE_GPU=0
-WHISPER_DEVICE=cpu
-WHISPER_COMPUTE_TYPE=int8
-WHISPER_MODEL_SIZE=tiny
-GPU_COST_MODE=low
-ALLOWED_ORIGINS=https://frontend-one-henna-99jlsna6ki.vercel.app,http://localhost:5173,http://127.0.0.1:5173
-JWT_SECRET=replace-with-a-long-random-secret
-USERS=demo:replace-with-a-real-password
-USER_TIERS=demo:free
+```powershell
+.\Get-Railway-Variables.ps1
 ```
+
+Paste the output into the Railway service **Variables** tab.
 
 If you only use the bundled Railway URL and not a separate Vercel frontend, you
 can leave `ALLOWED_ORIGINS` unset.
+
+If you also deploy a separate Vercel frontend, generate variables with that
+origin included:
+
+```powershell
+.\Get-Railway-Variables.ps1 -FrontendOrigin https://YOUR-VERCEL-APP.vercel.app
+```
 
 ## Verify
 
