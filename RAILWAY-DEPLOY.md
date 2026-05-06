@@ -17,6 +17,16 @@ domain can open the PWA directly and also host the backend API/WebSocket routes.
 Railway injects a `PORT` variable automatically. The backend now reads that
 variable and binds to `0.0.0.0`, so no manual port wiring is needed.
 
+If this local repo is not pushed yet, create an empty GitHub repository named
+`universal-translator`, then run:
+
+```powershell
+.\Publish-To-GitHub.ps1 -RepoUrl https://github.com/YOURNAME/universal-translator.git
+```
+
+If Git opens a browser sign-in window, finish the sign-in and rerun the command
+if needed.
+
 After Railway generates a domain, the main app opens at the same URL:
 
 ```text
