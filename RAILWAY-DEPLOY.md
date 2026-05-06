@@ -27,6 +27,15 @@ If this local repo is not pushed yet, create an empty GitHub repository named
 If Git opens a browser sign-in window, finish the sign-in and rerun the command
 if needed.
 
+Before pushing or deploying, run:
+
+```powershell
+.\Test-DeploymentReady.ps1 -RunSmoke
+```
+
+This checks Git state, ignored secrets, Railway files, production frontend
+serving, same-origin `wss://` support, generated variables, and the local app.
+
 After Railway generates a domain, the main app opens at the same URL:
 
 ```text
