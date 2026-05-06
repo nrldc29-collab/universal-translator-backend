@@ -4,9 +4,11 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#000000",
   "theme_color": "#000000",
   "description": "Real-time speech translation powered by your own backend.",
+  "categories": ["productivity", "utilities"],
   "icons": [
     {
       "src": "/icon.svg",
