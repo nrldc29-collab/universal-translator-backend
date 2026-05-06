@@ -1,6 +1,8 @@
 # Railway Backend Deployment
 
-This repo is ready for Railway using the root `Dockerfile`.
+This repo is ready for Railway using the root `Dockerfile`. The Docker build
+now bundles `frontend/dist` into the FastAPI service, so the generated Railway
+domain can open the PWA directly and also host the backend API/WebSocket routes.
 
 ## Deploy From GitHub
 
@@ -14,6 +16,20 @@ This repo is ready for Railway using the root `Dockerfile`.
 
 Railway injects a `PORT` variable automatically. The backend now reads that
 variable and binds to `0.0.0.0`, so no manual port wiring is needed.
+
+After Railway generates a domain, the main app opens at the same URL:
+
+```text
+https://YOUR-RAILWAY-DOMAIN.up.railway.app
+```
+
+The browser will use:
+
+```text
+wss://YOUR-RAILWAY-DOMAIN.up.railway.app/ws/audio
+```
+
+for live audio because Railway serves the page over HTTPS.
 
 ## Required Variables
 
@@ -31,6 +47,9 @@ JWT_SECRET=replace-with-a-long-random-secret
 USERS=demo:replace-with-a-real-password
 USER_TIERS=demo:free
 ```
+
+If you only use the bundled Railway URL and not a separate Vercel frontend, you
+can leave `ALLOWED_ORIGINS` unset.
 
 ## Verify
 
@@ -52,3 +71,9 @@ Then update `frontend/vercel.json`:
 ```
 
 Redeploy the frontend so the PWA talks to the online backend.
+
+If you are using the single Railway URL, skip the Vercel step and run:
+
+```powershell
+.\Test-Translator.ps1 -BaseUrl https://YOUR-RAILWAY-DOMAIN.up.railway.app
+```

@@ -73,6 +73,14 @@ def get_frontend_url() -> str:
     return os.getenv("FRONTEND_URL", "http://127.0.0.1:5173")
 
 
+def get_frontend_dist_dir() -> str:
+    return os.getenv("FRONTEND_DIST_DIR", "frontend/dist")
+
+
+def get_serve_frontend_dist() -> bool:
+    return os.getenv("SERVE_FRONTEND_DIST", "1" if is_production() else "0") == "1"
+
+
 def is_production() -> bool:
     return os.getenv("ENVIRONMENT", "development").lower() == "production"
 

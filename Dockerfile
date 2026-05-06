@@ -1,9 +1,22 @@
+FROM node:20-alpine AS frontend-build
+
+WORKDIR /frontend
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     ENVIRONMENT=production \
     BACKEND_HOST=0.0.0.0 \
+    SERVE_FRONTEND_DIST=1 \
+    FRONTEND_DIST_DIR=frontend/dist \
     USE_GPU=0 \
     WHISPER_DEVICE=cpu \
     WHISPER_COMPUTE_TYPE=int8 \
@@ -29,6 +42,7 @@ COPY llm llm/
 COPY speech speech/
 COPY translation translation/
 COPY tts tts/
+COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000
 

@@ -14,7 +14,7 @@ import logging
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
@@ -23,11 +23,13 @@ from backend.config import (
     LANGUAGES,
     get_allowed_origin_regex,
     get_allowed_origins,
+    get_frontend_dist_dir,
     get_frontend_url,
     get_max_audio_mb,
     get_max_audio_seconds,
     get_min_speech_bytes,
     get_speech_merge_ms,
+    get_serve_frontend_dist,
     get_vad_force_final_seconds,
     get_vad_silent_checks,
     get_whisper_compute_type,
@@ -87,6 +89,45 @@ def _local_frontend_url(request: Request) -> str:
         if host in {"localhost", "127.0.0.1"} or host.startswith(("192.168.", "10.", "172.")):
             return f"{request.url.scheme}://{host}:5173"
     return frontend_url
+
+
+def _frontend_dist_dir() -> Path:
+    dist_dir = Path(get_frontend_dist_dir())
+    if not dist_dir.is_absolute():
+        dist_dir = Path.cwd() / dist_dir
+    return dist_dir
+
+
+def _frontend_index_path() -> Path | None:
+    index_path = _frontend_dist_dir() / "index.html"
+    if get_serve_frontend_dist() and index_path.is_file():
+        return index_path
+    return None
+
+
+def _frontend_asset_path(full_path: str) -> Path | None:
+    try:
+        dist_dir = _frontend_dist_dir().resolve()
+        asset_path = (dist_dir / full_path).resolve()
+    except OSError:
+        return None
+
+    if asset_path.is_file() and (asset_path == dist_dir or dist_dir in asset_path.parents):
+        return asset_path
+    return None
+
+
+def _embedded_frontend_response(full_path: str = "") -> FileResponse | None:
+    index_path = _frontend_index_path()
+    if not index_path:
+        return None
+
+    if full_path:
+        asset_path = _frontend_asset_path(full_path)
+        if asset_path:
+            return FileResponse(asset_path)
+
+    return FileResponse(index_path)
 
 
 def _frontend_launcher(frontend_url: str) -> HTMLResponse:
@@ -202,6 +243,9 @@ conversation_brain = ConversationBrain()
 
 @app.get("/")
 def root(request: Request):
+    embedded_frontend = _embedded_frontend_response()
+    if embedded_frontend:
+        return embedded_frontend
     return _proxy_frontend(request)
 
 
@@ -221,19 +265,29 @@ def ready():
 
 @app.get("/diagnostics")
 def diagnostics(request: Request):
-    frontend_url = _local_frontend_url(request).rstrip("/")
-    frontend = {
-        "target": frontend_url,
-        "reachable": False,
-        "status_code": None,
-    }
-    try:
-        upstream_request = UrlRequest(f"{frontend_url}/", headers={"User-Agent": "UniversalTranslatorDiagnostics/1.0"})
-        with urlopen(upstream_request, timeout=1.5) as upstream:
-            frontend["reachable"] = 200 <= upstream.status < 500
-            frontend["status_code"] = upstream.status
-    except Exception as exc:
-        frontend["error"] = exc.__class__.__name__
+    frontend_index = _frontend_index_path()
+    if frontend_index:
+        frontend = {
+            "target": str(_frontend_dist_dir()),
+            "mode": "embedded_dist",
+            "reachable": True,
+            "status_code": 200,
+        }
+    else:
+        frontend_url = _local_frontend_url(request).rstrip("/")
+        frontend = {
+            "target": frontend_url,
+            "mode": "dev_proxy",
+            "reachable": False,
+            "status_code": None,
+        }
+        try:
+            upstream_request = UrlRequest(f"{frontend_url}/", headers={"User-Agent": "UniversalTranslatorDiagnostics/1.0"})
+            with urlopen(upstream_request, timeout=1.5) as upstream:
+                frontend["reachable"] = 200 <= upstream.status < 500
+                frontend["status_code"] = upstream.status
+        except Exception as exc:
+            frontend["error"] = exc.__class__.__name__
 
     return {
         "status": "ok",
@@ -431,4 +485,7 @@ async def websocket_audio(websocket: WebSocket):
 
 @app.get("/{full_path:path}")
 def frontend_dev_asset(full_path: str, request: Request):
+    embedded_frontend = _embedded_frontend_response(full_path)
+    if embedded_frontend:
+        return embedded_frontend
     return _proxy_frontend(request, full_path)

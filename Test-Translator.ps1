@@ -48,6 +48,23 @@ function Get-WebSocketUrl {
     throw "Unsupported BaseUrl scheme: $Url"
 }
 
+function Get-FrontendScriptPaths {
+    param([string]$Html)
+    $matches = [regex]::Matches($Html, '<script[^>]+src="([^"]+)"')
+    return @($matches | ForEach-Object { $_.Groups[1].Value })
+}
+
+function Get-AbsoluteAppUrl {
+    param([string]$PathOrUrl)
+    if ($PathOrUrl.StartsWith("http://") -or $PathOrUrl.StartsWith("https://")) {
+        return $PathOrUrl
+    }
+    if ($PathOrUrl.StartsWith("/")) {
+        return "$BaseUrl$PathOrUrl"
+    }
+    return "$BaseUrl/$PathOrUrl"
+}
+
 Write-Output ""
 Write-Output "Universal Translator smoke test"
 Write-Output "Target: $BaseUrl"
@@ -74,18 +91,24 @@ Invoke-SmokeCheck "Diagnostics" {
 
 Invoke-SmokeCheck "Frontend app shell" {
     $response = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/" -TimeoutSec $TimeoutSec
-    if ($response.Content -notmatch "/src/main.jsx") {
-        throw "App shell does not reference /src/main.jsx"
+    $scriptPaths = Get-FrontendScriptPaths -Html $response.Content
+    if (-not $scriptPaths.Count) {
+        throw "App shell does not reference a frontend script"
     }
-    "index loaded"
+    "index loaded, $($scriptPaths[0])"
 }
 
 Invoke-SmokeCheck "Frontend module" {
-    $response = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/src/main.jsx" -TimeoutSec $TimeoutSec
-    if ($response.Content -notmatch "Run Self Test") {
-        throw "Current frontend module is missing browser self-test UI"
+    $index = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/" -TimeoutSec $TimeoutSec
+    $scriptPaths = Get-FrontendScriptPaths -Html $index.Content
+    foreach ($scriptPath in $scriptPaths) {
+        $scriptUrl = Get-AbsoluteAppUrl -PathOrUrl $scriptPath
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $scriptUrl -TimeoutSec $TimeoutSec
+        if ($response.Content -match "Run Self Test") {
+            return "self-test UI present in $scriptPath"
+        }
     }
-    "self-test UI present"
+    throw "Current frontend bundle is missing browser self-test UI"
 }
 
 Invoke-SmokeCheck "PWA assets" {

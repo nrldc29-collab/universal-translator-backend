@@ -15,7 +15,12 @@ function isLocalHost(hostname) {
 }
 
 function isSameOriginBackendHost(hostname) {
-  return hostname.endsWith('.trycloudflare.com');
+  return (
+    hostname.endsWith('.trycloudflare.com') ||
+    hostname.endsWith('.up.railway.app') ||
+    hostname.endsWith('.onrender.com') ||
+    hostname.endsWith('.fly.dev')
+  );
 }
 
 function defaultApiUrl() {
@@ -28,10 +33,17 @@ function defaultApiUrl() {
   return 'https://your-backend.up.railway.app';
 }
 
+function configuredUrl(value) {
+  if (!value || value.includes('your-backend')) {
+    return '';
+  }
+  return value;
+}
+
 const SAME_ORIGIN_BACKEND = isSameOriginBackendHost(window.location.hostname);
-const API_URL = (SAME_ORIGIN_BACKEND ? defaultApiUrl() : (import.meta.env.VITE_API_URL || defaultApiUrl())).replace(/\/+$/, '');
-const WS_BASE_URL = (SAME_ORIGIN_BACKEND ? API_URL : (import.meta.env.VITE_WS_URL || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'))).replace(/\/+$/, '');
-const WS_AUDIO_URL = SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (import.meta.env.VITE_WS_AUDIO_URL || `${WS_BASE_URL}/ws/audio`);
+const API_URL = (SAME_ORIGIN_BACKEND ? defaultApiUrl() : (configuredUrl(import.meta.env.VITE_API_URL) || defaultApiUrl())).replace(/\/+$/, '');
+const WS_BASE_URL = (SAME_ORIGIN_BACKEND ? API_URL : (configuredUrl(import.meta.env.VITE_WS_URL) || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'))).replace(/\/+$/, '');
+const WS_AUDIO_URL = SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 const INITIAL_SESSION_ID = localStorage.getItem('translator_session_id') || crypto.randomUUID();
 const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 250);
