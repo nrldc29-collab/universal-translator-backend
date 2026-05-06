@@ -189,6 +189,11 @@ async def websocket_audio_translation(
         source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), source_language)
         print("STT:", source_text, flush=True)
         observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_done", source_text=source_text)
+        if not source_text.strip():
+            await websocket.send_json({"type": "error", "message": "No clear speech recognized. Try speaking closer to the mic."})
+            reset_segment_state()
+            audio_path.unlink(missing_ok=True)
+            return
         await websocket.send_json({"type": "final_transcription", "speaker": speaker, "text": source_text})
         semantic_context = conversation_brain.analyze_semantics(speaker, source_text)
         await websocket.send_json({"type": "semantic_context", "speaker": speaker, **semantic_context})

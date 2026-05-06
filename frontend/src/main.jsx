@@ -41,6 +41,27 @@ function authHeaders(token, extra = {}) {
   return { ...extra, Authorization: `Bearer ${token}` };
 }
 
+async function responseErrorMessage(response, fallback) {
+  try {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const body = await response.json();
+      return body.detail || body.message || fallback;
+    }
+    const text = await response.text();
+    return text || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function mediaErrorMessage(error) {
+  if (error?.name === 'NotAllowedError') return 'Microphone permission blocked';
+  if (error?.name === 'NotFoundError') return 'No microphone found';
+  if (error?.name === 'NotSupportedError') return 'Audio recording is not supported in this browser';
+  return 'Could not start microphone';
+}
+
 function App() {
   const [languages, setLanguages] = useState({ en: 'English', es: 'Spanish' });
   const [sourceLanguage, setSourceLanguage] = useState('en');
@@ -174,8 +195,12 @@ function App() {
         headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ text, source_language: sourceLanguage, target_language: targetLanguage, synthesize_audio: false }),
       });
-      setResult(await response.json());
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Text translation failed'));
+      const data = await response.json();
+      setResult(data);
       setStatus('Text translated');
+    } catch (error) {
+      setStatus(error.message || 'Text translation failed');
     } finally {
       setProcessing(false);
     }
@@ -242,7 +267,14 @@ function App() {
 
   async function startRecording() {
     if (recording || processing) return;
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      setMicPermission('denied');
+      setStatus(mediaErrorMessage(error));
+      return;
+    }
     setMicPermission('available');
     chunksRef.current = [];
     recordingStoppedRef.current = false;
@@ -282,9 +314,10 @@ function App() {
 
     try {
       const response = await fetch(`${API_URL}/translate/audio`, { method: 'POST', headers: authHeaders(authToken), body: formData });
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Audio translation failed'));
       const data = await response.json();
       setResult(data);
-      setStatus(data.audio_output_path ? 'Playing...' : 'Audio translated');
+      setStatus(data.translated_text ? (data.audio_output_path ? 'Playing...' : 'Audio translated') : 'No clear speech recognized');
       if (data.audio_output_path) {
         setPlaying(true);
         window.setTimeout(() => {
@@ -292,6 +325,8 @@ function App() {
           setStatus('Audio translated');
         }, 900);
       }
+    } catch (error) {
+      setStatus(error.message || 'Audio translation failed');
     } finally {
       setProcessing(false);
     }
@@ -308,7 +343,14 @@ function App() {
       return;
     }
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      setMicPermission('denied');
+      setStatus(mediaErrorMessage(error));
+      return;
+    }
     setMicPermission('available');
     const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     socketRef.current = socket;
@@ -356,6 +398,15 @@ function App() {
       if (data.type === 'tts_end') {
         setPipelineStage('Voice stream complete');
       }
+      if (data.type === 'error') {
+        setProcessing(false);
+        setPipelineStage('Needs audio');
+        setStatus(data.message || 'Stream failed');
+        streamRecorderRef.current?.stop();
+        stream.getTracks().forEach((track) => track.stop());
+        socket.close();
+        socketRef.current = null;
+      }
       if (data.type === 'vad' && data.speech_detected) setStatus('Streaming audio... speech detected');
       if (data.type === 'final') {
         setResult(data);
@@ -369,11 +420,13 @@ function App() {
     socket.onerror = () => {
       setStatus('Stream connection error');
       setPipelineStage('Connection error');
+      setProcessing(false);
     };
     socket.onclose = () => {
       setStreaming(false);
-      if (processing) setStatus('Stream disconnected. Try reconnecting.');
+      setProcessing(false);
       stream.getTracks().forEach((track) => track.stop());
+      if (socketRef.current === socket) socketRef.current = null;
     };
   }
 
@@ -437,7 +490,14 @@ function App() {
       return;
     }
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      setMicPermission('denied');
+      updateDuplexSpeaker(speaker, { active: false, stage: mediaErrorMessage(error) });
+      return;
+    }
     setMicPermission('available');
     const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     const source = speaker === 'A' ? sourceLanguage : targetLanguage;
@@ -489,6 +549,15 @@ function App() {
       }
       if (data.type === 'live_translation') updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Translation ready' });
       if (data.type === 'tts_audio_chunk') enqueueTtsChunk(data.audio_base64, data.mime_type);
+      if (data.type === 'error') {
+        refs.manualClose = true;
+        refs.shouldReconnect = false;
+        updateDuplexSpeaker(speaker, { active: false, stage: data.message || 'Stream failed' });
+        refs.recorder?.stop();
+        refs.recorder?.stream.getTracks().forEach((track) => track.stop());
+        socket.close();
+        refs.socket = null;
+      }
       if (data.type === 'final') {
         refs.manualClose = true;
         refs.shouldReconnect = false;

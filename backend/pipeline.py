@@ -42,6 +42,14 @@ class UniversalTranslatorPipeline:
         synthesize_audio: bool = False,
         output_audio_path: str = "models/output.wav",
     ) -> TranslationResult:
+        if not text.strip():
+            return TranslationResult(
+                source_text=text,
+                improved_text="",
+                translated_text="",
+                audio_output_path=None,
+            )
+
         improved_text = self.context_layer.improve(text, source_language, target_language, tone)
         translated_text = self.translator.translate(improved_text, source_language, target_language)
         audio_output_path = None
