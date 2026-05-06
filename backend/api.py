@@ -2,6 +2,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from contextlib import asynccontextmanager
+from html import escape
+import json
 from time import time
 
 import logging
@@ -9,7 +11,7 @@ import logging
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
@@ -95,7 +97,57 @@ def root(request: Request):
         host = request.headers.get("host", "").split(":", 1)[0]
         if host and host not in {"0.0.0.0", "::"}:
             frontend_url = f"{request.url.scheme}://{host}:5173"
-    return RedirectResponse(frontend_url)
+    frontend_href = escape(frontend_url, quote=True)
+    frontend_js = json.dumps(frontend_url)
+    return HTMLResponse(f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="refresh" content="0; url={frontend_href}" />
+    <title>Opening Universal Translator</title>
+    <style>
+      body {{
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        font-family: system-ui, sans-serif;
+        background: #07111f;
+        color: #e5ecff;
+      }}
+      main {{
+        width: min(520px, calc(100vw - 32px));
+        border: 1px solid rgba(148, 163, 184, .3);
+        border-radius: 18px;
+        padding: 24px;
+        background: #0f172a;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
+      }}
+      a {{
+        display: inline-flex;
+        margin-top: 12px;
+        min-height: 48px;
+        align-items: center;
+        justify-content: center;
+        padding: 0 18px;
+        border-radius: 999px;
+        background: #2563eb;
+        color: white;
+        font-weight: 800;
+        text-decoration: none;
+      }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Opening Universal Translator...</h1>
+      <p>If it does not open automatically, use the button below.</p>
+      <a href="{frontend_href}">Open app</a>
+    </main>
+    <script>window.location.replace({frontend_js});</script>
+  </body>
+</html>""")
 
 
 @app.get("/health")

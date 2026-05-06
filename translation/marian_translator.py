@@ -1,8 +1,12 @@
+from threading import Lock
+
+
 class MarianTranslator:
     def __init__(self, default_source_language: str = "en", default_target_language: str = "es"):
         self.default_source_language = default_source_language
         self.default_target_language = default_target_language
         self._models = {}
+        self._model_lock = Lock()
         self._cache = {}
         self.nllb_model = "facebook/nllb-200-distilled-600M"
 
@@ -29,34 +33,35 @@ class MarianTranslator:
 
     def _load_model(self, source_language: str, target_language: str):
         key = (source_language, target_language)
-        if key in self._models:
-            return self._models[key]
+        with self._model_lock:
+            if key in self._models:
+                return self._models[key]
 
-        try:
-            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-        except ImportError as exc:
-            raise RuntimeError("transformers is not installed. Install requirements to enable translation.") from exc
+            try:
+                from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+            except ImportError as exc:
+                raise RuntimeError("transformers is not installed. Install requirements to enable translation.") from exc
 
-        try:
-            model_name = self._model_name(source_language, target_language)
-            tokenizer = AutoTokenizer.from_pretrained(model_name)
-            model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-            uses_nllb = False
-        except Exception:
-            tokenizer = AutoTokenizer.from_pretrained(self.nllb_model)
-            model = AutoModelForSeq2SeqLM.from_pretrained(self.nllb_model)
-            uses_nllb = True
+            try:
+                model_name = self._model_name(source_language, target_language)
+                tokenizer = AutoTokenizer.from_pretrained(model_name)
+                model = AutoModelForSeq2SeqLM.from_pretrained(model_name, use_safetensors=False)
+                uses_nllb = False
+            except Exception:
+                tokenizer = AutoTokenizer.from_pretrained(self.nllb_model)
+                model = AutoModelForSeq2SeqLM.from_pretrained(self.nllb_model)
+                uses_nllb = True
 
-        model.eval()
-        translator = {
-            "tokenizer": tokenizer,
-            "model": model,
-            "source_language": source_language,
-            "target_language": target_language,
-            "uses_nllb": uses_nllb,
-        }
-        self._models[key] = translator
-        return translator
+            model.eval()
+            translator = {
+                "tokenizer": tokenizer,
+                "model": model,
+                "source_language": source_language,
+                "target_language": target_language,
+                "uses_nllb": uses_nllb,
+            }
+            self._models[key] = translator
+            return translator
 
     def _generate_translation(self, text: str, translator: dict) -> str:
         try:
