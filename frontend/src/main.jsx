@@ -1218,10 +1218,6 @@ function App() {
   }
 
 
-  const sourceName = languages[sourceLanguage] || sourceLanguage.toUpperCase();
-  const targetName = languages[targetLanguage] || targetLanguage.toUpperCase();
-  const languageFlags = { en: '🇺🇸', es: '🇪🇸', fr: '🇫🇷', de: '🇩🇪', it: '🇮🇹', pt: '🇵🇹', nl: '🇳🇱', ru: '🇷🇺', zh: '🇨🇳', ja: '🇯🇵', ko: '🇰🇷', ar: '🇸🇦', hi: '🇮🇳' };
-  const languageDirection = `${languageFlags[sourceLanguage] || ''} ${sourceName} → ${languageFlags[targetLanguage] || ''} ${targetName}`;
   const sourceText = partialTranscript || result?.source_text || 'Hello, how are you?';
   const translatedText = liveTranslation || result?.translated_text || 'Hola, ¿cómo estás?';
   const perceivedListening = streaming || instantListening;
@@ -1236,9 +1232,6 @@ function App() {
             <span className="brand-mark">Anai</span>
             <sub>nrldc</sub>
           </h1>
-          <button className="language-label" onClick={() => { setSourceLanguage(targetLanguage); setTargetLanguage(sourceLanguage); }} aria-label={`${sourceName} to ${targetName}. Tap to swap.`}>
-            {languageDirection}
-          </button>
         </header>
 
         <section className="mic-panel">
