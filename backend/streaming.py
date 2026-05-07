@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import re
+from contextlib import suppress
 from pathlib import Path
 from time import time
 from uuid import uuid4
@@ -14,6 +15,7 @@ from backend.config import (
     get_near_zero_latency_mode,
     get_partial_stt_interval_ms,
     get_partial_stt_min_bytes,
+    get_pipeline_step_timeout_seconds,
     get_speech_merge_ms,
     get_stream_buffer_max_mb,
     get_stream_hot_path_logging,
@@ -68,12 +70,27 @@ def audio_suffix_for_mime(mime_type: str | None) -> str:
     return ".webm"
 
 
+class PipelineStepTimeout(RuntimeError):
+    pass
+
+
+async def run_pipeline_step(label: str, call, *args):
+    timeout = get_pipeline_step_timeout_seconds()
+    try:
+        return await asyncio.wait_for(run_in_threadpool(call, *args), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        raise PipelineStepTimeout(f"{label} timed out after {timeout:g}s.") from exc
+
+
 async def websocket_text_translation(websocket: WebSocket, pipeline: UniversalTranslatorPipeline):
     await websocket.accept()
     await websocket.send_json({"type": "ready", "message": "Streaming text translation connected."})
 
     while True:
         payload = await websocket.receive_json()
+        if payload.get("type") == "ping":
+            await websocket.send_json({"type": "pong"})
+            continue
         text = payload.get("text", "")
         source_language = payload.get("source_language", "en")
         target_language = payload.get("target_language", "es")
@@ -120,6 +137,7 @@ async def websocket_audio_translation(
     last_speech_at = 0.0
     last_partial_at = 0.0
     partial_text = ""
+    pipeline_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
 
     def reset_segment_state() -> None:
         nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count
@@ -129,6 +147,36 @@ async def websocket_audio_translation(
         silent_checks = 0
         vad_error_count = 0
         last_speech_at = 0.0
+
+    async def enqueue_finalize(reason: str) -> None:
+        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count
+        if pipeline_queue.full():
+            await websocket.send_json({"type": "stage", "stage": "queued", "message": "Already processing audio. Please wait..."})
+            return
+
+        if not audio_chunks:
+            if finalizing or not pipeline_queue.empty():
+                await websocket.send_json({"type": "stage", "stage": "queued", "message": "Already processing audio. Please wait..."})
+                return
+            await websocket.send_json({"type": "error", "message": "No audio received."})
+            reset_segment_state()
+            return
+
+        segment = {
+            "audio_bytes": bytes(audio_chunks),
+            "speaker": speaker,
+            "speaker_mode": speaker_mode,
+            "session_id": session_id,
+            "source_language": source_language,
+            "target_language": target_language,
+            "client_mime_type": client_mime_type,
+            "audio_suffix": audio_suffix,
+            "queued_at": time(),
+            "reason": reason,
+        }
+        reset_segment_state()
+        await pipeline_queue.put(segment)
+        await websocket.send_json({"type": "stage", "stage": "queued", "message": "Audio queued for translation..."})
 
     async def emit_partial_pipeline() -> None:
         nonlocal last_partial_at, partial_text
@@ -145,7 +193,11 @@ async def websocket_audio_translation(
         partial_audio_path = upload_dir / f"{uuid4()}-partial{audio_suffix}"
         partial_audio_path.write_bytes(audio_chunks)
         try:
-            next_partial_text = await run_in_threadpool(pipeline.stt.transcribe, str(partial_audio_path), source_language)
+            try:
+                next_partial_text = await run_pipeline_step("partial STT", pipeline.stt.transcribe, str(partial_audio_path), source_language)
+            except PipelineStepTimeout as exc:
+                await websocket.send_json({"type": "stage", "stage": "partial_timeout", "message": str(exc)})
+                return
         finally:
             partial_audio_path.unlink(missing_ok=True)
         if not next_partial_text or next_partial_text == partial_text:
@@ -153,50 +205,58 @@ async def websocket_audio_translation(
         partial_text = next_partial_text
         await websocket.send_json({"type": "partial_transcription", "text": partial_text})
         if len(partial_text.split()) >= 3:
-            partial_translation = await run_in_threadpool(pipeline.translator.translate, partial_text, source_language, target_language)
+            try:
+                partial_translation = await run_pipeline_step("partial translation", pipeline.translator.translate, partial_text, source_language, target_language)
+            except PipelineStepTimeout as exc:
+                await websocket.send_json({"type": "stage", "stage": "partial_timeout", "message": str(exc)})
+                return
             await websocket.send_json({"type": "partial_translation", "text": partial_translation})
             observability.record_event("near_zero_partial", identity=identity, speaker=speaker, latency_seconds=time() - partial_started_at)
 
-    async def finalize_segment():
+    async def finalize_segment(segment: dict):
         nonlocal speaker, finalizing
         if finalizing:
             return
         finalizing = True
         segment_started_at = time()
+        audio_path = None
 
         try:
-            audio_bytes = bytes(audio_chunks)
+            audio_bytes = segment["audio_bytes"]
+            segment_speaker_mode = segment["speaker_mode"]
+            segment_session_id = segment["session_id"]
+            segment_source_language = segment["source_language"]
+            segment_target_language = segment["target_language"]
+            segment_mime_type = segment["client_mime_type"]
+            segment_audio_suffix = segment["audio_suffix"]
+            speaker = segment["speaker"]
             if not audio_bytes:
                 await websocket.send_json({"type": "error", "message": "No audio received."})
-                reset_segment_state()
                 return
 
             if len(audio_bytes) < get_min_speech_bytes():
                 await websocket.send_json({"type": "stage", "stage": "smoothing", "message": "Ignoring very short speech burst."})
-                reset_segment_state()
                 return
 
             estimated_seconds = max(1, len(audio_bytes) / 16000)
             if estimated_seconds > get_max_audio_seconds():
                 await websocket.send_json({"type": "error", "message": f"Audio segment exceeds {get_max_audio_seconds()} second limit."})
-                reset_segment_state()
                 return
             quota_allowed, remaining_seconds = usage_limiter.check_audio_seconds(identity, estimated_seconds)
             if not quota_allowed:
                 await websocket.send_json({"type": "error", "message": f"Daily audio quota exceeded. Remaining seconds: {int(remaining_seconds)}"})
-                reset_segment_state()
                 return
 
-            if speaker_mode == "auto":
-                speaker = session_registry.next_auto_speaker(session_id, identity)
-                session_registry.bind(session_id, speaker, identity, source_language, target_language)
+            if segment_speaker_mode == "auto":
+                speaker = session_registry.next_auto_speaker(segment_session_id, identity)
+                session_registry.bind(segment_session_id, speaker, identity, segment_source_language, segment_target_language)
 
-            active_source_language = target_language if speaker_mode == "auto" and speaker == "B" else source_language
-            active_target_language = source_language if speaker_mode == "auto" and speaker == "B" else target_language
+            active_source_language = segment_target_language if segment_speaker_mode == "auto" and speaker == "B" else segment_source_language
+            active_target_language = segment_source_language if segment_speaker_mode == "auto" and speaker == "B" else segment_target_language
             await websocket.send_json({
                 "type": "speaker_detected",
                 "speaker": speaker,
-                "mode": speaker_mode,
+                "mode": segment_speaker_mode,
                 "source_language": active_source_language,
                 "target_language": active_target_language,
             })
@@ -212,37 +272,36 @@ async def websocket_audio_translation(
                 "playback_owner": decision.playback_owner,
             })
             if not decision.allowed:
-                reset_segment_state()
                 return
 
             upload_dir = Path("models/uploads")
             upload_dir.mkdir(parents=True, exist_ok=True)
-            audio_path = upload_dir / f"{uuid4()}{audio_suffix}"
+            audio_path = upload_dir / f"{uuid4()}{segment_audio_suffix}"
             audio_path.write_bytes(audio_bytes)
 
             await websocket.send_json({"type": "stage", "stage": "stt", "message": "Speech finalized. Transcribing now..."})
-            observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_start", audio_bytes=len(audio_bytes), mime_type=client_mime_type)
-            source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), active_source_language)
+            observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_start", audio_bytes=len(audio_bytes), mime_type=segment_mime_type)
+            source_text = await run_pipeline_step("STT", pipeline.stt.transcribe, str(audio_path), active_source_language)
             print("STT:", source_text, flush=True)
             observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_done", source_text=source_text)
             if not source_text.strip():
                 await websocket.send_json({"type": "error", "message": "No clear speech recognized. Try speaking closer to the mic."})
-                reset_segment_state()
-                audio_path.unlink(missing_ok=True)
                 return
             await websocket.send_json({"type": "final_transcription", "speaker": speaker, "text": source_text})
             semantic_context = conversation_brain.analyze_semantics(speaker, source_text)
             await websocket.send_json({"type": "semantic_context", "speaker": speaker, **semantic_context})
             await websocket.send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
 
-            improved_text = await run_in_threadpool(
+            improved_text = await run_pipeline_step(
+                "context improvement",
                 pipeline.context_layer.improve,
                 source_text,
                 active_source_language,
                 active_target_language,
                 None,
             )
-            translated_text = await run_in_threadpool(
+            translated_text = await run_pipeline_step(
+                "translation",
                 pipeline.translator.translate,
                 improved_text,
                 active_source_language,
@@ -269,12 +328,13 @@ async def websocket_audio_translation(
 
             audio_output_path = None
             tts_chunks = []
-            for segment in tts_pacing["segments"]:
-                tts_chunks.extend(chunk_text_for_tts(segment))
+            for tts_segment in tts_pacing["segments"]:
+                tts_chunks.extend(chunk_text_for_tts(tts_segment))
             await websocket.send_json({"type": "tts_start", "chunks": len(tts_chunks)})
 
             for index, chunk in enumerate(tts_chunks, start=1):
-                chunk_output_path = await run_in_threadpool(
+                chunk_output_path = await run_pipeline_step(
+                    "TTS",
                     pipeline.tts.synthesize,
                     chunk,
                     f"models/tts/{uuid4()}-{index}.wav",
@@ -305,7 +365,7 @@ async def websocket_audio_translation(
                 translated_text=translated_text,
                 audio_output_path=audio_output_path,
             )
-            shared_session = session_registry.record_turn(session_id, identity, speaker, source_text, translated_text, semantic_context)
+            shared_session = session_registry.record_turn(segment_session_id, identity, speaker, source_text, translated_text, semantic_context)
             await websocket.send_json({"type": "session_sync", "session": shared_session})
             print("FINAL TRIGGERED", flush=True)
             await websocket.send_json({"type": "final", "speaker": speaker, "semantic_context": semantic_context, "session": shared_session, **result.__dict__})
@@ -324,10 +384,30 @@ async def websocket_audio_translation(
                 "playback_owner": complete_decision.playback_owner,
             })
 
-            reset_segment_state()
-            audio_path.unlink(missing_ok=True)
+        except PipelineStepTimeout as exc:
+            observability.increment("pipeline_timeouts_total")
+            await websocket.send_json({"type": "error", "message": str(exc), "recoverable": True})
+            conversation_brain.cancel(speaker)
         finally:
+            if audio_path is not None:
+                audio_path.unlink(missing_ok=True)
             finalizing = False
+
+    async def process_pipeline_queue() -> None:
+        while True:
+            segment = await pipeline_queue.get()
+            try:
+                await finalize_segment(segment)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                observability.increment("pipeline_errors_total")
+                await websocket.send_json({"type": "error", "message": f"Pipeline recovered after error: {exc}", "recoverable": True})
+                conversation_brain.cancel(segment.get("speaker", speaker))
+            finally:
+                pipeline_queue.task_done()
+
+    pipeline_worker = asyncio.create_task(process_pipeline_queue())
 
     try:
         while True:
@@ -336,7 +416,7 @@ async def websocket_audio_translation(
             except asyncio.TimeoutError:
                 if speech_started and audio_chunks and last_speech_at and time() - last_speech_at > get_vad_force_final_seconds():
                     print("FORCE FINAL", flush=True)
-                    await finalize_segment()
+                    await enqueue_finalize("force_timeout")
                 continue
 
             if message.get("type") == "websocket.disconnect":
@@ -393,7 +473,7 @@ async def websocket_audio_translation(
                     await websocket.send_json({"type": "listening", "speaker": speaker, "speaker_mode": speaker_mode, "message": "Receiving audio chunks with Silero VAD."})
 
                 if message_type == "finalize":
-                    await finalize_segment()
+                    await enqueue_finalize("client_finalize")
 
                 if message_type == "cancel":
                     conversation_brain.cancel(speaker)
@@ -462,7 +542,7 @@ async def websocket_audio_translation(
                         "silent_checks": silent_checks,
                     })
                     if silent_checks >= get_vad_silent_checks():
-                        await finalize_segment()
+                        await enqueue_finalize("vad_silence")
                 else:
                     if get_stream_hot_path_logging():
                         print("VAD:", False, flush=True)
@@ -476,3 +556,7 @@ async def websocket_audio_translation(
     except Exception:
         observability.increment("websocket_errors_total")
         raise
+    finally:
+        pipeline_worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await pipeline_worker

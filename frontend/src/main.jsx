@@ -48,6 +48,11 @@ const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.repla
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 const INITIAL_SESSION_ID = localStorage.getItem('translator_session_id') || crypto.randomUUID();
 const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 150);
+const HEALTH_POLL_MS = 3000;
+const STREAM_HEARTBEAT_MS = 2500;
+const STREAM_HEARTBEAT_MAX_MISSES = 2;
+const STREAM_RECONNECT_MS = 1000;
+const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 registerServiceWorker();
 
@@ -162,6 +167,8 @@ function App() {
   const streamFinalizePendingRef = useRef(false);
   const streamStartedAtRef = useRef(0);
   const firstAudioSeenRef = useRef(false);
+  const streamHeartbeatRef = useRef({ timer: null, missed: 0 });
+  const streamReconnectRef = useRef({ enabled: false, options: null, attempts: 0 });
   const ttsQueueRef = useRef([]);
   const ttsPlayingRef = useRef(false);
 
@@ -176,6 +183,26 @@ function App() {
         setStatus('Backend offline');
         setConnectionStatus('offline');
       });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const checkHealth = async () => {
+      try {
+        const response = await fetch(`${API_URL}/health`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('Backend health check failed');
+        if (!cancelled) setConnectionStatus('online');
+      } catch {
+        if (!cancelled) setConnectionStatus('offline');
+      }
+    };
+
+    checkHealth();
+    const timer = window.setInterval(checkHealth, HEALTH_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -418,6 +445,43 @@ function App() {
     stream?.getTracks().forEach((track) => track.stop());
   }
 
+  function clearStreamHeartbeat() {
+    if (streamHeartbeatRef.current?.timer) {
+      window.clearInterval(streamHeartbeatRef.current.timer);
+    }
+    streamHeartbeatRef.current = { timer: null, missed: 0 };
+  }
+
+  function markStreamPong() {
+    streamHeartbeatRef.current.missed = 0;
+    setConnectionStatus('online');
+  }
+
+  function startStreamHeartbeat(socket) {
+    clearStreamHeartbeat();
+    streamHeartbeatRef.current = { timer: null, missed: 0 };
+    const timer = window.setInterval(() => {
+      if (socketRef.current !== socket) {
+        clearStreamHeartbeat();
+        return;
+      }
+      if (socket.readyState !== WebSocket.OPEN) return;
+      streamHeartbeatRef.current.missed += 1;
+      if (streamHeartbeatRef.current.missed > STREAM_HEARTBEAT_MAX_MISSES) {
+        setPipelineStage('Connection heartbeat missed');
+        setStatus('Reconnecting stream...');
+        socket.close();
+        return;
+      }
+      socket.send(JSON.stringify({ type: 'ping' }));
+    }, STREAM_HEARTBEAT_MS);
+    streamHeartbeatRef.current.timer = timer;
+  }
+
+  function disableStreamReconnect() {
+    streamReconnectRef.current = { ...streamReconnectRef.current, enabled: false };
+  }
+
   function downloadPwaInstaller() {
     const appUrl = window.location.origin;
     const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install Live Translator</title></head><body style="font-family:system-ui;margin:24px;line-height:1.5"><h1>Install Live Translator</h1><p>Open <a href="${appUrl}">${appUrl}</a>, then use your browser's Add to Home Screen or Install app option.</p><p><a href="${appUrl}">Open app now</a></p></body></html>`;
@@ -520,6 +584,8 @@ function App() {
 
   async function toggleStreaming(options = {}) {
     if (socketRef.current) {
+      disableStreamReconnect();
+      clearStreamHeartbeat();
       streamFinalizePendingRef.current = true;
       if (streamRecorderRef.current?.state === 'recording') {
         streamRecorderRef.current.requestData?.();
@@ -533,22 +599,35 @@ function App() {
       return;
     }
 
+    const reconnecting = options.reconnect === true;
+    const cleanOptions = { ...options };
+    delete cleanOptions.reconnect;
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (error) {
+      disableStreamReconnect();
       setMicPermission('denied');
       setStatus(mediaErrorMessage(error));
       return;
     }
+    const selectedSpeakerMode = cleanOptions.speakerMode || speakerMode;
     setMicPermission('available');
     unlockMobileAudio();
-    setInterpreterMode(Boolean(options.interpreter || speakerMode === 'auto'));
+    setInterpreterMode(Boolean(cleanOptions.interpreter || selectedSpeakerMode === 'auto'));
     setDetectedSpeaker('-');
     setLatencyStats({ mic_to_backend: '-', backend_response: '-', first_audio: '-' });
     firstAudioSeenRef.current = false;
     streamStartedAtRef.current = performance.now();
-    const selectedSpeakerMode = options.speakerMode || speakerMode;
+    streamReconnectRef.current = {
+      enabled: true,
+      options: {
+        ...cleanOptions,
+        interpreter: Boolean(cleanOptions.interpreter || selectedSpeakerMode === 'auto'),
+        speakerMode: selectedSpeakerMode,
+      },
+      attempts: reconnecting ? streamReconnectRef.current.attempts : 0,
+    };
     const recorder = createAudioRecorder(stream);
     const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     socketRef.current = socket;
@@ -564,6 +643,7 @@ function App() {
     };
     socket.onopen = () => {
       streamFinalizePendingRef.current = false;
+      setConnectionStatus('online');
       setStreaming(true);
       setPartialTranscript('');
       setLiveTranslation('');
@@ -578,11 +658,16 @@ function App() {
         speaker: selectedSpeakerMode === 'auto' ? 'auto' : 'A',
         mime_type: recorder.mimeType || preferredAudioMimeType(),
       }));
+      startStreamHeartbeat(socket);
       streamRecorderRef.current = recorder;
       recorder.start(activePacketMs());
     };
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
+      if (data.type === 'pong') {
+        markStreamPong();
+        return;
+      }
       if (data.type === 'session_restored' || data.type === 'session_sync') applySharedSession(data.session?.shared || data.session);
       if (data.type === 'speaker_detected') {
         setDetectedSpeaker(data.speaker || '-');
@@ -620,6 +705,8 @@ function App() {
         setPipelineStage('Voice stream complete');
       }
       if (data.type === 'error') {
+        disableStreamReconnect();
+        clearStreamHeartbeat();
         setProcessing(false);
         setPipelineStage('Needs audio');
         setStatus(data.message || 'Stream failed');
@@ -631,6 +718,8 @@ function App() {
       }
       if (data.type === 'vad' && data.speech_detected) setStatus('Streaming audio... speech detected');
       if (data.type === 'final') {
+        disableStreamReconnect();
+        clearStreamHeartbeat();
         setResult(data);
         setProcessing(false);
         setPipelineStage('Complete');
@@ -649,12 +738,39 @@ function App() {
       setProcessing(false);
     };
     socket.onclose = () => {
+      clearStreamHeartbeat();
       setStreaming(false);
       setProcessing(false);
       setInterpreterMode(false);
       streamFinalizePendingRef.current = false;
-      stopTracks(stream);
+      if (streamRecorderRef.current === recorder) {
+        if (streamRecorderRef.current.state === 'recording') {
+          streamRecorderRef.current.stop();
+        } else {
+          stopTracks(stream);
+        }
+        streamRecorderRef.current = null;
+      } else {
+        stopTracks(stream);
+      }
       if (socketRef.current === socket) socketRef.current = null;
+      if (!streamReconnectRef.current.enabled) return;
+
+      if (streamReconnectRef.current.attempts >= STREAM_RECONNECT_MAX_ATTEMPTS) {
+        disableStreamReconnect();
+        setStatus('Connection lost. Tap to restart.');
+        setPipelineStage('Connection lost');
+        setConnectionStatus('offline');
+        return;
+      }
+
+      streamReconnectRef.current.attempts += 1;
+      setStatus('Reconnecting stream...');
+      setPipelineStage(`Reconnecting ${streamReconnectRef.current.attempts}/${STREAM_RECONNECT_MAX_ATTEMPTS}`);
+      window.setTimeout(() => {
+        if (!streamReconnectRef.current.enabled || socketRef.current) return;
+        toggleStreaming({ ...(streamReconnectRef.current.options || {}), reconnect: true });
+      }, STREAM_RECONNECT_MS);
     };
   }
 
