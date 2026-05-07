@@ -7,3 +7,4 @@ transformers>=4.38.0
 torch==2.2.2+cpu
 sentencepiece>=0.2.0
 python-multipart>=0.0.9
+piper-tts>=1.2.0
