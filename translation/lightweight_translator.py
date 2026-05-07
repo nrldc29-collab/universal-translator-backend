@@ -1,3 +1,6 @@
+import string
+
+
 class LightweightTranslator:
     def __init__(self):
         self._phrases = {
@@ -8,6 +11,7 @@ class LightweightTranslator:
                 "good night": "buenas noches",
                 "thank you": "gracias",
                 "how are you": "cómo estás",
+                "hello how are you": "hola, ¿cómo estás?",
                 "i need help": "necesito ayuda",
                 "where is the bathroom": "dónde está el baño",
             },
@@ -18,6 +22,7 @@ class LightweightTranslator:
                 "buenas noches": "good night",
                 "gracias": "thank you",
                 "cómo estás": "how are you",
+                "hola cómo estás": "hello, how are you?",
                 "necesito ayuda": "i need help",
                 "dónde está el baño": "where is the bathroom",
             },
@@ -28,7 +33,7 @@ class LightweightTranslator:
             return ""
         source = source_language or "en"
         target = target_language or "es"
-        normalized = " ".join(text.lower().strip().split())
+        normalized = " ".join(text.lower().translate(str.maketrans("", "", string.punctuation)).strip().split())
         phrase = self._phrases.get((source, target), {}).get(normalized)
         if phrase:
             return phrase
