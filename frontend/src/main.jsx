@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Mic, Radio, Square, Languages } from 'lucide-react';
+import { ArrowLeftRight, Mic, Square } from 'lucide-react';
 import './styles.css';
 import { registerServiceWorker } from './pwa';
 
@@ -53,6 +53,7 @@ const STREAM_HEARTBEAT_MS = 2500;
 const STREAM_HEARTBEAT_MAX_MISSES = 2;
 const STREAM_RECONNECT_MS = 1000;
 const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
+const HOLD_TO_TALK_DELAY_MS = 260;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 registerServiceWorker();
 
@@ -169,6 +170,10 @@ function App() {
   const firstAudioSeenRef = useRef(false);
   const streamHeartbeatRef = useRef({ timer: null, missed: 0 });
   const streamReconnectRef = useRef({ enabled: false, options: null, attempts: 0 });
+  const holdToTalkTimerRef = useRef(null);
+  const holdToTalkActiveRef = useRef(false);
+  const holdToTalkReleasePendingRef = useRef(false);
+  const ignoreNextMicClickRef = useRef(false);
   const ttsQueueRef = useRef([]);
   const ttsPlayingRef = useRef(false);
 
@@ -482,6 +487,57 @@ function App() {
     streamReconnectRef.current = { ...streamReconnectRef.current, enabled: false };
   }
 
+  function finalizeCurrentStream(nextStatus = 'Processing stream...') {
+    if (!socketRef.current) return false;
+    if (socketRef.current.readyState !== WebSocket.OPEN && !streamRecorderRef.current) return false;
+    disableStreamReconnect();
+    clearStreamHeartbeat();
+    streamFinalizePendingRef.current = true;
+    if (streamRecorderRef.current?.state === 'recording') {
+      streamRecorderRef.current.requestData?.();
+      streamRecorderRef.current.stop();
+    } else if (socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'finalize' }));
+    }
+    setStreaming(false);
+    setProcessing(true);
+    setPipelineStage('Processing');
+    setStatus(nextStatus);
+    return true;
+  }
+
+  function handleMicClick() {
+    if (ignoreNextMicClickRef.current) {
+      ignoreNextMicClickRef.current = false;
+      return;
+    }
+    toggleStreaming({ interpreter: true, speakerMode: 'auto' });
+  }
+
+  function handleMicPointerDown(event) {
+    if (socketRef.current || processing || playing) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    holdToTalkTimerRef.current = window.setTimeout(() => {
+      holdToTalkActiveRef.current = true;
+      holdToTalkReleasePendingRef.current = false;
+      ignoreNextMicClickRef.current = true;
+      toggleStreaming({ interpreter: true, speakerMode: 'auto', holdToTalk: true });
+    }, HOLD_TO_TALK_DELAY_MS);
+  }
+
+  function handleMicPointerUp() {
+    if (holdToTalkTimerRef.current) {
+      window.clearTimeout(holdToTalkTimerRef.current);
+      holdToTalkTimerRef.current = null;
+    }
+    if (!holdToTalkActiveRef.current) return;
+    holdToTalkActiveRef.current = false;
+    ignoreNextMicClickRef.current = true;
+    if (!finalizeCurrentStream('Processing speech...')) {
+      holdToTalkReleasePendingRef.current = true;
+    }
+  }
+
   function downloadPwaInstaller() {
     const appUrl = window.location.origin;
     const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install Live Translator</title></head><body style="font-family:system-ui;margin:24px;line-height:1.5"><h1>Install Live Translator</h1><p>Open <a href="${appUrl}">${appUrl}</a>, then use your browser's Add to Home Screen or Install app option.</p><p><a href="${appUrl}">Open app now</a></p></body></html>`;
@@ -584,18 +640,7 @@ function App() {
 
   async function toggleStreaming(options = {}) {
     if (socketRef.current) {
-      disableStreamReconnect();
-      clearStreamHeartbeat();
-      streamFinalizePendingRef.current = true;
-      if (streamRecorderRef.current?.state === 'recording') {
-        streamRecorderRef.current.requestData?.();
-        streamRecorderRef.current.stop();
-      } else if (socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ type: 'finalize' }));
-      }
-      setStreaming(false);
-      setProcessing(true);
-      setStatus('Processing stream...');
+      finalizeCurrentStream();
       return;
     }
 
@@ -645,6 +690,7 @@ function App() {
       streamFinalizePendingRef.current = false;
       setConnectionStatus('online');
       setStreaming(true);
+      setResult(null);
       setPartialTranscript('');
       setLiveTranslation('');
       setPipelineStage('Listening');
@@ -661,6 +707,10 @@ function App() {
       startStreamHeartbeat(socket);
       streamRecorderRef.current = recorder;
       recorder.start(activePacketMs());
+      if (cleanOptions.holdToTalk && holdToTalkReleasePendingRef.current) {
+        holdToTalkReleasePendingRef.current = false;
+        window.setTimeout(() => finalizeCurrentStream('Processing speech...'), 80);
+      }
     };
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -711,6 +761,7 @@ function App() {
         setPipelineStage('Needs audio');
         setStatus(data.message || 'Stream failed');
         streamFinalizePendingRef.current = false;
+        holdToTalkReleasePendingRef.current = false;
         if (streamRecorderRef.current?.state === 'recording') streamRecorderRef.current.stop();
         else stopTracks(stream);
         socket.close();
@@ -743,6 +794,7 @@ function App() {
       setProcessing(false);
       setInterpreterMode(false);
       streamFinalizePendingRef.current = false;
+      holdToTalkReleasePendingRef.current = false;
       if (streamRecorderRef.current === recorder) {
         if (streamRecorderRef.current.state === 'recording') {
           streamRecorderRef.current.stop();
@@ -791,7 +843,11 @@ function App() {
 
   function playNextTtsChunk() {
     if (ttsPlayingRef.current || ttsQueueRef.current.length === 0) {
-      if (ttsQueueRef.current.length === 0) setPlaying(false);
+      if (ttsQueueRef.current.length === 0) {
+        setPlaying(false);
+        setPipelineStage('Ready to listen');
+        setStatus('Ready to listen');
+      }
       return;
     }
 
@@ -957,126 +1013,60 @@ function App() {
 
   const sourceName = languages[sourceLanguage] || sourceLanguage.toUpperCase();
   const targetName = languages[targetLanguage] || targetLanguage.toUpperCase();
-  const sourceText = partialTranscript || result?.source_text || text || 'Tap the mic and speak';
-  const translatedText = liveTranslation || result?.translated_text || 'Your translation will appear here';
-  const micState = streaming ? 'listening' : processing ? 'translating' : playing ? 'speaking' : 'idle';
-  const connectionLabel = connectionStatus === 'online' ? 'Online' : connectionStatus === 'offline' ? 'Offline' : 'Connecting';
+  const sourceText = partialTranscript || result?.source_text || 'Ready to listen';
+  const translatedText = liveTranslation || result?.translated_text || 'Translation appears here';
+  const micState = playing ? 'speaking' : streaming ? 'listening' : processing ? 'processing' : 'idle';
+  const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Ready to listen';
 
   return (
     <main className="app-shell">
-      <section className="phone-frame">
-        <header className="topbar">
-          <div>
-            <p className="brand-kicker">Universal Translator</p>
-            <h1>One-tap interpreter.</h1>
-          </div>
-          <div className={`status-pill ${connectionStatus}`}><span />{connectionLabel}</div>
-        </header>
-
-        <section className="glass-card interpreter-card">
-          <div>
-            <p className="label">Interpreter mode</p>
-            <p className="interpreter-copy">Tap once, speak naturally, and let the app auto-pick speaker turns.</p>
-          </div>
-          <button
-            className={streaming ? 'danger' : 'primary-action'}
-            onClick={() => toggleStreaming({ interpreter: true, speakerMode: 'auto' })}
-            disabled={processing && !streaming}
-          >
-            {streaming ? <Square size={18} /> : <Mic size={18} />}
-            {streaming ? 'Stop interpreter' : 'Start interpreter'}
-          </button>
-          <div className="latency-row">
-            <span>Speaker {detectedSpeaker}</span>
-            <span>Mic {latencyStats.mic_to_backend}</span>
-            <span>Backend {latencyStats.backend_response}</span>
-            <span>Voice {latencyStats.first_audio}</span>
-          </div>
-        </section>
-
-        {!authToken && (
-          <section className="glass-card signin-card">
-            <p className="label">Private session</p>
-            <div className="signin-grid">
-              <input aria-label="Username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" />
-              <input aria-label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" />
-              <button onClick={login}>Log in</button>
-            </div>
-          </section>
-        )}
-
-        <section className="hero-panel">
-          <div className="language-row">
+      <section className="phone-frame" data-connection={connectionStatus}>
+        <section className="language-row" aria-label={`${sourceName} to ${targetName}`}>
+          <div className="language-select">
+            <span>From</span>
             <select aria-label="Source language" value={sourceLanguage} onChange={(event) => setSourceLanguage(event.target.value)}>
               {Object.entries(languages).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
             </select>
-            <button className="swap-button" onClick={() => { setSourceLanguage(targetLanguage); setTargetLanguage(sourceLanguage); }} aria-label="Swap languages">?</button>
+          </div>
+          <button className="swap-button" onClick={() => { setSourceLanguage(targetLanguage); setTargetLanguage(sourceLanguage); }} aria-label="Swap languages">
+            <ArrowLeftRight size={21} />
+          </button>
+          <div className="language-select">
+            <span>To</span>
             <select aria-label="Target language" value={targetLanguage} onChange={(event) => setTargetLanguage(event.target.value)}>
               {Object.entries(languages).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
             </select>
           </div>
+        </section>
 
-          <button className={`mic-orb ${micState}`} onClick={() => toggleStreaming()} disabled={processing && !streaming} aria-label={streaming ? 'Stop listening' : 'Start speaking'}>
+        <section className="mic-panel">
+          <button
+            className={`mic-orb ${micState}`}
+            onClick={handleMicClick}
+            onPointerDown={handleMicPointerDown}
+            onPointerUp={handleMicPointerUp}
+            onPointerCancel={handleMicPointerUp}
+            onContextMenu={(event) => event.preventDefault()}
+            disabled={playing || (processing && !streaming)}
+            aria-label={micLabel}
+            aria-live="polite"
+          >
             <span className="orb-ring" />
-            {streaming ? <Square size={42} /> : <Mic size={52} />}
+            <span className="orb-spin" />
+            <span className="sr-only">{micLabel}</span>
+            {streaming ? <Square size={46} /> : <Mic size={58} />}
           </button>
-          <p className="tap-label">{streaming ? 'Listening...' : processing ? 'Translating...' : playing ? 'Speaking...' : 'Tap to Interpret'}</p>
-          <p className="quiet-status">{status}</p>
         </section>
 
         <section className="translation-stack">
-          <article className="glass-card transcript-card">
-            <p className="label">You said</p>
+          <article className="transcript-card">
+            <p className="label">Transcript</p>
             <p>{sourceText}</p>
           </article>
-          <article className="glass-card translation-card">
+          <article className="translation-card">
             <p className="label">Translation</p>
             <p>{translatedText}</p>
           </article>
-        </section>
-
-        <section className="conversation-panel">
-          <div className="conversation-header">
-            <p className="label">Conversation</p>
-            <button onClick={runSelfTest} disabled={selfTest.status === 'running'}>Self test</button>
-          </div>
-          <div className="speaker-grid">
-            <button className={duplex.A.active ? 'speaker active' : 'speaker'} onClick={() => toggleDuplexSpeaker('A')}>
-              <span>Speaker A</span>
-              <strong>{sourceName}</strong>
-            </button>
-            <button className={duplex.B.active ? 'speaker active alt' : 'speaker alt'} onClick={() => toggleDuplexSpeaker('B')}>
-              <span>Speaker B</span>
-              <strong>{targetName}</strong>
-            </button>
-          </div>
-          <div className="timeline">
-            {(sharedSession?.history || []).slice(-4).map((turn, index) => (
-              <div className="turn" key={`${turn.created_at}-${index}`}>
-                <span>{turn.speaker || 'A'}</span>
-                <p>{turn.source_text}</p>
-                <strong>{turn.translated_text}</strong>
-              </div>
-            ))}
-            {!(sharedSession?.history || []).length && <p className="empty-timeline">Live conversation appears here.</p>}
-          </div>
-        </section>
-
-        <section className="settings-sheet">
-          <details>
-            <summary>Settings</summary>
-            <div className="settings-grid">
-              <label>Voice speed<select value={speechSpeed} onChange={(event) => setSpeechSpeed(event.target.value)}><option value="slow">Slow</option><option value="normal">Normal</option><option value="fast">Fast</option></select></label>
-              <label>Audio quality<select value={lowBandwidthMode ? 'low' : 'normal'} onChange={(event) => setLowBandwidthMode(event.target.value === 'low')}><option value="normal">Normal</option><option value="low">Low bandwidth</option></select></label>
-              <label>Speaker detection<select value={speakerMode} onChange={(event) => setSpeakerMode(event.target.value)}><option value="auto">Auto turns</option><option value="manual">Manual A/B</option></select></label>
-              <label>Accessibility<select value={accessibilityMode} onChange={(event) => setAccessibilityMode(event.target.value)}><option value="balanced">Balanced</option><option value="noise">Noisy room</option><option value="accent">Strong accent</option><option value="slow">Slower conversation</option></select></label>
-              <button onClick={requestMicPermission}>Allow Microphone</button>
-              <button onClick={unlockMobileAudio}>{mobileAudioUnlocked ? 'Audio Ready' : 'Unlock Audio'}</button>
-              <button disabled={!installPrompt || pwaInstalled} onClick={installApp}>{pwaInstalled ? 'Installed' : 'Install App'}</button>
-              <button onClick={downloadPwaInstaller}>Download Installer</button>
-              {authToken && <button onClick={logout}>Log out</button>}
-            </div>
-          </details>
         </section>
       </section>
     </main>
