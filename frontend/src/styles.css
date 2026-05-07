@@ -117,6 +117,10 @@ p { margin: 0; overflow-wrap: anywhere; }
   box-shadow: 0 0 0 14px rgba(37, 99, 235, .08), 0 0 78px rgba(96, 165, 250, .55), inset 0 -22px 42px rgba(4, 17, 43, .24);
 }
 
+.mic-orb.listening-pulse {
+  animation: listeningPulse 1.4s ease-in-out infinite;
+}
+
 .mic-orb.listening .orb-ring {
   border-color: rgba(125, 211, 252, .9);
   animation: pulse 1.2s ease-in-out infinite;
@@ -192,6 +196,21 @@ p { margin: 0; overflow-wrap: anywhere; }
 @keyframes pulse {
   0%, 100% { transform: scale(1); opacity: .7; }
   50% { transform: scale(1.14); opacity: .18; }
+}
+
+@keyframes listeningPulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 26px 70px rgba(37, 99, 235, .46), 0 0 0 0 rgba(37, 99, 235, .42), inset 0 -22px 42px rgba(4, 17, 43, .24);
+  }
+  70% {
+    transform: scale(1.045);
+    box-shadow: 0 30px 82px rgba(96, 165, 250, .58), 0 0 0 24px rgba(37, 99, 235, 0), inset 0 -22px 42px rgba(4, 17, 43, .24);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 26px 70px rgba(37, 99, 235, .46), 0 0 0 0 rgba(37, 99, 235, 0), inset 0 -22px 42px rgba(4, 17, 43, .24);
+  }
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }

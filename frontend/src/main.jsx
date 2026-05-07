@@ -1145,7 +1145,7 @@ function App() {
 
         <section className="mic-panel">
           <button
-            className={`mic-orb ${micState}`}
+            className={`mic-orb ${micState} ${streaming ? 'listening-pulse' : ''}`}
             onClick={handleMicClick}
             onPointerDown={handleMicPointerDown}
             onPointerUp={handleMicPointerUp}
