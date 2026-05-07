@@ -418,7 +418,7 @@ function App() {
     if (!response.ok) {
       const message = await responseErrorMessage(response, 'Auto-login failed');
       console.log('AUTH: auto-login failed', message);
-      throw new Error(message);
+      return '';
     }
     const data = await response.json();
     localStorage.setItem('translator_token', data.access_token);
@@ -930,18 +930,7 @@ function App() {
       return;
     }
     console.log('STEP 7: creating WebSocket');
-    let activeAuthToken;
-    try {
-      activeAuthToken = await ensureAuthToken();
-    } catch (error) {
-      console.log('STEP 7b: auth failed before WebSocket', error);
-      stopTracks(stream);
-      disableStreamReconnect();
-      resetStreamState();
-      setStatus(error.message || 'Login required');
-      setPipelineStage('Login required');
-      return;
-    }
+    const activeAuthToken = await ensureAuthToken();
     const socketUrl = withAuthToken(WS_AUDIO_URL, activeAuthToken);
     console.log('STEP 7a: WS URL=', socketUrl.replace(/access_token=[^&]+/, 'access_token=***'));
     setWsDebug({ url: WS_AUDIO_URL, close: 'connecting', error: '-' });
