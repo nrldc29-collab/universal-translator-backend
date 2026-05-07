@@ -1,5 +1,7 @@
 param(
     [string]$BaseUrl = "http://127.0.0.1:8000",
+    [string]$Username = "",
+    [string]$Password = "",
     [int]$TimeoutSec = 30
 )
 
@@ -8,6 +10,7 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $Root "venv\Scripts\python.exe"
 $Failures = @()
 $BaseUrl = $BaseUrl.TrimEnd("/")
+$AccessToken = ""
 
 function Add-Pass {
     param([string]$Name, [string]$Detail = "")
@@ -40,10 +43,18 @@ function Invoke-SmokeCheck {
 function Get-WebSocketUrl {
     param([string]$Url)
     if ($Url.StartsWith("https://")) {
-        return "wss://$($Url.Substring(8))/ws/audio"
+        $ws = "wss://$($Url.Substring(8))/ws/audio"
+        if ($AccessToken) {
+            return "$ws`?access_token=$AccessToken"
+        }
+        return $ws
     }
     if ($Url.StartsWith("http://")) {
-        return "ws://$($Url.Substring(7))/ws/audio"
+        $ws = "ws://$($Url.Substring(7))/ws/audio"
+        if ($AccessToken) {
+            return "$ws`?access_token=$AccessToken"
+        }
+        return $ws
     }
     throw "Unsupported BaseUrl scheme: $Url"
 }
@@ -69,6 +80,15 @@ Write-Output ""
 Write-Output "Universal Translator smoke test"
 Write-Output "Target: $BaseUrl"
 Write-Output ""
+
+if ($Username -and $Password) {
+    $loginBody = @{
+        username = $Username
+        password = $Password
+    } | ConvertTo-Json
+    $login = Invoke-RestMethod -Uri "$BaseUrl/auth/login" -Method Post -ContentType "application/json" -Body $loginBody -TimeoutSec $TimeoutSec
+    $AccessToken = $login.access_token
+}
 
 Invoke-SmokeCheck "Backend health" {
     $health = Invoke-RestMethod -Uri "$BaseUrl/health" -TimeoutSec $TimeoutSec
@@ -130,7 +150,11 @@ Invoke-SmokeCheck "Text translation" {
         target_language = "es"
         synthesize_audio = $false
     } | ConvertTo-Json
-    $result = Invoke-RestMethod -Uri "$BaseUrl/translate/text" -Method Post -ContentType "application/json" -Body $body -TimeoutSec ([Math]::Max($TimeoutSec, 180))
+    $headers = @{}
+    if ($AccessToken) {
+        $headers.Authorization = "Bearer $AccessToken"
+    }
+    $result = Invoke-RestMethod -Uri "$BaseUrl/translate/text" -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec ([Math]::Max($TimeoutSec, 180))
     if (-not $result.translated_text) {
         throw "Translated text was empty"
     }
