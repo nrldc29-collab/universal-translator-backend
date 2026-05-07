@@ -1138,7 +1138,10 @@ function App() {
     <main className="app-shell">
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
         <header className="clean-header">
-          <h1 className="app-title">Universal Translator</h1>
+          <h1 className="app-title">
+            <span className="brand-mark">Anai</span>
+            <sub>nrldc</sub>
+          </h1>
           <button className="language-label" onClick={() => { setSourceLanguage(targetLanguage); setTargetLanguage(sourceLanguage); }} aria-label={`${sourceName} to ${targetName}. Tap to swap.`}>
             {languageDirection}
           </button>
