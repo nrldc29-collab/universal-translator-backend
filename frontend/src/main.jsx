@@ -1138,10 +1138,6 @@ function App() {
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
         <header className="clean-header">
           <h1>Universal Translator</h1>
-          <div className="header-meta">
-            <span className={`online-dot ${connectionStatus}`} />
-            <span>{connectionStatus === 'online' ? 'Online' : 'Connecting'}</span>
-          </div>
           <button className="language-direction" onClick={() => { setSourceLanguage(targetLanguage); setTargetLanguage(sourceLanguage); }} aria-label={`${sourceName} to ${targetName}. Tap to swap.`}>
             {languageDirection}
           </button>
