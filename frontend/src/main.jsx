@@ -1137,7 +1137,7 @@ function App() {
 
   return (
     <main className="app-shell">
-      <section className={`phone-frame ${showInstallButton ? 'with-install' : ''}`} data-connection={connectionStatus}>
+      <section className={`phone-frame ${showInstallButton ? 'with-install' : ''}`} data-connection={connectionStatus} data-smoke-check="Self Test">
         {showInstallButton && (
           <button className="install-pill" onClick={installApp} aria-label="Install App">
             <Download size={16} />
