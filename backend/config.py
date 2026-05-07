@@ -42,6 +42,10 @@ def get_whisper_beam_size() -> int:
     return int(os.getenv("WHISPER_BEAM_SIZE", "1"))
 
 
+def get_translation_backend() -> str:
+    return os.getenv("TRANSLATION_BACKEND", "marian").lower()
+
+
 def get_allowed_origins() -> list[str]:
     # Default: local dev + production URLs
     default_origins = (
