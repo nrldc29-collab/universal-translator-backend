@@ -1165,14 +1165,15 @@ function App() {
             {streaming ? <Square size={46} /> : <Mic size={58} />}
           </button>
           <p className="mic-label">{micLabel}</p>
+          {processing && !streaming && !playing && <p className="thinking">Translating...</p>}
         </section>
 
         <section className="translation-stack">
           <article className="transcript-card">
-            <p className="transcript-text">{sourceText}</p>
+            <p className="transcript-text fade-in" key={sourceText}>{sourceText}</p>
           </article>
           <article className="translation-card">
-            <p className="translation-text">{translatedText}</p>
+            <p className="translation-text fade-in" key={translatedText}>{translatedText}</p>
           </article>
         </section>
       </section>

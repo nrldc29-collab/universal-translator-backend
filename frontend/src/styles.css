@@ -144,6 +144,7 @@ p { margin: 0; overflow-wrap: anywhere; }
   background: radial-gradient(circle at 30% 30%, #3b82f6, #1d4ed8);
   box-shadow: 0 0 60px rgba(59, 130, 246, .4), 0 10px 30px rgba(0, 0, 0, .4), inset 0 -22px 42px rgba(4, 17, 43, .28);
   transition: transform .2s ease, box-shadow .3s ease, background .3s ease;
+  animation: breathe 3.5s ease-in-out infinite;
   touch-action: none;
   user-select: none;
 }
@@ -177,6 +178,10 @@ p { margin: 0; overflow-wrap: anywhere; }
 }
 
 .mic-orb.processing { background: #1d4ed8; }
+.mic-orb.processing,
+.mic-orb.speaking {
+  animation: none;
+}
 .mic-orb.processing .orb-spin { opacity: 1; animation: spin 1s linear infinite; }
 
 .mic-orb.speaking {
@@ -194,6 +199,15 @@ p { margin: 0; overflow-wrap: anywhere; }
   font-size: 23px;
   font-weight: 850;
   letter-spacing: -.02em;
+}
+
+.thinking {
+  margin-top: -14px;
+  color: rgba(255, 255, 255, .6);
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: .02em;
+  animation: blink 1.2s ease-in-out infinite;
 }
 
 .translation-stack {
@@ -239,6 +253,10 @@ p { margin: 0; overflow-wrap: anywhere; }
   text-align: center;
 }
 
+.fade-in {
+  animation: fadeInUp .25s ease-out;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -254,6 +272,15 @@ p { margin: 0; overflow-wrap: anywhere; }
 @keyframes pulse {
   0%, 100% { transform: scale(1); opacity: .7; }
   50% { transform: scale(1.14); opacity: .18; }
+}
+
+@keyframes breathe {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.03);
+  }
 }
 
 @keyframes listeningPulse {
@@ -280,8 +307,14 @@ p { margin: 0; overflow-wrap: anywhere; }
 }
 
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes blink {
+  50% {
+    opacity: .2;
+  }
 }
 
 @media (max-width: 430px) {
