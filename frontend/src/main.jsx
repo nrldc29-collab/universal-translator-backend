@@ -192,6 +192,7 @@ function App() {
   const [analytics, setAnalytics] = useState(null);
   const [diagnostics, setDiagnostics] = useState(null);
   const [diagnosticsStatus, setDiagnosticsStatus] = useState('checking');
+  const [wsDebug, setWsDebug] = useState({ url: WS_AUDIO_URL, close: '-', error: '-' });
   const [selfTest, setSelfTest] = useState({
     status: 'idle',
     translation: '-',
@@ -909,7 +910,10 @@ function App() {
       return;
     }
     console.log('STEP 7: creating WebSocket');
-    const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
+    const socketUrl = withAuthToken(WS_AUDIO_URL, authToken);
+    console.log('STEP 7a: WS URL=', socketUrl.replace(/access_token=[^&]+/, 'access_token=***'));
+    setWsDebug({ url: WS_AUDIO_URL, close: 'connecting', error: '-' });
+    const socket = new WebSocket(socketUrl);
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
     recorder.ondataavailable = async (event) => {
@@ -1070,12 +1074,17 @@ function App() {
     };
     socket.onerror = (event) => {
       console.log('STEP X: WS ERROR:', event);
+      setWsDebug((current) => ({ ...current, error: 'socket error' }));
       setStatus('Stream connection error');
       setPipelineStage('Connection error');
       resetStreamState();
     };
-    socket.onclose = () => {
-      console.log('STEP X: WS CLOSED');
+    socket.onclose = (event) => {
+      console.log('STEP X: WS CLOSED', event.code, event.reason, event.wasClean);
+      setWsDebug((current) => ({
+        ...current,
+        close: `${event.code || 'no-code'} ${event.reason || 'no-reason'} clean:${event.wasClean ? 1 : 0}`,
+      }));
       clearStreamHeartbeat();
       resetStreamState();
       streamFinalizePendingRef.current = false;
@@ -1409,6 +1418,9 @@ function App() {
             <div>R:{recording ? 1 : 0} S:{streaming ? 1 : 0} P:{processing ? 1 : 0} PL:{playing ? 1 : 0}</div>
             <div>Socket:{socketRef.current ? (socketRef.current.readyState === 1 ? 'OPEN' : socketRef.current.readyState) : 'null'}</div>
             <div>Stage:{pipelineStage}</div>
+            <div>Close:{wsDebug.close}</div>
+            <div>WSErr:{wsDebug.error}</div>
+            <div>WS:{wsDebug.url.replace(/^wss?:\/\//, '')}</div>
           </div>
         </section>
 
