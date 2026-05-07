@@ -103,11 +103,11 @@ p { margin: 0; overflow-wrap: anywhere; }
 
 .app-title sub {
   position: relative;
-  bottom: -2px;
-  color: rgba(255, 255, 255, .34);
-  font-size: 10px;
+  bottom: -1px;
+  color: rgba(255, 255, 255, .22);
+  font-size: 6px;
   font-weight: 800;
-  letter-spacing: .14em;
+  letter-spacing: .08em;
   text-transform: uppercase;
 }
 
