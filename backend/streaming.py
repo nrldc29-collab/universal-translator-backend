@@ -150,11 +150,12 @@ async def websocket_audio_translation(
     last_speech_at = 0.0
     last_partial_at = 0.0
     partial_text = ""
+    partial_tts_text = ""
     partial_task = None
     pipeline_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
 
     def reset_segment_state() -> None:
-        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count, partial_text, last_partial_at
+        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count, partial_text, partial_tts_text, last_partial_at
         audio_chunks = bytearray()
         recent_chunks = []
         speech_started = False
@@ -162,6 +163,7 @@ async def websocket_audio_translation(
         vad_error_count = 0
         last_speech_at = 0.0
         partial_text = ""
+        partial_tts_text = ""
         last_partial_at = 0.0
 
     async def enqueue_finalize(reason: str) -> None:
@@ -236,7 +238,7 @@ async def websocket_audio_translation(
         partial_speaker_label: str,
         partial_started_at: float,
     ) -> None:
-        nonlocal partial_text
+        nonlocal partial_text, partial_tts_text
         upload_dir = Path("models/uploads")
         upload_dir.mkdir(parents=True, exist_ok=True)
         partial_audio_path = upload_dir / f"{uuid4()}-partial{partial_suffix}"
@@ -268,6 +270,33 @@ async def websocket_audio_translation(
             if finalizing:
                 return
             await websocket.send_json({"type": "partial_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": partial_translation})
+            if partial_translation != partial_tts_text and len(partial_translation.split()) >= 2:
+                partial_tts_text = partial_translation
+                try:
+                    partial_tts_path = await run_pipeline_step(
+                        "partial TTS",
+                        pipeline.tts.synthesize,
+                        partial_translation,
+                        f"models/tts/{uuid4()}-partial.wav",
+                    )
+                except Exception:
+                    partial_tts_path = None
+                if partial_tts_path and not finalizing:
+                    partial_tts_audio = Path(partial_tts_path).read_bytes()
+                    await websocket.send_json({"type": "tts_start", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "chunks": 1, "partial": True})
+                    await websocket.send_json({
+                        "type": "tts_audio_chunk",
+                        "speaker": partial_speaker,
+                        "speaker_label": partial_speaker_label,
+                        "index": 1,
+                        "total": 1,
+                        "text": partial_translation,
+                        "audio_base64": base64.b64encode(partial_tts_audio).decode("ascii"),
+                        "mime_type": "audio/wav",
+                        "partial": True,
+                    })
+                    await websocket.send_json({"type": "tts_end", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "partial": True})
+                    Path(partial_tts_path).unlink(missing_ok=True)
             observability.record_event("near_zero_partial", identity=identity, speaker=partial_speaker, latency_seconds=time() - partial_started_at)
 
     async def finalize_segment(segment: dict):
