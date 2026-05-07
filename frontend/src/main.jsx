@@ -91,9 +91,25 @@ function preferredAudioMimeType() {
 }
 
 function createAudioRecorder(stream) {
-  const mimeType = preferredAudioMimeType();
   const options = { audioBitsPerSecond: STREAM_AUDIO_BITRATE };
-  return mimeType ? new MediaRecorder(stream, { ...options, mimeType }) : new MediaRecorder(stream, options);
+  if (window.MediaRecorder?.isTypeSupported?.('audio/webm;codecs=opus')) {
+    try {
+      return new MediaRecorder(stream, { ...options, mimeType: 'audio/webm;codecs=opus' });
+    } catch {
+    }
+  }
+  const mimeType = preferredAudioMimeType();
+  if (mimeType) {
+    try {
+      return new MediaRecorder(stream, { ...options, mimeType });
+    } catch {
+    }
+  }
+  try {
+    return new MediaRecorder(stream, options);
+  } catch {
+    return new MediaRecorder(stream);
+  }
 }
 
 function audioFileExtension(mimeType) {
@@ -210,11 +226,11 @@ function App() {
     window.navigator?.vibrate?.(pattern);
   }
 
-  function ensureAudioContext() {
+  async function ensureAudioContext() {
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) return null;
     if (!audioContextRef.current) audioContextRef.current = new AudioContextCtor();
-    if (audioContextRef.current.state === 'suspended') audioContextRef.current.resume?.();
+    if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume?.();
     return audioContextRef.current;
   }
 
@@ -343,8 +359,8 @@ function App() {
     }
   }
 
-  function unlockMobileAudio() {
-    ensureAudioContext();
+  async function unlockMobileAudio() {
+    await ensureAudioContext();
     const audio = new Audio();
     audio.muted = true;
     audio.play().catch(() => {});
@@ -769,6 +785,7 @@ function App() {
     const recorder = createAudioRecorder(stream);
     mediaRecorderRef.current = recorder;
     recorder.ondataavailable = (event) => {
+      console.log('MOBILE AUDIO SIZE:', event.data.size);
       if (event.data.size > 0) chunksRef.current.push(event.data);
     };
     recorder.onstop = uploadRecording;
@@ -842,7 +859,7 @@ function App() {
     }
     const selectedSpeakerMode = cleanOptions.speakerMode || speakerMode;
     setMicPermission('available');
-    unlockMobileAudio();
+    await unlockMobileAudio();
     requestWakeLock();
     setInterpreterMode(Boolean(cleanOptions.interpreter || selectedSpeakerMode === 'auto'));
     setDetectedSpeaker('-');
@@ -863,6 +880,7 @@ function App() {
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
     recorder.ondataavailable = async (event) => {
+      console.log('MOBILE AUDIO SIZE:', event.data.size);
       console.log('AUDIO CHUNK:', event.data);
       await sendRecorderChunk(socket, event, recorder);
     };
@@ -1066,7 +1084,7 @@ function App() {
       setPipelineStage('Low-bandwidth mode: text translation only');
       return;
     }
-    ensureAudioContext();
+    ensureAudioContext().catch(() => {});
     const binary = atob(audioBase64);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
