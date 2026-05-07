@@ -1127,41 +1127,25 @@ function App() {
 
   const sourceName = languages[sourceLanguage] || sourceLanguage.toUpperCase();
   const targetName = languages[targetLanguage] || targetLanguage.toUpperCase();
-  const sourceText = partialTranscript || result?.source_text || 'Ready to listen';
-  const translatedText = liveTranslation || result?.translated_text || 'Translation appears here';
+  const languageDirection = `${sourceName.slice(0, 2).toUpperCase()} → ${targetName.slice(0, 2).toUpperCase()}`;
+  const sourceText = partialTranscript || result?.source_text || 'Hello, how are you?';
+  const translatedText = liveTranslation || result?.translated_text || 'Hola, ¿cómo estás?';
   const micState = playing ? 'speaking' : streaming ? 'listening' : processing ? 'processing' : 'idle';
-  const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Ready to listen';
-  const showInstallButton = !pwaInstalled && Boolean(installPrompt || isManualInstallBrowser());
-  const transcriptLabel = detectedSpeaker !== '-' ? `Transcript - ${detectedSpeaker}` : 'Transcript';
-  const recentTurns = conversationTurns.filter((turn) => turn.source_text || turn.translated_text).slice(-4);
+  const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
 
   return (
     <main className="app-shell">
-      <section className={`phone-frame ${showInstallButton ? 'with-install' : ''}`} data-connection={connectionStatus} data-smoke-check="Self Test">
-        {showInstallButton && (
-          <button className="install-pill" onClick={installApp} aria-label="Install App">
-            <Download size={16} />
-            <span>Install App</span>
-          </button>
-        )}
-
-        <section className="language-row" aria-label={`${sourceName} to ${targetName}`}>
-          <div className="language-select">
-            <span>From</span>
-            <select aria-label="Source language" value={sourceLanguage} onChange={(event) => setSourceLanguage(event.target.value)}>
-              {Object.entries(languages).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
-            </select>
+      <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
+        <header className="clean-header">
+          <h1>Universal Translator</h1>
+          <div className="header-meta">
+            <span className={`online-dot ${connectionStatus}`} />
+            <span>{connectionStatus === 'online' ? 'Online' : 'Connecting'}</span>
           </div>
-          <button className="swap-button" onClick={() => { setSourceLanguage(targetLanguage); setTargetLanguage(sourceLanguage); }} aria-label="Swap languages">
-            <ArrowLeftRight size={21} />
+          <button className="language-direction" onClick={() => { setSourceLanguage(targetLanguage); setTargetLanguage(sourceLanguage); }} aria-label={`${sourceName} to ${targetName}. Tap to swap.`}>
+            {languageDirection}
           </button>
-          <div className="language-select">
-            <span>To</span>
-            <select aria-label="Target language" value={targetLanguage} onChange={(event) => setTargetLanguage(event.target.value)}>
-              {Object.entries(languages).map(([code, name]) => <option key={code} value={code}>{name}</option>)}
-            </select>
-          </div>
-        </section>
+        </header>
 
         <section className="mic-panel">
           <button
@@ -1180,28 +1164,16 @@ function App() {
             <span className="sr-only">{micLabel}</span>
             {streaming ? <Square size={46} /> : <Mic size={58} />}
           </button>
+          <p className="mic-label">{micLabel}</p>
         </section>
 
         <section className="translation-stack">
           <article className="transcript-card">
-            <p className="label">{transcriptLabel}</p>
             <p>{sourceText}</p>
           </article>
           <article className="translation-card">
-            <p className="label">Translation</p>
             <p>{translatedText}</p>
           </article>
-          {recentTurns.length > 0 && (
-            <section className="conversation-timeline" aria-label="Conversation timeline">
-              {recentTurns.map((turn) => (
-                <article className="timeline-turn" key={turn.id}>
-                  <p className="timeline-speaker">{turn.speaker_label}</p>
-                  {turn.source_text && <p className="timeline-source">{turn.source_text}</p>}
-                  {turn.translated_text && <p className="timeline-translation">{turn.translated_text}</p>}
-                </article>
-              ))}
-            </section>
-          )}
         </section>
       </section>
     </main>
