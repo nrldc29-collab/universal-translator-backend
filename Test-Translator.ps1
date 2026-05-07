@@ -133,12 +133,24 @@ Invoke-SmokeCheck "Frontend module" {
 
 Invoke-SmokeCheck "PWA assets" {
     $manifest = Invoke-RestMethod -Uri "$BaseUrl/manifest.json" -TimeoutSec $TimeoutSec
+    if ($manifest.name -ne "Universal Translator") {
+        throw "Manifest app name is not Universal Translator"
+    }
     if ($manifest.display -ne "standalone") {
         throw "Manifest display is not standalone"
     }
+    if ($manifest.background_color -ne "#0b1120" -or $manifest.theme_color -ne "#2563eb") {
+        throw "Manifest colors are not the installable app colors"
+    }
+    if (-not ($manifest.icons | Where-Object { $_.src -eq "/icons/icon-512.png" -and $_.sizes -eq "512x512" })) {
+        throw "Manifest is missing the 512px app icon"
+    }
     $serviceWorker = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/sw.js" -TimeoutSec $TimeoutSec
-    if ($serviceWorker.Content -notmatch "live-translator-v4") {
-        throw "Service worker is not cache v4"
+    if ($serviceWorker.Content -notmatch "universal-translator-shell-v") {
+        throw "Service worker is not using the Universal Translator cache"
+    }
+    if ($serviceWorker.Content -notmatch "cacheDiscoveredShellAssets" -or $serviceWorker.Content -notmatch "/offline.html") {
+        throw "Service worker is missing offline shell caching"
     }
     "manifest and service worker ok"
 }

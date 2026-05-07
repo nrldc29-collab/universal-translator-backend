@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeftRight, Mic, Square } from 'lucide-react';
+import { ArrowLeftRight, Download, Mic, Square } from 'lucide-react';
 import './styles.css';
 import { registerServiceWorker } from './pwa';
 
@@ -57,6 +57,13 @@ const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
 const HOLD_TO_TALK_DELAY_MS = 260;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 registerServiceWorker();
+
+function isManualInstallBrowser() {
+  const userAgent = navigator.userAgent || '';
+  const isIos = /iphone|ipad|ipod/i.test(userAgent);
+  const isSafari = /safari/i.test(userAgent) && !/chrome|crios|fxios|edg/i.test(userAgent);
+  return isIos || isSafari;
+}
 
 function preferredAudioMimeType() {
   if (!window.MediaRecorder?.isTypeSupported) return '';
@@ -160,7 +167,7 @@ function App() {
     message: 'Not run yet',
   });
   const [installPrompt, setInstallPrompt] = useState(null);
-  const [pwaInstalled, setPwaInstalled] = useState(window.matchMedia?.('(display-mode: standalone)').matches || false);
+  const [pwaInstalled, setPwaInstalled] = useState(() => window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone === true);
   const mediaRecorderRef = useRef(null);
   const streamRecorderRef = useRef(null);
   const chunksRef = useRef([]);
@@ -253,7 +260,7 @@ function App() {
 
   async function installApp() {
     if (!installPrompt) {
-      setStatus('Install prompt is not available yet');
+      window.location.href = '/install.html';
       return;
     }
     installPrompt.prompt();
@@ -542,11 +549,11 @@ function App() {
 
   function downloadPwaInstaller() {
     const appUrl = window.location.origin;
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install Live Translator</title></head><body style="font-family:system-ui;margin:24px;line-height:1.5"><h1>Install Live Translator</h1><p>Open <a href="${appUrl}">${appUrl}</a>, then use your browser's Add to Home Screen or Install app option.</p><p><a href="${appUrl}">Open app now</a></p></body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install Universal Translator</title></head><body style="font-family:system-ui;margin:24px;line-height:1.5"><h1>Install Universal Translator</h1><p>Open <a href="${appUrl}">${appUrl}</a>, then use your browser's Add to Home Screen or Install app option.</p><p><a href="${appUrl}">Open app now</a></p></body></html>`;
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'live-translator-install.html';
+    link.download = 'universal-translator-install.html';
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -1024,10 +1031,18 @@ function App() {
   const translatedText = liveTranslation || result?.translated_text || 'Translation appears here';
   const micState = playing ? 'speaking' : streaming ? 'listening' : processing ? 'processing' : 'idle';
   const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Ready to listen';
+  const showInstallButton = !pwaInstalled && Boolean(installPrompt || isManualInstallBrowser());
 
   return (
     <main className="app-shell">
-      <section className="phone-frame" data-connection={connectionStatus}>
+      <section className={`phone-frame ${showInstallButton ? 'with-install' : ''}`} data-connection={connectionStatus}>
+        {showInstallButton && (
+          <button className="install-pill" onClick={installApp} aria-label="Install App">
+            <Download size={16} />
+            <span>Install App</span>
+          </button>
+        )}
+
         <section className="language-row" aria-label={`${sourceName} to ${targetName}`}>
           <div className="language-select">
             <span>From</span>

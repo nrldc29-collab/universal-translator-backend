@@ -2,48 +2,78 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#11140f" />
-    <title>Install Live Translator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#2563eb" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>Install Universal Translator</title>
     <style>
+      :root {
+        color: #f8fafc;
+        background: #0b1120;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
       body {
-        margin: 0;
         min-height: 100vh;
+        min-height: 100svh;
+        margin: 0;
         display: grid;
         place-items: center;
         padding: 18px;
-        font-family: system-ui, sans-serif;
-        color: #f7f8f4;
-        background: #11140f;
+        background: #0b1120;
       }
+
       main {
         width: min(560px, 100%);
         display: grid;
         gap: 14px;
+        border: 1px solid #243247;
+        border-radius: 8px;
+        padding: 22px;
+        background: #111827;
       }
+
+      h1,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(28px, 8vw, 40px);
+        line-height: 1.05;
+      }
+
+      p {
+        color: #cbd5e1;
+        line-height: 1.5;
+      }
+
       a {
         min-height: 48px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         border-radius: 8px;
-        color: #081d1a;
-        background: #2dd4bf;
-        font-weight: 800;
+        color: #ffffff;
+        background: #2563eb;
+        font-weight: 850;
         text-decoration: none;
-      }
-      p {
-        color: #cbd5c6;
-        line-height: 1.5;
       }
     </style>
   </head>
   <body>
     <main>
-      <h1>Install Live Translator</h1>
-      <p>Open the app, then use your browser menu to choose Install app or Add to Home Screen.</p>
+      <h1>Install Universal Translator</h1>
+      <p>Open the app, then choose Install App from the in-app button or your browser menu.</p>
       <p>Android: Chrome menu, Add to Home screen. iPhone: Safari share button, Add to Home Screen.</p>
-      <a href="/">Open Live Translator</a>
+      <a href="/">Open Universal Translator</a>
     </main>
   </body>
 </html>
