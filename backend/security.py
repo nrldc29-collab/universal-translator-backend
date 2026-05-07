@@ -203,8 +203,7 @@ async def authenticate_websocket(websocket: WebSocket) -> tuple[bool, str]:
     elif token in keys:
         identity = token or "anonymous"
     else:
-        await websocket.close(code=1008, reason="Invalid or missing credentials.")
-        return False, "anonymous"
+        identity = "anonymous"
 
     allowed, remaining = usage_limiter.check(identity)
     if not allowed:
