@@ -37,7 +37,7 @@ p { margin: 0; overflow-wrap: anywhere; }
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 24px;
+  gap: 18px;
   padding: 32px;
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 36px;
@@ -49,29 +49,34 @@ p { margin: 0; overflow-wrap: anywhere; }
 
 .clean-header {
   display: grid;
-  gap: 10px;
-  justify-items: start;
+  gap: 0;
+  justify-items: center;
+  text-align: center;
 }
 
-.clean-header h1 {
+.app-title {
   margin: 0;
-  max-width: 300px;
-  font-size: clamp(34px, 9vw, 48px);
-  line-height: .9;
-  letter-spacing: -.06em;
-  font-weight: 900;
+  margin-bottom: 12px;
+  max-width: 360px;
+  color: #ffffff;
+  font-size: clamp(38px, 9vw, 42px);
+  line-height: 1;
+  letter-spacing: -1px;
+  font-weight: 800;
+  text-align: center;
 }
 
-.language-direction {
+.language-label {
   min-height: 64px;
-  min-width: 128px;
-  padding: 0 22px;
+  max-width: 700px;
+  padding: 0 18px;
   border-radius: 999px;
-  background: rgba(96, 165, 250, .12);
-  color: #7dd3fc;
-  font-size: 22px;
-  font-weight: 900;
-  letter-spacing: .08em;
+  background: transparent;
+  color: rgba(255, 255, 255, .7);
+  font-size: 18px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-align: center;
 }
 
 .mic-panel {
@@ -80,7 +85,7 @@ p { margin: 0; overflow-wrap: anywhere; }
   align-content: center;
   gap: 24px;
   min-height: 0;
-  margin: 32px auto;
+  margin: 22px auto 12px;
 }
 
 .mic-orb {
@@ -148,7 +153,7 @@ p { margin: 0; overflow-wrap: anywhere; }
 
 .translation-stack {
   display: grid;
-  gap: 18px;
+  gap: 20px;
 }
 
 .transcript-card,
@@ -165,20 +170,26 @@ p { margin: 0; overflow-wrap: anywhere; }
   animation: fadeInUp .34s ease both;
 }
 
-.transcript-card p {
+.transcript-text {
+  max-width: 700px;
+  margin: 0 auto;
   opacity: .7;
-  color: #ffffff;
-  font-size: clamp(22px, 6vw, 28px);
-  line-height: 1.16;
-  font-weight: 650;
+  color: rgba(255, 255, 255, .72);
+  font-size: clamp(22px, 5.8vw, 25px);
+  line-height: 1.5;
+  font-weight: 550;
+  text-align: center;
 }
 
-.translation-card p {
+.translation-text {
+  max-width: 700px;
+  margin: 0 auto;
   color: #7dd3fc;
-  font-size: clamp(26px, 7vw, 32px);
-  line-height: 1.1;
+  font-size: clamp(30px, 7.6vw, 36px);
+  line-height: 1.25;
   font-weight: 800;
-  letter-spacing: -.035em;
+  letter-spacing: -.04em;
+  text-align: center;
 }
 
 .sr-only {
@@ -245,8 +256,8 @@ p { margin: 0; overflow-wrap: anywhere; }
 
 @media (max-height: 720px) {
   .phone-frame { padding-top: 22px; padding-bottom: 18px; gap: 14px; }
-  .clean-header h1 { font-size: 34px; }
-  .language-direction { min-height: 52px; font-size: 18px; }
+  .app-title { font-size: 34px; margin-bottom: 8px; }
+  .language-label { min-height: 48px; font-size: 16px; }
   .mic-panel { margin: 18px auto; }
   .mic-orb { width: 190px; height: 190px; min-height: 190px; }
   .mic-label { font-size: 20px; }

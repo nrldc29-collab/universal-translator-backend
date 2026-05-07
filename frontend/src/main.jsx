@@ -1127,7 +1127,8 @@ function App() {
 
   const sourceName = languages[sourceLanguage] || sourceLanguage.toUpperCase();
   const targetName = languages[targetLanguage] || targetLanguage.toUpperCase();
-  const languageDirection = `${sourceName.slice(0, 2).toUpperCase()} → ${targetName.slice(0, 2).toUpperCase()}`;
+  const languageFlags = { en: '🇺🇸', es: '🇪🇸', fr: '🇫🇷', de: '🇩🇪', it: '🇮🇹', pt: '🇵🇹', nl: '🇳🇱', ru: '🇷🇺', zh: '🇨🇳', ja: '🇯🇵', ko: '🇰🇷', ar: '🇸🇦', hi: '🇮🇳' };
+  const languageDirection = `${languageFlags[sourceLanguage] || ''} ${sourceName} → ${languageFlags[targetLanguage] || ''} ${targetName}`;
   const sourceText = partialTranscript || result?.source_text || 'Hello, how are you?';
   const translatedText = liveTranslation || result?.translated_text || 'Hola, ¿cómo estás?';
   const micState = playing ? 'speaking' : streaming ? 'listening' : processing ? 'processing' : 'idle';
@@ -1137,8 +1138,8 @@ function App() {
     <main className="app-shell">
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
         <header className="clean-header">
-          <h1>Universal Translator</h1>
-          <button className="language-direction" onClick={() => { setSourceLanguage(targetLanguage); setTargetLanguage(sourceLanguage); }} aria-label={`${sourceName} to ${targetName}. Tap to swap.`}>
+          <h1 className="app-title">Universal Translator</h1>
+          <button className="language-label" onClick={() => { setSourceLanguage(targetLanguage); setTargetLanguage(sourceLanguage); }} aria-label={`${sourceName} to ${targetName}. Tap to swap.`}>
             {languageDirection}
           </button>
         </header>
@@ -1165,10 +1166,10 @@ function App() {
 
         <section className="translation-stack">
           <article className="transcript-card">
-            <p>{sourceText}</p>
+            <p className="transcript-text">{sourceText}</p>
           </article>
           <article className="translation-card">
-            <p>{translatedText}</p>
+            <p className="translation-text">{translatedText}</p>
           </article>
         </section>
       </section>
