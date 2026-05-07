@@ -12,6 +12,7 @@ mobile/dist
 translator-mobile/node_modules
 translator-mobile/dist
 models/*
+!models
 !models/tts
 models/tts/*
 !models/tts/en_US-lessac-medium.onnx
