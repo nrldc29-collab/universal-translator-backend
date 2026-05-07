@@ -137,8 +137,8 @@ Invoke-SmokeCheck "PWA assets" {
         throw "Manifest display is not standalone"
     }
     $serviceWorker = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/sw.js" -TimeoutSec $TimeoutSec
-    if ($serviceWorker.Content -notmatch "live-translator-v3") {
-        throw "Service worker is not cache v3"
+    if ($serviceWorker.Content -notmatch "live-translator-v4") {
+        throw "Service worker is not cache v4"
     }
     "manifest and service worker ok"
 }

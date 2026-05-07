@@ -143,7 +143,7 @@ def get_free_daily_audio_minutes() -> int:
 
 
 def get_tts_chunk_chars() -> int:
-    return int(os.getenv("TTS_CHUNK_CHARS", "55"))
+    return int(os.getenv("TTS_CHUNK_CHARS", "36"))
 
 
 def get_vad_recent_chunks() -> int:
@@ -155,11 +155,11 @@ def get_vad_silent_checks() -> int:
 
 
 def get_vad_force_final_seconds() -> float:
-    return float(os.getenv("VAD_FORCE_FINAL_SECONDS", "1.2"))
+    return float(os.getenv("VAD_FORCE_FINAL_SECONDS", "0.75"))
 
 
 def get_near_zero_latency_mode() -> bool:
-    return os.getenv("NEAR_ZERO_LATENCY_MODE", "0") == "1"
+    return os.getenv("NEAR_ZERO_LATENCY_MODE", "1") == "1"
 
 
 def get_stream_hot_path_logging() -> bool:
@@ -167,19 +167,19 @@ def get_stream_hot_path_logging() -> bool:
 
 
 def get_partial_stt_min_bytes() -> int:
-    return int(os.getenv("PARTIAL_STT_MIN_BYTES", "12000"))
+    return int(os.getenv("PARTIAL_STT_MIN_BYTES", "8000"))
 
 
 def get_partial_stt_interval_ms() -> int:
-    return int(os.getenv("PARTIAL_STT_INTERVAL_MS", "900"))
+    return int(os.getenv("PARTIAL_STT_INTERVAL_MS", "500"))
 
 
 def get_min_speech_bytes() -> int:
-    return int(os.getenv("MIN_SPEECH_BYTES", "18000"))
+    return int(os.getenv("MIN_SPEECH_BYTES", "9000"))
 
 
 def get_speech_merge_ms() -> int:
-    return int(os.getenv("SPEECH_MERGE_MS", "300"))
+    return int(os.getenv("SPEECH_MERGE_MS", "140"))
 
 
 def get_stream_buffer_max_mb() -> int:

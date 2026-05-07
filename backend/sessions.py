@@ -66,6 +66,13 @@ class SessionRegistry:
         self.shared_sessions[shared_key] = shared_state
         return shared_state
 
+    def next_auto_speaker(self, session_id: str, identity: str) -> str:
+        shared_key = f"{identity}:{session_id}"
+        history = self.shared_sessions.get(shared_key, {}).get("history", [])
+        if not history:
+            return "A"
+        return "B" if history[-1].get("speaker") == "A" else "A"
+
     def active_stream_count(self, identity: str) -> int:
         self.cleanup()
         return len([

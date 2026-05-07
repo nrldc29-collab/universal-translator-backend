@@ -47,7 +47,7 @@ const WS_BASE_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? API_URL : (configure
 const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 const INITIAL_SESSION_ID = localStorage.getItem('translator_session_id') || crypto.randomUUID();
-const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 250);
+const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 150);
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 registerServiceWorker();
 
@@ -133,6 +133,10 @@ function App() {
   const [speechSpeed, setSpeechSpeed] = useState('normal');
   const [lowBandwidthMode, setLowBandwidthMode] = useState(false);
   const [mobileAudioUnlocked, setMobileAudioUnlocked] = useState(false);
+  const [interpreterMode, setInterpreterMode] = useState(false);
+  const [speakerMode, setSpeakerMode] = useState('auto');
+  const [detectedSpeaker, setDetectedSpeaker] = useState('-');
+  const [latencyStats, setLatencyStats] = useState({ mic_to_backend: '-', backend_response: '-', first_audio: '-' });
   const [authToken, setAuthToken] = useState(INITIAL_TOKEN);
   const [username, setUsername] = useState('demo');
   const [password, setPassword] = useState('demo');
@@ -155,6 +159,9 @@ function App() {
   const socketRef = useRef(null);
   const duplexRefs = useRef({ A: {}, B: {} });
   const recordingStoppedRef = useRef(false);
+  const streamFinalizePendingRef = useRef(false);
+  const streamStartedAtRef = useRef(0);
+  const firstAudioSeenRef = useRef(false);
   const ttsQueueRef = useRef([]);
   const ttsPlayingRef = useRef(false);
 
@@ -386,6 +393,45 @@ function App() {
     localStorage.setItem('translator_session_id', value);
   }
 
+  function updateLatency(metric, ms) {
+    setLatencyStats((current) => ({ ...current, [metric]: `${ms}ms` }));
+  }
+
+  function activePacketMs() {
+    if (lowBandwidthMode) return 500;
+    return Math.min(STREAM_PACKET_MS, 150);
+  }
+
+  async function sendRecorderChunk(socket, event, recorder) {
+    if (event.data.size <= 0 || socket.readyState !== WebSocket.OPEN) return;
+    const buffer = await event.data.arrayBuffer();
+    socket.send(JSON.stringify({
+      type: 'chunk_meta',
+      sent_at_ms: Date.now(),
+      bytes: buffer.byteLength,
+      mime_type: recorder?.mimeType || event.data.type || preferredAudioMimeType(),
+    }));
+    socket.send(buffer);
+  }
+
+  function stopTracks(stream) {
+    stream?.getTracks().forEach((track) => track.stop());
+  }
+
+  function downloadPwaInstaller() {
+    const appUrl = window.location.origin;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install Live Translator</title></head><body style="font-family:system-ui;margin:24px;line-height:1.5"><h1>Install Live Translator</h1><p>Open <a href="${appUrl}">${appUrl}</a>, then use your browser's Add to Home Screen or Install app option.</p><p><a href="${appUrl}">Open app now</a></p></body></html>`;
+    const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'live-translator-install.html';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatus('Installer file downloaded');
+  }
+
   function applySharedSession(session) {
     if (!session) return;
     setSharedSession(session);
@@ -472,11 +518,15 @@ function App() {
     }
   }
 
-  async function toggleStreaming() {
+  async function toggleStreaming(options = {}) {
     if (socketRef.current) {
-      socketRef.current.send(JSON.stringify({ type: 'finalize' }));
-      streamRecorderRef.current?.stop();
-      streamRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+      streamFinalizePendingRef.current = true;
+      if (streamRecorderRef.current?.state === 'recording') {
+        streamRecorderRef.current.requestData?.();
+        streamRecorderRef.current.stop();
+      } else if (socketRef.current.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'finalize' }));
+      }
       setStreaming(false);
       setProcessing(true);
       setStatus('Processing stream...');
@@ -492,28 +542,55 @@ function App() {
       return;
     }
     setMicPermission('available');
+    unlockMobileAudio();
+    setInterpreterMode(Boolean(options.interpreter || speakerMode === 'auto'));
+    setDetectedSpeaker('-');
+    setLatencyStats({ mic_to_backend: '-', backend_response: '-', first_audio: '-' });
+    firstAudioSeenRef.current = false;
+    streamStartedAtRef.current = performance.now();
+    const selectedSpeakerMode = options.speakerMode || speakerMode;
+    const recorder = createAudioRecorder(stream);
     const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
+    recorder.ondataavailable = async (event) => {
+      await sendRecorderChunk(socket, event, recorder);
+    };
+    recorder.onstop = () => {
+      if (streamFinalizePendingRef.current && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'finalize' }));
+      }
+      stopTracks(stream);
+    };
     socket.onopen = () => {
+      streamFinalizePendingRef.current = false;
       setStreaming(true);
       setPartialTranscript('');
       setLiveTranslation('');
       setPipelineStage('Listening');
-      setStatus('Streaming audio...');
-      socket.send(JSON.stringify({ type: 'start', session_id: sessionId, source_language: sourceLanguage, target_language: targetLanguage }));
-      const recorder = createAudioRecorder(stream);
+      setStatus(selectedSpeakerMode === 'auto' ? 'Interpreter mode listening...' : 'Streaming audio...');
+      socket.send(JSON.stringify({
+        type: 'start',
+        session_id: sessionId,
+        source_language: sourceLanguage,
+        target_language: targetLanguage,
+        speaker_mode: selectedSpeakerMode,
+        speaker: selectedSpeakerMode === 'auto' ? 'auto' : 'A',
+        mime_type: recorder.mimeType || preferredAudioMimeType(),
+      }));
       streamRecorderRef.current = recorder;
-      recorder.ondataavailable = async (event) => {
-        if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
-          socket.send(await event.data.arrayBuffer());
-        }
-      };
-      recorder.start(lowBandwidthMode ? 750 : STREAM_PACKET_MS);
+      recorder.start(activePacketMs());
     };
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'session_restored' || data.type === 'session_sync') applySharedSession(data.session?.shared || data.session);
+      if (data.type === 'speaker_detected') {
+        setDetectedSpeaker(data.speaker || '-');
+        setPipelineStage(`Speaker ${data.speaker} detected`);
+      }
+      if (data.type === 'latency') {
+        updateLatency(data.metric, data.ms);
+      }
       if (data.type === 'stage') {
         setPipelineStage(data.message);
         setStatus(data.message);
@@ -532,6 +609,10 @@ function App() {
         setPipelineStage(`Streaming voice: 0/${data.chunks}`);
       }
       if (data.type === 'tts_audio_chunk') {
+        if (!firstAudioSeenRef.current) {
+          firstAudioSeenRef.current = true;
+          updateLatency('first_audio', Math.round(performance.now() - streamStartedAtRef.current));
+        }
         setPipelineStage(`Streaming voice: ${data.index}/${data.total}`);
         enqueueTtsChunk(data.audio_base64, data.mime_type);
       }
@@ -542,8 +623,9 @@ function App() {
         setProcessing(false);
         setPipelineStage('Needs audio');
         setStatus(data.message || 'Stream failed');
-        streamRecorderRef.current?.stop();
-        stream.getTracks().forEach((track) => track.stop());
+        streamFinalizePendingRef.current = false;
+        if (streamRecorderRef.current?.state === 'recording') streamRecorderRef.current.stop();
+        else stopTracks(stream);
         socket.close();
         socketRef.current = null;
       }
@@ -553,6 +635,10 @@ function App() {
         setProcessing(false);
         setPipelineStage('Complete');
         setStatus('Stream translated');
+        if (streamRecorderRef.current?.state === 'recording') {
+          streamFinalizePendingRef.current = false;
+          streamRecorderRef.current.stop();
+        }
         socket.close();
         socketRef.current = null;
       }
@@ -565,7 +651,9 @@ function App() {
     socket.onclose = () => {
       setStreaming(false);
       setProcessing(false);
-      stream.getTracks().forEach((track) => track.stop());
+      setInterpreterMode(false);
+      streamFinalizePendingRef.current = false;
+      stopTracks(stream);
       if (socketRef.current === socket) socketRef.current = null;
     };
   }
@@ -623,9 +711,13 @@ function App() {
     if (refs.socket) {
       refs.manualClose = true;
       refs.shouldReconnect = false;
-      refs.socket.send(JSON.stringify({ type: 'finalize' }));
-      refs.recorder?.stop();
-      refs.recorder?.stream.getTracks().forEach((track) => track.stop());
+      refs.finalizePending = true;
+      if (refs.recorder?.state === 'recording') {
+        refs.recorder.requestData?.();
+        refs.recorder.stop();
+      } else if (refs.socket.readyState === WebSocket.OPEN) {
+        refs.socket.send(JSON.stringify({ type: 'finalize' }));
+      }
       updateDuplexSpeaker(speaker, { active: false, stage: 'Processing...' });
       return;
     }
@@ -644,20 +736,33 @@ function App() {
     const target = speaker === 'A' ? targetLanguage : sourceLanguage;
     refs.manualClose = false;
     refs.shouldReconnect = true;
+    refs.finalizePending = false;
     refs.socket = socket;
     socket.binaryType = 'arraybuffer';
+    const recorder = createAudioRecorder(stream);
+    refs.recorder = recorder;
+    recorder.ondataavailable = async (event) => {
+      await sendRecorderChunk(socket, event, recorder);
+    };
+    recorder.onstop = () => {
+      if (refs.finalizePending && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'finalize' }));
+      }
+      stopTracks(stream);
+    };
 
     socket.onopen = () => {
       updateDuplexSpeaker(speaker, { active: true, transcript: '', translation: '', stage: 'Listening' });
-      socket.send(JSON.stringify({ type: 'start', session_id: sessionId, speaker, source_language: source, target_language: target }));
-      const recorder = createAudioRecorder(stream);
-      refs.recorder = recorder;
-      recorder.ondataavailable = async (event) => {
-        if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
-          socket.send(await event.data.arrayBuffer());
-        }
-      };
-      recorder.start(lowBandwidthMode ? 750 : STREAM_PACKET_MS);
+      socket.send(JSON.stringify({
+        type: 'start',
+        session_id: sessionId,
+        speaker,
+        speaker_mode: 'manual',
+        source_language: source,
+        target_language: target,
+        mime_type: recorder.mimeType || preferredAudioMimeType(),
+      }));
+      recorder.start(activePacketMs());
     };
 
     socket.onmessage = (event) => {
@@ -693,8 +798,9 @@ function App() {
         refs.manualClose = true;
         refs.shouldReconnect = false;
         updateDuplexSpeaker(speaker, { active: false, stage: data.message || 'Stream failed' });
-        refs.recorder?.stop();
-        refs.recorder?.stream.getTracks().forEach((track) => track.stop());
+        refs.finalizePending = false;
+        if (refs.recorder?.state === 'recording') refs.recorder.stop();
+        else stopTracks(stream);
         socket.close();
         refs.socket = null;
       }
@@ -707,6 +813,10 @@ function App() {
           translation: data.translated_text,
           stage: 'Complete',
         });
+        if (refs.recorder?.state === 'recording') {
+          refs.finalizePending = false;
+          refs.recorder.stop();
+        }
         socket.close();
         refs.socket = null;
       }
@@ -718,7 +828,8 @@ function App() {
     };
     socket.onclose = () => {
       updateDuplexSpeaker(speaker, { active: false });
-      stream.getTracks().forEach((track) => track.stop());
+      refs.finalizePending = false;
+      stopTracks(stream);
       refs.socket = null;
       if (refs.shouldReconnect && !refs.manualClose) {
         updateDuplexSpeaker(speaker, { stage: 'Reconnecting...' });
@@ -741,10 +852,31 @@ function App() {
         <header className="topbar">
           <div>
             <p className="brand-kicker">Universal Translator</p>
-            <h1>Speak freely.</h1>
+            <h1>One-tap interpreter.</h1>
           </div>
           <div className={`status-pill ${connectionStatus}`}><span />{connectionLabel}</div>
         </header>
+
+        <section className="glass-card interpreter-card">
+          <div>
+            <p className="label">Interpreter mode</p>
+            <p className="interpreter-copy">Tap once, speak naturally, and let the app auto-pick speaker turns.</p>
+          </div>
+          <button
+            className={streaming ? 'danger' : 'primary-action'}
+            onClick={() => toggleStreaming({ interpreter: true, speakerMode: 'auto' })}
+            disabled={processing && !streaming}
+          >
+            {streaming ? <Square size={18} /> : <Mic size={18} />}
+            {streaming ? 'Stop interpreter' : 'Start interpreter'}
+          </button>
+          <div className="latency-row">
+            <span>Speaker {detectedSpeaker}</span>
+            <span>Mic {latencyStats.mic_to_backend}</span>
+            <span>Backend {latencyStats.backend_response}</span>
+            <span>Voice {latencyStats.first_audio}</span>
+          </div>
+        </section>
 
         {!authToken && (
           <section className="glass-card signin-card">
@@ -768,11 +900,11 @@ function App() {
             </select>
           </div>
 
-          <button className={`mic-orb ${micState}`} onClick={toggleStreaming} disabled={processing && !streaming} aria-label={streaming ? 'Stop listening' : 'Start speaking'}>
+          <button className={`mic-orb ${micState}`} onClick={() => toggleStreaming()} disabled={processing && !streaming} aria-label={streaming ? 'Stop listening' : 'Start speaking'}>
             <span className="orb-ring" />
             {streaming ? <Square size={42} /> : <Mic size={52} />}
           </button>
-          <p className="tap-label">{streaming ? 'Listening...' : processing ? 'Translating...' : playing ? 'Speaking...' : 'Tap to Speak'}</p>
+          <p className="tap-label">{streaming ? 'Listening...' : processing ? 'Translating...' : playing ? 'Speaking...' : 'Tap to Interpret'}</p>
           <p className="quiet-status">{status}</p>
         </section>
 
@@ -820,10 +952,12 @@ function App() {
             <div className="settings-grid">
               <label>Voice speed<select value={speechSpeed} onChange={(event) => setSpeechSpeed(event.target.value)}><option value="slow">Slow</option><option value="normal">Normal</option><option value="fast">Fast</option></select></label>
               <label>Audio quality<select value={lowBandwidthMode ? 'low' : 'normal'} onChange={(event) => setLowBandwidthMode(event.target.value === 'low')}><option value="normal">Normal</option><option value="low">Low bandwidth</option></select></label>
+              <label>Speaker detection<select value={speakerMode} onChange={(event) => setSpeakerMode(event.target.value)}><option value="auto">Auto turns</option><option value="manual">Manual A/B</option></select></label>
               <label>Accessibility<select value={accessibilityMode} onChange={(event) => setAccessibilityMode(event.target.value)}><option value="balanced">Balanced</option><option value="noise">Noisy room</option><option value="accent">Strong accent</option><option value="slow">Slower conversation</option></select></label>
               <button onClick={requestMicPermission}>Allow Microphone</button>
               <button onClick={unlockMobileAudio}>{mobileAudioUnlocked ? 'Audio Ready' : 'Unlock Audio'}</button>
               <button disabled={!installPrompt || pwaInstalled} onClick={installApp}>{pwaInstalled ? 'Installed' : 'Install App'}</button>
+              <button onClick={downloadPwaInstaller}>Download Installer</button>
               {authToken && <button onClick={logout}>Log out</button>}
             </div>
           </details>

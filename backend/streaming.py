@@ -57,6 +57,17 @@ def chunk_text_for_tts(text: str, max_chars: int | None = None) -> list[str]:
     return chunks or [text]
 
 
+def audio_suffix_for_mime(mime_type: str | None) -> str:
+    value = (mime_type or "").lower()
+    if "mp4" in value or "aac" in value or "m4a" in value:
+        return ".m4a"
+    if "ogg" in value:
+        return ".ogg"
+    if "wav" in value:
+        return ".wav"
+    return ".webm"
+
+
 async def websocket_text_translation(websocket: WebSocket, pipeline: UniversalTranslatorPipeline):
     await websocket.accept()
     await websocket.send_json({"type": "ready", "message": "Streaming text translation connected."})
@@ -94,23 +105,29 @@ async def websocket_audio_translation(
     source_language = "en"
     target_language = "es"
     speaker = "speaker"
+    speaker_mode = "manual"
     session_id = "default"
     audio_chunks = bytearray()
     recent_chunks = []
     speech_started = False
+    finalizing = False
     silent_checks = 0
+    vad_error_count = 0
     max_buffer_bytes = get_stream_buffer_max_mb() * 1024 * 1024
     last_chunk_meta = {}
+    client_mime_type = "audio/webm"
+    audio_suffix = ".webm"
     last_speech_at = 0.0
     last_partial_at = 0.0
     partial_text = ""
 
     def reset_segment_state() -> None:
-        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at
+        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count
         audio_chunks = bytearray()
         recent_chunks = []
         speech_started = False
         silent_checks = 0
+        vad_error_count = 0
         last_speech_at = 0.0
 
     async def emit_partial_pipeline() -> None:
@@ -125,7 +142,7 @@ async def websocket_audio_translation(
         last_partial_at = partial_started_at
         upload_dir = Path("models/uploads")
         upload_dir.mkdir(parents=True, exist_ok=True)
-        partial_audio_path = upload_dir / f"{uuid4()}-partial.webm"
+        partial_audio_path = upload_dir / f"{uuid4()}-partial{audio_suffix}"
         partial_audio_path.write_bytes(audio_chunks)
         try:
             next_partial_text = await run_in_threadpool(pipeline.stt.transcribe, str(partial_audio_path), source_language)
@@ -141,155 +158,176 @@ async def websocket_audio_translation(
             observability.record_event("near_zero_partial", identity=identity, speaker=speaker, latency_seconds=time() - partial_started_at)
 
     async def finalize_segment():
-        nonlocal speaker
+        nonlocal speaker, finalizing
+        if finalizing:
+            return
+        finalizing = True
         segment_started_at = time()
 
-        if not audio_chunks:
-            await websocket.send_json({"type": "error", "message": "No audio received."})
-            reset_segment_state()
-            return
+        try:
+            audio_bytes = bytes(audio_chunks)
+            if not audio_bytes:
+                await websocket.send_json({"type": "error", "message": "No audio received."})
+                reset_segment_state()
+                return
 
-        if len(audio_chunks) < get_min_speech_bytes():
-            await websocket.send_json({"type": "stage", "stage": "smoothing", "message": "Ignoring very short speech burst."})
-            reset_segment_state()
-            return
+            if len(audio_bytes) < get_min_speech_bytes():
+                await websocket.send_json({"type": "stage", "stage": "smoothing", "message": "Ignoring very short speech burst."})
+                reset_segment_state()
+                return
 
-        estimated_seconds = max(1, len(audio_chunks) / 16000)
-        if estimated_seconds > get_max_audio_seconds():
-            await websocket.send_json({"type": "error", "message": f"Audio segment exceeds {get_max_audio_seconds()} second limit."})
-            reset_segment_state()
-            return
-        quota_allowed, remaining_seconds = usage_limiter.check_audio_seconds(identity, estimated_seconds)
-        if not quota_allowed:
-            await websocket.send_json({"type": "error", "message": f"Daily audio quota exceeded. Remaining seconds: {int(remaining_seconds)}"})
-            reset_segment_state()
-            return
+            estimated_seconds = max(1, len(audio_bytes) / 16000)
+            if estimated_seconds > get_max_audio_seconds():
+                await websocket.send_json({"type": "error", "message": f"Audio segment exceeds {get_max_audio_seconds()} second limit."})
+                reset_segment_state()
+                return
+            quota_allowed, remaining_seconds = usage_limiter.check_audio_seconds(identity, estimated_seconds)
+            if not quota_allowed:
+                await websocket.send_json({"type": "error", "message": f"Daily audio quota exceeded. Remaining seconds: {int(remaining_seconds)}"})
+                reset_segment_state()
+                return
 
-        decision = conversation_brain.request_turn(speaker)
-        await websocket.send_json({
-            "type": "turn",
-            "speaker": speaker,
-            "allowed": decision.allowed,
-            "reason": decision.reason,
-            "behavior": decision.behavior,
-            "active_speaker": decision.active_speaker,
-            "playback_owner": decision.playback_owner,
-        })
-        if not decision.allowed:
-            reset_segment_state()
-            return
+            if speaker_mode == "auto":
+                speaker = session_registry.next_auto_speaker(session_id, identity)
+                session_registry.bind(session_id, speaker, identity, source_language, target_language)
 
-        upload_dir = Path("models/uploads")
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        audio_path = upload_dir / f"{uuid4()}.webm"
-        audio_path.write_bytes(audio_chunks)
-
-        await websocket.send_json({"type": "stage", "stage": "stt", "message": "Speech finalized. Transcribing now..."})
-        observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_start", audio_bytes=len(audio_chunks))
-        source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), source_language)
-        print("STT:", source_text, flush=True)
-        observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_done", source_text=source_text)
-        if not source_text.strip():
-            await websocket.send_json({"type": "error", "message": "No clear speech recognized. Try speaking closer to the mic."})
-            reset_segment_state()
-            audio_path.unlink(missing_ok=True)
-            return
-        await websocket.send_json({"type": "final_transcription", "speaker": speaker, "text": source_text})
-        semantic_context = conversation_brain.analyze_semantics(speaker, source_text)
-        await websocket.send_json({"type": "semantic_context", "speaker": speaker, **semantic_context})
-        await websocket.send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
-
-        improved_text = await run_in_threadpool(
-            pipeline.context_layer.improve,
-            source_text,
-            source_language,
-            target_language,
-            None,
-        )
-        translated_text = await run_in_threadpool(
-            pipeline.translator.translate,
-            improved_text,
-            source_language,
-            target_language,
-        )
-        intent = semantic_context.get("last_intent") or semantic_context.get("intent") or "statement"
-        urgency = "high" if semantic_context.get("conversation_mood") == "urgent" else None
-        tts_pacing = build_tts_pacing(translated_text, intent, urgency)
-        print("TRANSLATION:", translated_text, flush=True)
-        await websocket.send_json({"type": "live_translation", "speaker": speaker, "text": translated_text})
-        await websocket.send_json({"type": "tts_style", "speaker": speaker, **tts_pacing})
-        observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="translation_done", translated_text=translated_text)
-        await websocket.send_json({"type": "stage", "stage": "tts", "message": "Translation ready. Streaming voice..."})
-        playback_decision = conversation_brain.begin_playback(speaker)
-        await websocket.send_json({
-            "type": "turn",
-            "speaker": speaker,
-            "allowed": playback_decision.allowed,
-            "reason": playback_decision.reason,
-            "behavior": playback_decision.behavior,
-            "active_speaker": playback_decision.active_speaker,
-            "playback_owner": playback_decision.playback_owner,
-        })
-
-        audio_output_path = None
-        tts_chunks = []
-        for segment in tts_pacing["segments"]:
-            tts_chunks.extend(chunk_text_for_tts(segment))
-        await websocket.send_json({"type": "tts_start", "chunks": len(tts_chunks)})
-
-        for index, chunk in enumerate(tts_chunks, start=1):
-            chunk_output_path = await run_in_threadpool(
-                pipeline.tts.synthesize,
-                chunk,
-                f"models/tts/{uuid4()}-{index}.wav",
-            )
-            if audio_output_path is None:
-                audio_output_path = chunk_output_path
-            audio_bytes = Path(chunk_output_path).read_bytes()
-            observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="tts_chunk", index=index, total=len(tts_chunks), audio_bytes=len(audio_bytes))
-            observability.increment("tts_playback_chunks_total")
+            active_source_language = target_language if speaker_mode == "auto" and speaker == "B" else source_language
+            active_target_language = source_language if speaker_mode == "auto" and speaker == "B" else target_language
             await websocket.send_json({
-                "type": "tts_audio_chunk",
+                "type": "speaker_detected",
                 "speaker": speaker,
-                "index": index,
-                "total": len(tts_chunks),
-                "text": chunk,
-                "tts_style": tts_pacing["style"],
-                "emotion": tts_pacing["emotion"],
-                "intent": tts_pacing["intent"],
-                "urgency": tts_pacing["urgency"],
-                "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
-                "mime_type": "audio/wav",
+                "mode": speaker_mode,
+                "source_language": active_source_language,
+                "target_language": active_target_language,
             })
 
-        await websocket.send_json({"type": "tts_end"})
-        result = TranslationResult(
-            source_text=source_text,
-            improved_text=improved_text,
-            translated_text=translated_text,
-            audio_output_path=audio_output_path,
-        )
-        shared_session = session_registry.record_turn(session_id, identity, speaker, source_text, translated_text, semantic_context)
-        await websocket.send_json({"type": "session_sync", "session": shared_session})
-        print("FINAL TRIGGERED", flush=True)
-        await websocket.send_json({"type": "final", "speaker": speaker, "semantic_context": semantic_context, "session": shared_session, **result.__dict__})
-        observability.observe_latency("streaming_segment", time() - segment_started_at)
-        observability.record_event("streaming_segment", identity=identity, speaker=speaker, latency_seconds=time() - segment_started_at)
-        await websocket.send_json({"type": "latency", "metric": "backend_response", "ms": round((time() - segment_started_at) * 1000)})
-        usage_limiter.track_audio(identity, estimated_seconds, "streaming_segments")
-        complete_decision = conversation_brain.end_turn(speaker)
-        await websocket.send_json({
-            "type": "turn",
-            "speaker": speaker,
-            "allowed": complete_decision.allowed,
-            "reason": complete_decision.reason,
-            "behavior": complete_decision.behavior,
-            "active_speaker": complete_decision.active_speaker,
-            "playback_owner": complete_decision.playback_owner,
-        })
+            decision = conversation_brain.request_turn(speaker)
+            await websocket.send_json({
+                "type": "turn",
+                "speaker": speaker,
+                "allowed": decision.allowed,
+                "reason": decision.reason,
+                "behavior": decision.behavior,
+                "active_speaker": decision.active_speaker,
+                "playback_owner": decision.playback_owner,
+            })
+            if not decision.allowed:
+                reset_segment_state()
+                return
 
-        reset_segment_state()
-        audio_path.unlink(missing_ok=True)
+            upload_dir = Path("models/uploads")
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            audio_path = upload_dir / f"{uuid4()}{audio_suffix}"
+            audio_path.write_bytes(audio_bytes)
+
+            await websocket.send_json({"type": "stage", "stage": "stt", "message": "Speech finalized. Transcribing now..."})
+            observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_start", audio_bytes=len(audio_bytes), mime_type=client_mime_type)
+            source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), active_source_language)
+            print("STT:", source_text, flush=True)
+            observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_done", source_text=source_text)
+            if not source_text.strip():
+                await websocket.send_json({"type": "error", "message": "No clear speech recognized. Try speaking closer to the mic."})
+                reset_segment_state()
+                audio_path.unlink(missing_ok=True)
+                return
+            await websocket.send_json({"type": "final_transcription", "speaker": speaker, "text": source_text})
+            semantic_context = conversation_brain.analyze_semantics(speaker, source_text)
+            await websocket.send_json({"type": "semantic_context", "speaker": speaker, **semantic_context})
+            await websocket.send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
+
+            improved_text = await run_in_threadpool(
+                pipeline.context_layer.improve,
+                source_text,
+                active_source_language,
+                active_target_language,
+                None,
+            )
+            translated_text = await run_in_threadpool(
+                pipeline.translator.translate,
+                improved_text,
+                active_source_language,
+                active_target_language,
+            )
+            intent = semantic_context.get("last_intent") or semantic_context.get("intent") or "statement"
+            urgency = "high" if semantic_context.get("conversation_mood") == "urgent" else None
+            tts_pacing = build_tts_pacing(translated_text, intent, urgency)
+            print("TRANSLATION:", translated_text, flush=True)
+            await websocket.send_json({"type": "live_translation", "speaker": speaker, "text": translated_text})
+            await websocket.send_json({"type": "tts_style", "speaker": speaker, **tts_pacing})
+            observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="translation_done", translated_text=translated_text)
+            await websocket.send_json({"type": "stage", "stage": "tts", "message": "Translation ready. Streaming voice..."})
+            playback_decision = conversation_brain.begin_playback(speaker)
+            await websocket.send_json({
+                "type": "turn",
+                "speaker": speaker,
+                "allowed": playback_decision.allowed,
+                "reason": playback_decision.reason,
+                "behavior": playback_decision.behavior,
+                "active_speaker": playback_decision.active_speaker,
+                "playback_owner": playback_decision.playback_owner,
+            })
+
+            audio_output_path = None
+            tts_chunks = []
+            for segment in tts_pacing["segments"]:
+                tts_chunks.extend(chunk_text_for_tts(segment))
+            await websocket.send_json({"type": "tts_start", "chunks": len(tts_chunks)})
+
+            for index, chunk in enumerate(tts_chunks, start=1):
+                chunk_output_path = await run_in_threadpool(
+                    pipeline.tts.synthesize,
+                    chunk,
+                    f"models/tts/{uuid4()}-{index}.wav",
+                )
+                if audio_output_path is None:
+                    audio_output_path = chunk_output_path
+                tts_audio_bytes = Path(chunk_output_path).read_bytes()
+                observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="tts_chunk", index=index, total=len(tts_chunks), audio_bytes=len(tts_audio_bytes))
+                observability.increment("tts_playback_chunks_total")
+                await websocket.send_json({
+                    "type": "tts_audio_chunk",
+                    "speaker": speaker,
+                    "index": index,
+                    "total": len(tts_chunks),
+                    "text": chunk,
+                    "tts_style": tts_pacing["style"],
+                    "emotion": tts_pacing["emotion"],
+                    "intent": tts_pacing["intent"],
+                    "urgency": tts_pacing["urgency"],
+                    "audio_base64": base64.b64encode(tts_audio_bytes).decode("ascii"),
+                    "mime_type": "audio/wav",
+                })
+
+            await websocket.send_json({"type": "tts_end"})
+            result = TranslationResult(
+                source_text=source_text,
+                improved_text=improved_text,
+                translated_text=translated_text,
+                audio_output_path=audio_output_path,
+            )
+            shared_session = session_registry.record_turn(session_id, identity, speaker, source_text, translated_text, semantic_context)
+            await websocket.send_json({"type": "session_sync", "session": shared_session})
+            print("FINAL TRIGGERED", flush=True)
+            await websocket.send_json({"type": "final", "speaker": speaker, "semantic_context": semantic_context, "session": shared_session, **result.__dict__})
+            observability.observe_latency("streaming_segment", time() - segment_started_at)
+            observability.record_event("streaming_segment", identity=identity, speaker=speaker, latency_seconds=time() - segment_started_at)
+            await websocket.send_json({"type": "latency", "metric": "backend_response", "ms": round((time() - segment_started_at) * 1000)})
+            usage_limiter.track_audio(identity, estimated_seconds, "streaming_segments")
+            complete_decision = conversation_brain.end_turn(speaker)
+            await websocket.send_json({
+                "type": "turn",
+                "speaker": speaker,
+                "allowed": complete_decision.allowed,
+                "reason": complete_decision.reason,
+                "behavior": complete_decision.behavior,
+                "active_speaker": complete_decision.active_speaker,
+                "playback_owner": complete_decision.playback_owner,
+            })
+
+            reset_segment_state()
+            audio_path.unlink(missing_ok=True)
+        finally:
+            finalizing = False
 
     try:
         while True:
@@ -313,9 +351,13 @@ async def websocket_audio_translation(
                     continue
 
                 if message_type == "chunk_meta":
+                    if payload.get("mime_type"):
+                        client_mime_type = payload.get("mime_type")
+                        audio_suffix = audio_suffix_for_mime(client_mime_type)
                     last_chunk_meta = {
                         "sent_at_ms": payload.get("sent_at_ms"),
                         "bytes": payload.get("bytes"),
+                        "mime_type": payload.get("mime_type") or client_mime_type,
                         "received_at": time(),
                     }
                     continue
@@ -324,8 +366,11 @@ async def websocket_audio_translation(
                     if session_registry.active_stream_count(identity) >= get_max_active_streams_per_user():
                         await websocket.send_json({"type": "error", "message": "Too many active streams for this user."})
                         continue
-                    speaker = payload.get("speaker", "speaker")
+                    speaker_mode = payload.get("speaker_mode", "manual")
                     session_id = payload.get("session_id", "default")
+                    speaker = session_registry.next_auto_speaker(session_id, identity) if speaker_mode == "auto" else payload.get("speaker", "speaker")
+                    client_mime_type = payload.get("mime_type") or client_mime_type
+                    audio_suffix = audio_suffix_for_mime(client_mime_type)
                     decision = conversation_brain.request_turn(speaker)
                     await websocket.send_json({
                         "type": "turn",
@@ -345,7 +390,7 @@ async def websocket_audio_translation(
                         "session": session_state,
                         "message": "Speaker stream bound to session.",
                     })
-                    await websocket.send_json({"type": "listening", "message": "Receiving audio chunks with Silero VAD."})
+                    await websocket.send_json({"type": "listening", "speaker": speaker, "speaker_mode": speaker_mode, "message": "Receiving audio chunks with Silero VAD."})
 
                 if message_type == "finalize":
                     await finalize_segment()
@@ -373,11 +418,18 @@ async def websocket_audio_translation(
                 recent_chunks = recent_chunks[-get_vad_recent_chunks():]
 
                 try:
-                    vad_result = await run_in_threadpool(vad.detect_bytes, b"".join(recent_chunks), ".webm")
+                    vad_result = await run_in_threadpool(vad.detect_bytes, b"".join(recent_chunks), audio_suffix)
                 except Exception as exc:
                     observability.increment("vad_errors_total")
-                    await websocket.send_json({"type": "vad_error", "message": str(exc)})
-                    await websocket.send_json({"type": "partial_transcription", "text": f"Buffered {len(audio_chunks)} bytes..."})
+                    vad_error_count += 1
+                    if len(audio_chunks) >= get_min_speech_bytes():
+                        speech_started = True
+                        last_speech_at = time()
+                        await websocket.send_json({"type": "stage", "stage": "listening", "message": "Audio buffered. Keep talking..."})
+                    elif vad_error_count == 1:
+                        await websocket.send_json({"type": "partial_transcription", "text": f"Preparing audio stream ({len(audio_chunks)} bytes)..."})
+                    if vad_error_count in {1, 5}:
+                        await websocket.send_json({"type": "vad_error", "message": str(exc), "fallback": "byte_buffer"})
                     continue
 
                 if vad_result["speech_detected"]:

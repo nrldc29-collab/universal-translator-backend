@@ -1,7 +1,7 @@
-const CACHE_NAME = 'live-translator-v3';
-const RUNTIME_CACHE = 'live-translator-runtime-v3';
+const CACHE_NAME = 'live-translator-v4';
+const RUNTIME_CACHE = 'live-translator-runtime-v4';
 const OFFLINE_URL = '/offline.html';
-const APP_SHELL = ['/', '/manifest.json', '/icon.svg', OFFLINE_URL];
+const APP_SHELL = ['/', '/install.html', '/manifest.json', '/icon.svg', OFFLINE_URL];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
