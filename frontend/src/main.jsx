@@ -47,7 +47,8 @@ const WS_BASE_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? API_URL : (configure
 const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 const INITIAL_SESSION_ID = localStorage.getItem('translator_session_id') || crypto.randomUUID();
-const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 150);
+const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 80);
+const STREAM_AUDIO_BITRATE = Number(import.meta.env.VITE_STREAM_AUDIO_BITRATE || 32000);
 const HEALTH_POLL_MS = 3000;
 const STREAM_HEARTBEAT_MS = 2500;
 const STREAM_HEARTBEAT_MAX_MISSES = 2;
@@ -71,7 +72,8 @@ function preferredAudioMimeType() {
 
 function createAudioRecorder(stream) {
   const mimeType = preferredAudioMimeType();
-  return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+  const options = { audioBitsPerSecond: STREAM_AUDIO_BITRATE };
+  return mimeType ? new MediaRecorder(stream, { ...options, mimeType }) : new MediaRecorder(stream, options);
 }
 
 function audioFileExtension(mimeType) {
@@ -431,7 +433,7 @@ function App() {
 
   function activePacketMs() {
     if (lowBandwidthMode) return 500;
-    return Math.min(STREAM_PACKET_MS, 150);
+    return Math.min(STREAM_PACKET_MS, 100);
   }
 
   async function sendRecorderChunk(socket, event, recorder) {
@@ -731,6 +733,10 @@ function App() {
         setStatus(data.message);
       }
       if (data.type === 'partial_transcription') setPartialTranscript(data.text);
+      if (data.type === 'partial_translation') {
+        setLiveTranslation(data.text);
+        setPipelineStage('Live translation');
+      }
       if (data.type === 'final_transcription') {
         setPartialTranscript(data.text);
         setPipelineStage('Transcription ready');
@@ -965,6 +971,7 @@ function App() {
         updateDuplexSpeaker(speaker, { stage: `Intent: ${data.last_intent}, mood: ${data.conversation_mood}` });
       }
       if (data.type === 'live_translation') updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Translation ready' });
+      if (data.type === 'partial_translation') updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Live translation' });
       if (data.type === 'tts_audio_chunk') enqueueTtsChunk(data.audio_base64, data.mime_type);
       if (data.type === 'error') {
         refs.manualClose = true;

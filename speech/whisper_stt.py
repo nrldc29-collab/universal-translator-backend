@@ -3,7 +3,13 @@ from threading import BoundedSemaphore, Lock
 from time import time
 from typing import Optional
 
-from backend.config import get_stt_max_concurrency, get_stt_queue_max_depth, get_whisper_beam_size
+from backend.config import (
+    get_stt_max_concurrency,
+    get_stt_queue_max_depth,
+    get_whisper_beam_size,
+    get_whisper_cpu_threads,
+    get_whisper_num_workers,
+)
 
 
 class WhisperSpeechToText:
@@ -34,8 +40,14 @@ class WhisperSpeechToText:
             self.model_size,
             device=self.device,
             compute_type=self.compute_type,
+            cpu_threads=get_whisper_cpu_threads(),
+            num_workers=get_whisper_num_workers(),
         )
         return self._model
+
+    def preload(self) -> bool:
+        self._load_model()
+        return True
 
     def transcribe(self, audio_path: str, source_language: Optional[str] = None) -> str:
         path = Path(audio_path)
@@ -61,6 +73,12 @@ class WhisperSpeechToText:
                     str(path),
                     language=source_language,
                     beam_size=get_whisper_beam_size(),
+                    best_of=1,
+                    temperature=0,
+                    condition_on_previous_text=False,
+                    vad_filter=False,
+                    without_timestamps=True,
+                    word_timestamps=False,
                 )
                 return " ".join(segment.text.strip() for segment in segments).strip()
             finally:

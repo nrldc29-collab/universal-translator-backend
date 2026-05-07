@@ -31,11 +31,19 @@ def get_whisper_compute_type() -> str:
 def get_whisper_model_size() -> str:
     if os.getenv("GPU_COST_MODE", "balanced").lower() == "low":
         return os.getenv("WHISPER_MODEL_SIZE", "tiny")
-    return os.getenv("WHISPER_MODEL_SIZE", "base")
+    return os.getenv("WHISPER_MODEL_SIZE", "tiny")
+
+
+def get_whisper_cpu_threads() -> int:
+    return int(os.getenv("WHISPER_CPU_THREADS", str(max(2, min((os.cpu_count() or 2), 4)))))
+
+
+def get_whisper_num_workers() -> int:
+    return int(os.getenv("WHISPER_NUM_WORKERS", "1"))
 
 
 def get_stt_max_concurrency() -> int:
-    return int(os.getenv("STT_MAX_CONCURRENCY", "1"))
+    return int(os.getenv("STT_MAX_CONCURRENCY", "2"))
 
 
 def get_whisper_beam_size() -> int:
@@ -44,6 +52,14 @@ def get_whisper_beam_size() -> int:
 
 def get_translation_backend() -> str:
     return os.getenv("TRANSLATION_BACKEND", "marian").lower()
+
+
+def get_translation_device() -> str:
+    return os.getenv("TRANSLATION_DEVICE", "cuda" if os.getenv("USE_GPU", "0") == "1" else "cpu")
+
+
+def get_preload_models() -> bool:
+    return os.getenv("PRELOAD_MODELS", "1") == "1"
 
 
 def get_allowed_origins() -> list[str]:
@@ -143,11 +159,11 @@ def get_free_daily_audio_minutes() -> int:
 
 
 def get_tts_chunk_chars() -> int:
-    return int(os.getenv("TTS_CHUNK_CHARS", "36"))
+    return int(os.getenv("TTS_CHUNK_CHARS", "26"))
 
 
 def get_vad_recent_chunks() -> int:
-    return int(os.getenv("VAD_RECENT_CHUNKS", "3"))
+    return int(os.getenv("VAD_RECENT_CHUNKS", "2"))
 
 
 def get_vad_silent_checks() -> int:
@@ -155,7 +171,7 @@ def get_vad_silent_checks() -> int:
 
 
 def get_vad_force_final_seconds() -> float:
-    return float(os.getenv("VAD_FORCE_FINAL_SECONDS", "0.75"))
+    return float(os.getenv("VAD_FORCE_FINAL_SECONDS", "0.35"))
 
 
 def get_near_zero_latency_mode() -> bool:
@@ -167,19 +183,19 @@ def get_stream_hot_path_logging() -> bool:
 
 
 def get_partial_stt_min_bytes() -> int:
-    return int(os.getenv("PARTIAL_STT_MIN_BYTES", "8000"))
+    return int(os.getenv("PARTIAL_STT_MIN_BYTES", "4000"))
 
 
 def get_partial_stt_interval_ms() -> int:
-    return int(os.getenv("PARTIAL_STT_INTERVAL_MS", "500"))
+    return int(os.getenv("PARTIAL_STT_INTERVAL_MS", "250"))
 
 
 def get_min_speech_bytes() -> int:
-    return int(os.getenv("MIN_SPEECH_BYTES", "9000"))
+    return int(os.getenv("MIN_SPEECH_BYTES", "4000"))
 
 
 def get_speech_merge_ms() -> int:
-    return int(os.getenv("SPEECH_MERGE_MS", "140"))
+    return int(os.getenv("SPEECH_MERGE_MS", "80"))
 
 
 def get_stream_buffer_max_mb() -> int:

@@ -33,6 +33,12 @@ class UniversalTranslatorPipeline:
         self.tts = tts or PiperTextToSpeech()
         self.context_layer = context_layer or PassthroughContextLayer()
 
+    def preload(self) -> dict:
+        return {
+            "stt": self.stt.preload(),
+            "tts": self.tts.preload(),
+        }
+
     def translate_text(
         self,
         text: str,

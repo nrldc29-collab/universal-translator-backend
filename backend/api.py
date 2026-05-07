@@ -28,6 +28,7 @@ from backend.config import (
     get_max_audio_mb,
     get_max_audio_seconds,
     get_min_speech_bytes,
+    get_preload_models,
     get_speech_merge_ms,
     get_serve_frontend_dist,
     get_vad_force_final_seconds,
@@ -222,6 +223,10 @@ async def lifespan(app_instance: FastAPI):
         "tts": "piper",
         "vad": "silero",
     }
+    runtime_state["warming"] = get_preload_models()
+    if get_preload_models():
+        runtime_state["models"]["preloaded"] = await run_in_threadpool(pipeline.preload)
+    runtime_state["warming"] = False
     runtime_state["ready"] = True
     yield
     runtime_state["ready"] = False

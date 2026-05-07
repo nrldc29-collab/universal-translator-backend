@@ -1,5 +1,7 @@
 from threading import Lock
 
+from backend.config import get_translation_device
+
 
 class MarianTranslator:
     def __init__(self, default_source_language: str = "en", default_target_language: str = "es"):
@@ -52,10 +54,22 @@ class MarianTranslator:
                 model = AutoModelForSeq2SeqLM.from_pretrained(self.nllb_model)
                 uses_nllb = True
 
+            device = "cpu"
+            requested_device = get_translation_device()
+            if requested_device == "cuda":
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        model = model.to("cuda")
+                        device = "cuda"
+                except Exception:
+                    device = "cpu"
             model.eval()
             translator = {
                 "tokenizer": tokenizer,
                 "model": model,
+                "device": device,
                 "source_language": source_language,
                 "target_language": target_language,
                 "uses_nllb": uses_nllb,
@@ -72,7 +86,10 @@ class MarianTranslator:
         tokenizer = translator["tokenizer"]
         model = translator["model"]
         inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
-        generate_kwargs = {"max_new_tokens": 256}
+        if translator.get("device") == "cuda":
+            inputs = {key: value.to("cuda") for key, value in inputs.items()}
+        max_new_tokens = min(80, max(16, len(text.split()) * 3 + 8))
+        generate_kwargs = {"max_new_tokens": max_new_tokens, "num_beams": 1, "do_sample": False}
 
         if translator["uses_nllb"]:
             source_code = self._nllb_language(translator["source_language"])
