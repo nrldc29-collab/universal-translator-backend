@@ -47,6 +47,8 @@ const WS_BASE_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? API_URL : (configure
 const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 const INITIAL_SESSION_ID = localStorage.getItem('translator_session_id') || crypto.randomUUID();
+const INITIAL_DEVICE_ID = localStorage.getItem('translator_device_id') || crypto.randomUUID();
+const INITIAL_SPEAKER_NAME = localStorage.getItem('translator_speaker_name') || '';
 const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 80);
 const STREAM_AUDIO_BITRATE = Number(import.meta.env.VITE_STREAM_AUDIO_BITRATE || 32000);
 const HEALTH_POLL_MS = 3000;
@@ -56,7 +58,16 @@ const STREAM_RECONNECT_MS = 1000;
 const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
 const HOLD_TO_TALK_DELAY_MS = 260;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
+localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
 registerServiceWorker();
+
+function fallbackSpeakerLabel(speaker) {
+  const value = String(speaker || '').trim();
+  if (!value || value === '-') return 'Person';
+  const numericId = value.match(/(\d+)$/)?.[1];
+  if (numericId) return `Person ${numericId}`;
+  return value.replace(/^speaker[-_\s]*/i, 'Person ').trim() || 'Person';
+}
 
 function isManualInstallBrowser() {
   const userAgent = navigator.userAgent || '';
@@ -157,6 +168,7 @@ function App() {
   const [password, setPassword] = useState('demo');
   const [sessionId, setSessionId] = useState(INITIAL_SESSION_ID);
   const [sharedSession, setSharedSession] = useState(null);
+  const [conversationTurns, setConversationTurns] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [diagnostics, setDiagnostics] = useState(null);
   const [diagnosticsStatus, setDiagnosticsStatus] = useState('checking');
@@ -173,6 +185,7 @@ function App() {
   const chunksRef = useRef([]);
   const socketRef = useRef(null);
   const duplexRefs = useRef({ A: {}, B: {} });
+  const speakerLabelsRef = useRef({});
   const recordingStoppedRef = useRef(false);
   const streamFinalizePendingRef = useRef(false);
   const streamStartedAtRef = useRef(0);
@@ -434,6 +447,41 @@ function App() {
     localStorage.setItem('translator_session_id', value);
   }
 
+  function rememberSpeaker(data = {}) {
+    const speakerId = data.speaker || '';
+    const label = data.speaker_label || speakerLabelsRef.current[speakerId] || fallbackSpeakerLabel(speakerId);
+    if (speakerId) {
+      speakerLabelsRef.current = { ...speakerLabelsRef.current, [speakerId]: label };
+    }
+    if (label && label !== 'Person') setDetectedSpeaker(label);
+    return label;
+  }
+
+  function normalizeConversationTurn(turn, index = 0) {
+    const speakerId = turn.speaker || '';
+    const label = turn.speaker_label || speakerLabelsRef.current[speakerId] || fallbackSpeakerLabel(speakerId);
+    if (speakerId) {
+      speakerLabelsRef.current = { ...speakerLabelsRef.current, [speakerId]: label };
+    }
+    return {
+      id: `${turn.created_at || Date.now()}-${speakerId || index}-${index}`,
+      speaker: speakerId,
+      speaker_label: label,
+      source_text: turn.source_text || '',
+      translated_text: turn.translated_text || '',
+      created_at: turn.created_at || Date.now() / 1000,
+    };
+  }
+
+  function appendConversationTurn(turn) {
+    const normalized = normalizeConversationTurn(turn);
+    setConversationTurns((current) => {
+      const nextKey = `${normalized.speaker}-${normalized.created_at}-${normalized.source_text}`;
+      const withoutDuplicate = current.filter((item) => `${item.speaker}-${item.created_at}-${item.source_text}` !== nextKey);
+      return [...withoutDuplicate, normalized].slice(-6);
+    });
+  }
+
   function updateLatency(metric, ms) {
     setLatencyStats((current) => ({ ...current, [metric]: `${ms}ms` }));
   }
@@ -564,16 +612,30 @@ function App() {
   function applySharedSession(session) {
     if (!session) return;
     setSharedSession(session);
+    Object.values(session.speakers || {}).forEach((profile) => {
+      if (profile?.speaker) {
+        speakerLabelsRef.current = {
+          ...speakerLabelsRef.current,
+          [profile.speaker]: profile.speaker_label || fallbackSpeakerLabel(profile.speaker),
+        };
+      }
+    });
+    if (session.history?.length) {
+      setConversationTurns(session.history.map((turn, index) => normalizeConversationTurn(turn, index)).slice(-6));
+    }
     const latest = session.history?.[session.history.length - 1];
     if (latest) {
+      const latestLabel = latest.speaker_label || speakerLabelsRef.current[latest.speaker] || fallbackSpeakerLabel(latest.speaker);
       setResult({
         source_text: latest.source_text,
         translated_text: latest.translated_text,
         audio_output_path: null,
       });
+      setDetectedSpeaker(latestLabel);
       updateDuplexSpeaker(latest.speaker || 'A', {
         transcript: latest.source_text,
         translation: latest.translated_text,
+        speaker_label: latestLabel,
         stage: 'Synced from shared session',
       });
     }
@@ -707,6 +769,8 @@ function App() {
       socket.send(JSON.stringify({
         type: 'start',
         session_id: sessionId,
+        device_id: INITIAL_DEVICE_ID,
+        speaker_name: INITIAL_SPEAKER_NAME,
         source_language: sourceLanguage,
         target_language: targetLanguage,
         speaker_mode: selectedSpeakerMode,
@@ -729,8 +793,8 @@ function App() {
       }
       if (data.type === 'session_restored' || data.type === 'session_sync') applySharedSession(data.session?.shared || data.session);
       if (data.type === 'speaker_detected') {
-        setDetectedSpeaker(data.speaker || '-');
-        setPipelineStage(`Speaker ${data.speaker} detected`);
+        const label = rememberSpeaker(data);
+        setPipelineStage(`${label} detected`);
       }
       if (data.type === 'latency') {
         updateLatency(data.metric, data.ms);
@@ -739,16 +803,27 @@ function App() {
         setPipelineStage(data.message);
         setStatus(data.message);
       }
-      if (data.type === 'partial_transcription') setPartialTranscript(data.text);
+      if (data.type === 'turn') {
+        const label = rememberSpeaker(data);
+        const playback = data.playback_owner_label || data.playback_owner;
+        setConversationBrain(`${label}: ${data.reason}${data.behavior ? ` - ${data.behavior}` : ''}${playback ? ` - playback: ${playback}` : ''}`);
+      }
+      if (data.type === 'partial_transcription') {
+        rememberSpeaker(data);
+        setPartialTranscript(data.text);
+      }
       if (data.type === 'partial_translation') {
+        rememberSpeaker(data);
         setLiveTranslation(data.text);
         setPipelineStage('Live translation');
       }
       if (data.type === 'final_transcription') {
+        rememberSpeaker(data);
         setPartialTranscript(data.text);
         setPipelineStage('Transcription ready');
       }
       if (data.type === 'live_translation') {
+        rememberSpeaker(data);
         setLiveTranslation(data.text);
         setPipelineStage('Translation ready');
       }
@@ -784,7 +859,13 @@ function App() {
       if (data.type === 'final') {
         disableStreamReconnect();
         clearStreamHeartbeat();
+        rememberSpeaker(data);
         setResult(data);
+        if (data.session) {
+          applySharedSession(data.session);
+        } else {
+          appendConversationTurn(data);
+        }
         setProcessing(false);
         setPipelineStage('Complete');
         setStatus('Stream translated');
@@ -941,7 +1022,9 @@ function App() {
       socket.send(JSON.stringify({
         type: 'start',
         session_id: sessionId,
+        device_id: `${INITIAL_DEVICE_ID}-${speaker}`,
         speaker,
+        speaker_label: `Speaker ${speaker}`,
         speaker_mode: 'manual',
         source_language: source,
         target_language: target,
@@ -957,9 +1040,14 @@ function App() {
         updateDuplexSpeaker(speaker, { stage: `Rebound session (${data.session.reconnects} reconnects)` });
       }
       if (data.type === 'session_sync') applySharedSession(data.session);
+      if (data.type === 'speaker_detected') {
+        const label = rememberSpeaker(data);
+        updateDuplexSpeaker(speaker, { speaker_label: label, stage: `${label} connected` });
+      }
       if (data.type === 'stage') updateDuplexSpeaker(speaker, { stage: data.message });
       if (data.type === 'turn') {
-        setConversationBrain(`${data.reason}${data.behavior ? ` - ${data.behavior}` : ''}${data.playback_owner ? ` - playback: ${data.playback_owner}` : ''}`);
+        const label = rememberSpeaker(data);
+        setConversationBrain(`${label}: ${data.reason}${data.behavior ? ` - ${data.behavior}` : ''}${data.playback_owner ? ` - playback: ${data.playback_owner}` : ''}`);
         if (!data.allowed && data.behavior === 'hold') {
           refs.recorder?.stop();
           refs.recorder?.stream.getTracks().forEach((track) => track.stop());
@@ -968,7 +1056,10 @@ function App() {
           updateDuplexSpeaker(speaker, { active: false, stage: data.reason });
         }
       }
-      if (data.type === 'final_transcription') updateDuplexSpeaker(speaker, { transcript: data.text, stage: 'Transcription ready' });
+      if (data.type === 'final_transcription') {
+        rememberSpeaker(data);
+        updateDuplexSpeaker(speaker, { transcript: data.text, stage: 'Transcription ready' });
+      }
       if (data.type === 'semantic_context') {
         setSemanticContext({
           last_intent: data.last_intent,
@@ -977,8 +1068,14 @@ function App() {
         });
         updateDuplexSpeaker(speaker, { stage: `Intent: ${data.last_intent}, mood: ${data.conversation_mood}` });
       }
-      if (data.type === 'live_translation') updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Translation ready' });
-      if (data.type === 'partial_translation') updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Live translation' });
+      if (data.type === 'live_translation') {
+        rememberSpeaker(data);
+        updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Translation ready' });
+      }
+      if (data.type === 'partial_translation') {
+        rememberSpeaker(data);
+        updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Live translation' });
+      }
       if (data.type === 'tts_audio_chunk') enqueueTtsChunk(data.audio_base64, data.mime_type);
       if (data.type === 'error') {
         refs.manualClose = true;
@@ -993,10 +1090,13 @@ function App() {
       if (data.type === 'final') {
         refs.manualClose = true;
         refs.shouldReconnect = false;
+        const label = rememberSpeaker(data);
+        if (data.session) applySharedSession(data.session);
         updateDuplexSpeaker(speaker, {
           active: false,
           transcript: data.source_text,
           translation: data.translated_text,
+          speaker_label: label,
           stage: 'Complete',
         });
         if (refs.recorder?.state === 'recording') {
@@ -1032,6 +1132,8 @@ function App() {
   const micState = playing ? 'speaking' : streaming ? 'listening' : processing ? 'processing' : 'idle';
   const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Ready to listen';
   const showInstallButton = !pwaInstalled && Boolean(installPrompt || isManualInstallBrowser());
+  const transcriptLabel = detectedSpeaker !== '-' ? `Transcript - ${detectedSpeaker}` : 'Transcript';
+  const recentTurns = conversationTurns.filter((turn) => turn.source_text || turn.translated_text).slice(-4);
 
   return (
     <main className="app-shell">
@@ -1082,13 +1184,24 @@ function App() {
 
         <section className="translation-stack">
           <article className="transcript-card">
-            <p className="label">Transcript</p>
+            <p className="label">{transcriptLabel}</p>
             <p>{sourceText}</p>
           </article>
           <article className="translation-card">
             <p className="label">Translation</p>
             <p>{translatedText}</p>
           </article>
+          {recentTurns.length > 0 && (
+            <section className="conversation-timeline" aria-label="Conversation timeline">
+              {recentTurns.map((turn) => (
+                <article className="timeline-turn" key={turn.id}>
+                  <p className="timeline-speaker">{turn.speaker_label}</p>
+                  {turn.source_text && <p className="timeline-source">{turn.source_text}</p>}
+                  {turn.translated_text && <p className="timeline-translation">{turn.translated_text}</p>}
+                </article>
+              ))}
+            </section>
+          )}
         </section>
       </section>
     </main>

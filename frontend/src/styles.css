@@ -265,6 +265,45 @@ p {
   color: #5eead4;
 }
 
+.conversation-timeline {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.timeline-turn {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #243247;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #111827;
+}
+
+.timeline-speaker {
+  color: #fbbf24;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.timeline-source {
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.22;
+}
+
+.timeline-translation {
+  color: #5eead4;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.24;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

@@ -182,27 +182,63 @@ Invoke-SmokeCheck "Audio WebSocket" {
 import asyncio
 import json
 import sys
+from uuid import uuid4
 import websockets
 
-async def main():
-    url = sys.argv[1]
+async def expect_speaker(ws, expected_speaker, expected_label):
+    for _ in range(10):
+        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+        if message.get("type") == "error":
+            raise RuntimeError(f"WebSocket error while waiting for speaker detection: {message}")
+        if message.get("type") != "speaker_detected":
+            continue
+        if message.get("speaker") != expected_speaker:
+            raise RuntimeError(f"Expected {expected_speaker}, got {message}")
+        if message.get("speaker_label") != expected_label:
+            raise RuntimeError(f"Expected {expected_label}, got {message}")
+        if message.get("detection") != "device_source":
+            raise RuntimeError(f"Expected device_source detection, got {message}")
+        return message
+    raise RuntimeError("Timed out waiting for speaker_detected")
+
+async def detect_speaker(url, session_id, device_id, expected_speaker, expected_label, include_ping=False):
     async with websockets.connect(url, open_timeout=10) as ws:
         ready = json.loads(await ws.recv())
         if ready.get("type") != "ready":
             raise RuntimeError(f"Expected ready, got {ready}")
-        await ws.send(json.dumps({"type": "ping"}))
-        pong = json.loads(await ws.recv())
-        if pong.get("type") != "pong":
-            raise RuntimeError(f"Expected pong, got {pong}")
-        print("pong")
+        if include_ping:
+            await ws.send(json.dumps({"type": "ping"}))
+            pong = json.loads(await ws.recv())
+            if pong.get("type") != "pong":
+                raise RuntimeError(f"Expected pong, got {pong}")
+        await ws.send(json.dumps({
+            "type": "start",
+            "session_id": session_id,
+            "device_id": device_id,
+            "speaker_mode": "auto",
+            "source_language": "en",
+            "target_language": "es",
+            "mime_type": "audio/webm;codecs=opus",
+        }))
+        return await expect_speaker(ws, expected_speaker, expected_label)
+
+async def main():
+    url = sys.argv[1]
+    session_id = f"smoke-{uuid4()}"
+    first = await detect_speaker(url, session_id, "smoke-device-1", "person-1", "Person 1", include_ping=True)
+    await asyncio.sleep(0.1)
+    same = await detect_speaker(url, session_id, "smoke-device-1", "person-1", "Person 1")
+    await asyncio.sleep(0.1)
+    second = await detect_speaker(url, session_id, "smoke-device-2", "person-2", "Person 2")
+    print(f"pong, {first['speaker_label']}, {same['speaker_label']}, {second['speaker_label']}")
 
 asyncio.run(main())
 '@
     $output = $wsScript | & $Python - $wsUrl
-    if (($output -join "`n") -notmatch "pong") {
-        throw "WebSocket did not return pong"
+    if (($output -join "`n") -notmatch "pong, Person 1, Person 1, Person 2") {
+        throw "WebSocket did not return stable auto speaker labels"
     }
-    "pong"
+    "pong, auto speakers stable"
 }
 
 Write-Output ""

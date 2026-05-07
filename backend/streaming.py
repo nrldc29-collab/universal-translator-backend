@@ -131,7 +131,11 @@ async def websocket_audio_translation(
     source_language = "en"
     target_language = "es"
     speaker = "speaker"
+    speaker_label = "Person 1"
+    speaker_index = 1
     speaker_mode = "manual"
+    speaker_detection = "manual"
+    device_id = None
     session_id = "default"
     audio_chunks = bytearray()
     recent_chunks = []
@@ -177,7 +181,11 @@ async def websocket_audio_translation(
         segment = {
             "audio_bytes": bytes(audio_chunks),
             "speaker": speaker,
+            "speaker_label": speaker_label,
+            "speaker_index": speaker_index,
             "speaker_mode": speaker_mode,
+            "speaker_detection": speaker_detection,
+            "device_id": device_id,
             "session_id": session_id,
             "source_language": source_language,
             "target_language": target_language,
@@ -208,12 +216,14 @@ async def websocket_audio_translation(
         partial_source_language = source_language
         partial_target_language = target_language
         partial_speaker = speaker
+        partial_speaker_label = speaker_label
         partial_task = asyncio.create_task(run_partial_pipeline(
             partial_audio,
             partial_suffix,
             partial_source_language,
             partial_target_language,
             partial_speaker,
+            partial_speaker_label,
             partial_started_at,
         ))
 
@@ -223,6 +233,7 @@ async def websocket_audio_translation(
         partial_source_language: str,
         partial_target_language: str,
         partial_speaker: str,
+        partial_speaker_label: str,
         partial_started_at: float,
     ) -> None:
         nonlocal partial_text
@@ -244,7 +255,7 @@ async def websocket_audio_translation(
         if finalizing or not next_partial_text or next_partial_text == partial_text:
             return
         partial_text = next_partial_text
-        await websocket.send_json({"type": "partial_transcription", "text": partial_text})
+        await websocket.send_json({"type": "partial_transcription", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": partial_text})
         if should_translate_partial(partial_text):
             try:
                 partial_translation = await run_pipeline_step("partial translation", pipeline.translator.translate, partial_text, partial_source_language, partial_target_language)
@@ -256,11 +267,11 @@ async def websocket_audio_translation(
                 return
             if finalizing:
                 return
-            await websocket.send_json({"type": "partial_translation", "text": partial_translation})
+            await websocket.send_json({"type": "partial_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": partial_translation})
             observability.record_event("near_zero_partial", identity=identity, speaker=partial_speaker, latency_seconds=time() - partial_started_at)
 
     async def finalize_segment(segment: dict):
-        nonlocal speaker, finalizing
+        nonlocal speaker, speaker_label, speaker_index, speaker_detection, device_id, finalizing
         if finalizing:
             return
         finalizing = True
@@ -270,6 +281,7 @@ async def websocket_audio_translation(
         try:
             audio_bytes = segment["audio_bytes"]
             segment_speaker_mode = segment["speaker_mode"]
+            segment_speaker_detection = segment.get("speaker_detection", "manual")
             segment_session_id = segment["session_id"]
             segment_source_language = segment["source_language"]
             segment_target_language = segment["target_language"]
@@ -277,6 +289,10 @@ async def websocket_audio_translation(
             segment_audio_suffix = segment["audio_suffix"]
             segment_partial_text = segment.get("partial_text", "")
             speaker = segment["speaker"]
+            speaker_label = segment.get("speaker_label") or speaker
+            speaker_index = segment.get("speaker_index") or speaker_index
+            device_id = segment.get("device_id")
+            speaker_detection = segment_speaker_detection
             if not audio_bytes:
                 await websocket.send_json({"type": "error", "message": "No audio received."})
                 return
@@ -295,15 +311,43 @@ async def websocket_audio_translation(
                 return
 
             if segment_speaker_mode == "auto":
-                speaker = session_registry.next_auto_speaker(segment_session_id, identity)
-                session_registry.bind(segment_session_id, speaker, identity, segment_source_language, segment_target_language)
+                speaker_profile = session_registry.resolve_auto_speaker(
+                    segment_session_id,
+                    identity,
+                    device_id,
+                    segment_source_language,
+                    segment_target_language,
+                    speaker_label,
+                )
+                speaker = speaker_profile["speaker"]
+                speaker_label = speaker_profile["speaker_label"]
+                speaker_index = speaker_profile["speaker_index"]
+                device_id = speaker_profile["device_id"]
+                speaker_detection = speaker_profile["detection"]
+            else:
+                session_registry.bind(
+                    segment_session_id,
+                    speaker,
+                    identity,
+                    segment_source_language,
+                    segment_target_language,
+                    device_id=device_id,
+                    speaker_label=speaker_label,
+                    speaker_index=speaker_index,
+                    detection=speaker_detection,
+                )
 
-            active_source_language = segment_target_language if segment_speaker_mode == "auto" and speaker == "B" else segment_source_language
-            active_target_language = segment_source_language if segment_speaker_mode == "auto" and speaker == "B" else segment_target_language
+            active_source_language = segment_source_language
+            active_target_language = segment_target_language
             await websocket.send_json({
                 "type": "speaker_detected",
                 "speaker": speaker,
+                "speaker_label": speaker_label,
+                "speaker_index": speaker_index,
                 "mode": segment_speaker_mode,
+                "detection": speaker_detection,
+                "confidence": 1.0 if speaker_detection == "device_source" else None,
+                "device_id": device_id,
                 "source_language": active_source_language,
                 "target_language": active_target_language,
             })
@@ -312,6 +356,7 @@ async def websocket_audio_translation(
             await websocket.send_json({
                 "type": "turn",
                 "speaker": speaker,
+                "speaker_label": speaker_label,
                 "allowed": decision.allowed,
                 "reason": decision.reason,
                 "behavior": decision.behavior,
@@ -336,9 +381,9 @@ async def websocket_audio_translation(
             if not source_text.strip():
                 await websocket.send_json({"type": "error", "message": "No clear speech recognized. Try speaking closer to the mic."})
                 return
-            await websocket.send_json({"type": "final_transcription", "speaker": speaker, "text": source_text})
+            await websocket.send_json({"type": "final_transcription", "speaker": speaker, "speaker_label": speaker_label, "text": source_text})
             semantic_context = conversation_brain.analyze_semantics(speaker, source_text)
-            await websocket.send_json({"type": "semantic_context", "speaker": speaker, **semantic_context})
+            await websocket.send_json({"type": "semantic_context", "speaker": speaker, "speaker_label": speaker_label, **semantic_context})
             await websocket.send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
 
             improved_text = await run_pipeline_step(
@@ -360,14 +405,15 @@ async def websocket_audio_translation(
             urgency = "high" if semantic_context.get("conversation_mood") == "urgent" else None
             tts_pacing = build_tts_pacing(translated_text, intent, urgency)
             print("TRANSLATION:", translated_text, flush=True)
-            await websocket.send_json({"type": "live_translation", "speaker": speaker, "text": translated_text})
-            await websocket.send_json({"type": "tts_style", "speaker": speaker, **tts_pacing})
+            await websocket.send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": translated_text})
+            await websocket.send_json({"type": "tts_style", "speaker": speaker, "speaker_label": speaker_label, **tts_pacing})
             observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="translation_done", translated_text=translated_text)
             await websocket.send_json({"type": "stage", "stage": "tts", "message": "Translation ready. Streaming voice..."})
             playback_decision = conversation_brain.begin_playback(speaker)
             await websocket.send_json({
                 "type": "turn",
                 "speaker": speaker,
+                "speaker_label": speaker_label,
                 "allowed": playback_decision.allowed,
                 "reason": playback_decision.reason,
                 "behavior": playback_decision.behavior,
@@ -379,7 +425,7 @@ async def websocket_audio_translation(
             tts_chunks = []
             for tts_segment in tts_pacing["segments"]:
                 tts_chunks.extend(chunk_text_for_tts(tts_segment))
-            await websocket.send_json({"type": "tts_start", "chunks": len(tts_chunks)})
+            await websocket.send_json({"type": "tts_start", "speaker": speaker, "speaker_label": speaker_label, "chunks": len(tts_chunks)})
 
             for index, chunk in enumerate(tts_chunks, start=1):
                 chunk_output_path = await run_pipeline_step(
@@ -396,6 +442,7 @@ async def websocket_audio_translation(
                 await websocket.send_json({
                     "type": "tts_audio_chunk",
                     "speaker": speaker,
+                    "speaker_label": speaker_label,
                     "index": index,
                     "total": len(tts_chunks),
                     "text": chunk,
@@ -407,17 +454,36 @@ async def websocket_audio_translation(
                     "mime_type": "audio/wav",
                 })
 
-            await websocket.send_json({"type": "tts_end"})
+            await websocket.send_json({"type": "tts_end", "speaker": speaker, "speaker_label": speaker_label})
             result = TranslationResult(
                 source_text=source_text,
                 improved_text=improved_text,
                 translated_text=translated_text,
                 audio_output_path=audio_output_path,
             )
-            shared_session = session_registry.record_turn(segment_session_id, identity, speaker, source_text, translated_text, semantic_context)
+            shared_session = session_registry.record_turn(
+                segment_session_id,
+                identity,
+                speaker,
+                source_text,
+                translated_text,
+                semantic_context,
+                device_id=device_id,
+                speaker_label=speaker_label,
+            )
             await websocket.send_json({"type": "session_sync", "session": shared_session})
             print("FINAL TRIGGERED", flush=True)
-            await websocket.send_json({"type": "final", "speaker": speaker, "semantic_context": semantic_context, "session": shared_session, **result.__dict__})
+            await websocket.send_json({
+                "type": "final",
+                "speaker": speaker,
+                "speaker_label": speaker_label,
+                "speaker_index": speaker_index,
+                "device_id": device_id,
+                "detection": speaker_detection,
+                "semantic_context": semantic_context,
+                "session": shared_session,
+                **result.__dict__,
+            })
             observability.observe_latency("streaming_segment", time() - segment_started_at)
             observability.record_event("streaming_segment", identity=identity, speaker=speaker, latency_seconds=time() - segment_started_at)
             await websocket.send_json({"type": "latency", "metric": "backend_response", "ms": round((time() - segment_started_at) * 1000)})
@@ -426,6 +492,7 @@ async def websocket_audio_translation(
             await websocket.send_json({
                 "type": "turn",
                 "speaker": speaker,
+                "speaker_label": speaker_label,
                 "allowed": complete_decision.allowed,
                 "reason": complete_decision.reason,
                 "behavior": complete_decision.behavior,
@@ -492,34 +559,94 @@ async def websocket_audio_translation(
                     continue
 
                 if message_type == "start":
-                    if session_registry.active_stream_count(identity) >= get_max_active_streams_per_user():
-                        await websocket.send_json({"type": "error", "message": "Too many active streams for this user."})
-                        continue
+                    previous_session_id = session_id
+                    previous_speaker = speaker
+                    previous_device_id = device_id
                     speaker_mode = payload.get("speaker_mode", "manual")
                     session_id = payload.get("session_id", "default")
-                    speaker = session_registry.next_auto_speaker(session_id, identity) if speaker_mode == "auto" else payload.get("speaker", "speaker")
+                    source_language = payload.get("source_language", "en")
+                    target_language = payload.get("target_language", "es")
+                    device_id = payload.get("device_id")
+                    requested_speaker_label = payload.get("speaker_name") or payload.get("speaker_label")
+                    if speaker_mode == "auto":
+                        speaker_profile = session_registry.resolve_auto_speaker(
+                            session_id,
+                            identity,
+                            device_id,
+                            source_language,
+                            target_language,
+                            requested_speaker_label,
+                        )
+                        speaker = speaker_profile["speaker"]
+                        speaker_label = speaker_profile["speaker_label"]
+                        speaker_index = speaker_profile["speaker_index"]
+                        device_id = speaker_profile["device_id"]
+                        speaker_detection = speaker_profile["detection"]
+                        session_state = speaker_profile["session"]
+                    else:
+                        speaker = payload.get("speaker", "speaker")
+                        speaker_label = requested_speaker_label or f"Speaker {speaker}"
+                        speaker_detection = "manual"
+                        session_state = session_registry.bind(
+                            session_id,
+                            speaker,
+                            identity,
+                            source_language,
+                            target_language,
+                            device_id=device_id,
+                            speaker_label=speaker_label,
+                            detection=speaker_detection,
+                        )
+                        speaker_index = session_state.get("speaker_index", speaker_index)
+                        device_id = session_state.get("device_id")
+                    if previous_device_id and (
+                        previous_session_id != session_id or previous_speaker != speaker or previous_device_id != device_id
+                    ):
+                        session_registry.disconnect(previous_session_id, previous_speaker, identity, previous_device_id)
+                    if session_registry.active_stream_count(identity) > get_max_active_streams_per_user():
+                        session_registry.disconnect(session_id, speaker, identity, device_id)
+                        await websocket.send_json({"type": "error", "message": "Too many active streams for this user."})
+                        continue
                     client_mime_type = payload.get("mime_type") or client_mime_type
                     audio_suffix = audio_suffix_for_mime(client_mime_type)
+                    await websocket.send_json({
+                        "type": "speaker_detected",
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "speaker_index": speaker_index,
+                        "mode": speaker_mode,
+                        "detection": speaker_detection,
+                        "confidence": 1.0 if speaker_detection == "device_source" else None,
+                        "device_id": device_id,
+                        "source_language": source_language,
+                        "target_language": target_language,
+                    })
                     decision = conversation_brain.request_turn(speaker)
                     await websocket.send_json({
                         "type": "turn",
                         "speaker": speaker,
+                        "speaker_label": speaker_label,
                         "allowed": decision.allowed,
                         "reason": decision.reason,
                         "behavior": decision.behavior,
                         "active_speaker": decision.active_speaker,
                         "playback_owner": decision.playback_owner,
                     })
-                    source_language = payload.get("source_language", "en")
-                    target_language = payload.get("target_language", "es")
-                    session_state = session_registry.bind(session_id, speaker, identity, source_language, target_language)
                     reset_segment_state()
                     await websocket.send_json({
                         "type": "session_restored",
                         "session": session_state,
                         "message": "Speaker stream bound to session.",
                     })
-                    await websocket.send_json({"type": "listening", "speaker": speaker, "speaker_mode": speaker_mode, "message": "Receiving audio chunks with Silero VAD."})
+                    await websocket.send_json({
+                        "type": "listening",
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "speaker_mode": speaker_mode,
+                        "detection": speaker_detection,
+                        "device_id": device_id,
+                        "message": "Receiving audio chunks with Silero VAD.",
+                    })
 
                 if message_type == "finalize":
                     await enqueue_finalize("client_finalize")
@@ -600,7 +727,7 @@ async def websocket_audio_translation(
 
     except WebSocketDisconnect:
         observability.increment("websocket_disconnects_total")
-        session_registry.disconnect(session_id, speaker, identity)
+        session_registry.disconnect(session_id, speaker, identity, device_id)
         return
     except Exception:
         observability.increment("websocket_errors_total")
