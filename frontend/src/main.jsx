@@ -850,7 +850,9 @@ function App() {
   }
 
   async function toggleStreaming(options = {}) {
+    console.log('STEP 1: toggleStreaming called, socketRef=', socketRef.current);
     if (socketRef.current) {
+      console.log('STEP 1a: socket exists, finalizing');
       finalizeCurrentStream();
       return;
     }
@@ -859,19 +861,24 @@ function App() {
     const cleanOptions = { ...options };
     delete cleanOptions.reconnect;
     let stream;
+    console.log('STEP 2: requesting getUserMedia');
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log('MIC STREAM ACTIVE:', stream);
+      console.log('STEP 2a: MIC STREAM ACTIVE:', stream);
       logAudioStream(stream);
     } catch (error) {
+      console.log('STEP 2b: getUserMedia FAILED:', error);
       disableStreamReconnect();
       setMicPermission('denied');
       setStatus(mediaErrorMessage(error));
       return;
     }
+    console.log('STEP 3: getUserMedia success');
     const selectedSpeakerMode = cleanOptions.speakerMode || speakerMode;
     setMicPermission('available');
+    console.log('STEP 4: unlocking mobile audio');
     await unlockMobileAudio();
+    console.log('STEP 5: mobile audio unlocked');
     requestWakeLock();
     setInterpreterMode(Boolean(cleanOptions.interpreter || selectedSpeakerMode === 'auto'));
     setDetectedSpeaker('-');
@@ -888,9 +895,12 @@ function App() {
       attempts: reconnecting ? streamReconnectRef.current.attempts : 0,
     };
     let recorder;
+    console.log('STEP 6: creating audio recorder');
     try {
       recorder = createAudioRecorder(stream);
+      console.log('STEP 6a: recorder created, mimeType=', recorder.mimeType);
     } catch (error) {
+      console.log('STEP 6b: createAudioRecorder FAILED:', error);
       stopTracks(stream);
       disableStreamReconnect();
       resetStreamState();
@@ -898,6 +908,7 @@ function App() {
       setPipelineStage('Recording unsupported');
       return;
     }
+    console.log('STEP 7: creating WebSocket');
     const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
@@ -913,7 +924,7 @@ function App() {
       stopTracks(stream);
     };
     socket.onopen = () => {
-      console.log('WS OPEN');
+      console.log('STEP 8: WS OPEN - socket connected');
       if (streamSafetyTimeoutRef.current) window.clearTimeout(streamSafetyTimeoutRef.current);
       streamSafetyTimeoutRef.current = window.setTimeout(() => {
         console.log('FORCE RESET (safety timeout)');
@@ -952,7 +963,9 @@ function App() {
       flushAudioSendQueue(socket);
       startStreamHeartbeat(socket);
       streamRecorderRef.current = recorder;
+      console.log('STEP 9: starting recorder');
       recorder.start(activePacketMs());
+      console.log('STEP 10: recorder started, state=', recorder.state);
       if (cleanOptions.holdToTalk && holdToTalkReleasePendingRef.current) {
         holdToTalkReleasePendingRef.current = false;
         window.setTimeout(() => finalizeCurrentStream('Processing speech...'), 80);
@@ -961,7 +974,6 @@ function App() {
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
       console.log('WS MESSAGE:', event.data);
-      resetStreamState();
       if (data.type === 'pong') {
         markStreamPong();
         return;
@@ -1023,7 +1035,7 @@ function App() {
         clearStreamHeartbeat();
         audioSendQueueRef.current = [];
         releaseWakeLock();
-        setProcessing(false);
+        resetStreamState();
         setPipelineStage('Needs audio');
         setStatus(data.message || 'Stream failed');
         streamFinalizePendingRef.current = false;
@@ -1057,13 +1069,13 @@ function App() {
       }
     };
     socket.onerror = (event) => {
-      console.log('WS ERROR:', event);
+      console.log('STEP X: WS ERROR:', event);
       setStatus('Stream connection error');
       setPipelineStage('Connection error');
       resetStreamState();
     };
     socket.onclose = () => {
-      console.log('WS CLOSED');
+      console.log('STEP X: WS CLOSED');
       clearStreamHeartbeat();
       resetStreamState();
       streamFinalizePendingRef.current = false;
@@ -1311,12 +1323,14 @@ function App() {
     socket.onerror = () => {
       updateDuplexSpeaker(speaker, { active: false, stage: 'Connection error' });
       setConversationBrain('WebSocket connection error');
+      resetStreamState();
     };
     socket.onclose = () => {
       updateDuplexSpeaker(speaker, { active: false });
       refs.finalizePending = false;
       stopTracks(stream);
       refs.socket = null;
+      resetStreamState();
       if (refs.shouldReconnect && !refs.manualClose) {
         updateDuplexSpeaker(speaker, { stage: 'Reconnecting...' });
         window.setTimeout(() => toggleDuplexSpeaker(speaker), 1500);
@@ -1368,8 +1382,34 @@ function App() {
           >
             RED MIC TEST
           </button>
+          <button
+            className="debug-force-unlock"
+            type="button"
+            onClick={() => {
+              console.log('FORCE UNLOCK CLICKED');
+              resetStreamState();
+              disableStreamReconnect();
+              clearStreamHeartbeat();
+              audioSendQueueRef.current = [];
+              releaseWakeLock();
+              if (streamRecorderRef.current?.state === 'recording') streamRecorderRef.current.stop();
+              if (socketRef.current) {
+                socketRef.current.close();
+                socketRef.current = null;
+              }
+              setStatus('Force unlocked - try again');
+              setPipelineStage('Ready');
+            }}
+          >
+            FORCE UNLOCK
+          </button>
           <p className="mic-label">{micLabel}</p>
           {processing && !streaming && !playing && <p className="thinking">Translating...</p>}
+          <div className="debug-state-panel">
+            <div>R:{recording ? 1 : 0} S:{streaming ? 1 : 0} P:{processing ? 1 : 0} PL:{playing ? 1 : 0}</div>
+            <div>Socket:{socketRef.current ? (socketRef.current.readyState === 1 ? 'OPEN' : socketRef.current.readyState) : 'null'}</div>
+            <div>Stage:{pipelineStage}</div>
+          </div>
         </section>
 
         <section className="translation-stack">

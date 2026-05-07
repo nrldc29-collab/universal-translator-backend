@@ -207,6 +207,30 @@ p { margin: 0; overflow-wrap: anywhere; }
   box-shadow: 0 12px 28px rgba(239, 68, 68, .34);
 }
 
+.debug-force-unlock {
+  margin-top: 8px;
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: #22c55e;
+  color: white;
+  font-weight: 900;
+  letter-spacing: .08em;
+  box-shadow: 0 8px 20px rgba(34, 197, 94, .34);
+}
+
+.debug-state-panel {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 8px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #22c55e;
+  text-align: center;
+  line-height: 1.4;
+}
+
 .thinking {
   margin-top: -14px;
   color: rgba(255, 255, 255, .6);
