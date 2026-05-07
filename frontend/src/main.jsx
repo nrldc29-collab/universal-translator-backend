@@ -40,15 +40,39 @@ function configuredUrl(value) {
   return value;
 }
 
+const LOCAL_BACKEND = isLocalHost(window.location.hostname);
 const SAME_ORIGIN_BACKEND = isSameOriginBackendHost(window.location.hostname);
-const API_URL = (SAME_ORIGIN_BACKEND ? defaultApiUrl() : (configuredUrl(import.meta.env.VITE_API_URL) || defaultApiUrl())).replace(/\/+$/, '');
-const WS_BASE_URL = (SAME_ORIGIN_BACKEND ? API_URL : (configuredUrl(import.meta.env.VITE_WS_URL) || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'))).replace(/\/+$/, '');
-const WS_AUDIO_URL = SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
+const API_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? defaultApiUrl() : (configuredUrl(import.meta.env.VITE_API_URL) || defaultApiUrl())).replace(/\/+$/, '');
+const WS_BASE_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? API_URL : (configuredUrl(import.meta.env.VITE_WS_URL) || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'))).replace(/\/+$/, '');
+const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 const INITIAL_SESSION_ID = localStorage.getItem('translator_session_id') || crypto.randomUUID();
 const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 250);
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 registerServiceWorker();
+
+function preferredAudioMimeType() {
+  if (!window.MediaRecorder?.isTypeSupported) return '';
+  return [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/aac',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+  ].find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || '';
+}
+
+function createAudioRecorder(stream) {
+  const mimeType = preferredAudioMimeType();
+  return mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+}
+
+function audioFileExtension(mimeType) {
+  if (mimeType.includes('mp4') || mimeType.includes('aac')) return '.m4a';
+  if (mimeType.includes('ogg')) return '.ogg';
+  return '.webm';
+}
 
 function withAuthToken(url, token) {
   if (!token) return url;
@@ -393,7 +417,7 @@ function App() {
     setMicPermission('available');
     chunksRef.current = [];
     recordingStoppedRef.current = false;
-    const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    const recorder = createAudioRecorder(stream);
     mediaRecorderRef.current = recorder;
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) chunksRef.current.push(event.data);
@@ -415,14 +439,15 @@ function App() {
   }
 
   async function uploadRecording() {
-    const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+    const recordingMimeType = mediaRecorderRef.current?.mimeType || preferredAudioMimeType() || 'audio/webm';
+    const blob = new Blob(chunksRef.current, { type: recordingMimeType });
     if (blob.size === 0) {
       setProcessing(false);
       setStatus('No audio captured');
       return;
     }
     const formData = new FormData();
-    formData.append('audio', blob, 'recording.webm');
+    formData.append('audio', blob, `recording${audioFileExtension(recordingMimeType)}`);
     formData.append('source_language', sourceLanguage);
     formData.append('target_language', targetLanguage);
     formData.append('synthesize_audio', 'true');
@@ -477,7 +502,7 @@ function App() {
       setPipelineStage('Listening');
       setStatus('Streaming audio...');
       socket.send(JSON.stringify({ type: 'start', session_id: sessionId, source_language: sourceLanguage, target_language: targetLanguage }));
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const recorder = createAudioRecorder(stream);
       streamRecorderRef.current = recorder;
       recorder.ondataavailable = async (event) => {
         if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
@@ -625,7 +650,7 @@ function App() {
     socket.onopen = () => {
       updateDuplexSpeaker(speaker, { active: true, transcript: '', translation: '', stage: 'Listening' });
       socket.send(JSON.stringify({ type: 'start', session_id: sessionId, speaker, source_language: source, target_language: target }));
-      const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const recorder = createAudioRecorder(stream);
       refs.recorder = recorder;
       recorder.ondataavailable = async (event) => {
         if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {

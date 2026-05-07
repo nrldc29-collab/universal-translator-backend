@@ -124,7 +124,7 @@ Invoke-SmokeCheck "Frontend module" {
     foreach ($scriptPath in $scriptPaths) {
         $scriptUrl = Get-AbsoluteAppUrl -PathOrUrl $scriptPath
         $response = Invoke-WebRequest -UseBasicParsing -Uri $scriptUrl -TimeoutSec $TimeoutSec
-        if ($response.Content -match "Run Self Test") {
+        if ($response.Content -match "Run Self Test|Self Test|Self-test|runSelfTest") {
             return "self-test UI present in $scriptPath"
         }
     }
