@@ -25,6 +25,8 @@ models/tts/*
 !models/whisper/.gitkeep
 !models/translation/.gitkeep
 !models/tts/.gitkeep
+!models/tts/en_US-lessac-medium.onnx
+!models/tts/en_US-lessac-medium.onnx.json
 models/uploads/
 models/output.wav
 logs/

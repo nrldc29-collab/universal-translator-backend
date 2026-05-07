@@ -1068,7 +1068,9 @@ function App() {
       playNextTtsChunk();
     };
     audio.play().catch((error) => {
+      URL.revokeObjectURL(url);
       ttsPlayingRef.current = false;
+      setPlaying(false);
       setPipelineStage(`Audio playback blocked: ${error?.name || 'tap again'}`);
       setStatus('Tap the mic once more to enable speaker audio');
     });

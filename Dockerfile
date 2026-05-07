@@ -54,6 +54,8 @@ COPY llm llm/
 COPY speech speech/
 COPY translation translation/
 COPY tts tts/
+COPY models/tts/en_US-lessac-medium.onnx models/tts/en_US-lessac-medium.onnx
+COPY models/tts/en_US-lessac-medium.onnx.json models/tts/en_US-lessac-medium.onnx.json
 COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000
