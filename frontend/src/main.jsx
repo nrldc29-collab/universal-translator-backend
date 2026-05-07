@@ -684,6 +684,7 @@ function App() {
   }
 
   function handleMicClick() {
+    console.log('MIC BUTTON CLICKED');
     if (ignoreNextMicClickRef.current) {
       ignoreNextMicClickRef.current = false;
       return;
@@ -694,6 +695,7 @@ function App() {
   }
 
   function handleMicPointerDown(event) {
+    console.log('MIC BUTTON CLICKED');
     if (socketRef.current || processing || playing) return;
     haptic(8);
     setInstantListening(true);
@@ -1355,6 +1357,16 @@ function App() {
             <span className="orb-spin" />
             <span className="sr-only">{micLabel}</span>
             {streaming ? <Square size={46} /> : <Mic size={58} />}
+          </button>
+          <button
+            className="debug-red-mic"
+            type="button"
+            onClick={() => {
+              console.log('MIC BUTTON CLICKED');
+              toggleStreaming({ interpreter: true, speakerMode: 'auto' });
+            }}
+          >
+            RED MIC TEST
           </button>
           <p className="mic-label">{micLabel}</p>
           {processing && !streaming && !playing && <p className="thinking">Translating...</p>}

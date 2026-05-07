@@ -195,6 +195,18 @@ p { margin: 0; overflow-wrap: anywhere; }
   letter-spacing: -.02em;
 }
 
+.debug-red-mic {
+  margin-top: 12px;
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 18px;
+  background: #ef4444;
+  color: white;
+  font-weight: 900;
+  letter-spacing: .08em;
+  box-shadow: 0 12px 28px rgba(239, 68, 68, .34);
+}
+
 .thinking {
   margin-top: -14px;
   color: rgba(255, 255, 255, .6);
