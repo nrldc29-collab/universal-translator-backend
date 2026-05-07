@@ -535,6 +535,18 @@ function App() {
     setLatencyStats((current) => ({ ...current, [metric]: `${ms}ms` }));
   }
 
+  function resetStreamState() {
+    setRecording(false);
+    setStreaming(false);
+    setInstantListening(false);
+    setProcessing(false);
+    setPlaying(false);
+    setInterpreterMode(false);
+    ttsPlayingRef.current = false;
+    streamFinalizePendingRef.current = false;
+    holdToTalkReleasePendingRef.current = false;
+  }
+
   function activePacketMs() {
     if (lowBandwidthMode) return 500;
     return Math.min(STREAM_PACKET_MS, 100);
@@ -543,6 +555,7 @@ function App() {
   function sendAudioPacket(socket, packet) {
     if (socket.readyState !== WebSocket.OPEN) return false;
     try {
+      console.log('sending audio chunk', packet.meta.bytes, packet.meta.mime_type);
       socket.send(JSON.stringify(packet.meta));
       socket.send(packet.buffer);
       return true;
@@ -738,6 +751,7 @@ function App() {
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('MIC STREAM ACTIVE:', stream);
     } catch (error) {
       setMicPermission('denied');
       setStatus(mediaErrorMessage(error));
@@ -813,6 +827,7 @@ function App() {
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('MIC STREAM ACTIVE:', stream);
     } catch (error) {
       disableStreamReconnect();
       setMicPermission('denied');
@@ -851,6 +866,7 @@ function App() {
       stopTracks(stream);
     };
     socket.onopen = () => {
+      console.log('WS CONNECTED');
       streamFinalizePendingRef.current = false;
       setConnectionStatus('online');
       setStreaming(true);
@@ -882,6 +898,7 @@ function App() {
     };
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
+      console.log('WS MESSAGE:', data.type, data);
       if (data.type === 'pong') {
         markStreamPong();
         return;
@@ -938,6 +955,7 @@ function App() {
         setPipelineStage('Voice stream complete');
       }
       if (data.type === 'error') {
+        console.log('WS ERROR MESSAGE:', data);
         disableStreamReconnect();
         clearStreamHeartbeat();
         audioSendQueueRef.current = [];
@@ -976,17 +994,15 @@ function App() {
       }
     };
     socket.onerror = () => {
+      console.log('WS ERROR');
       setStatus('Stream connection error');
       setPipelineStage('Connection error');
-      setInstantListening(false);
-      setProcessing(false);
+      resetStreamState();
     };
     socket.onclose = () => {
+      console.log('WS CLOSED');
       clearStreamHeartbeat();
-      setStreaming(false);
-      setInstantListening(false);
-      setProcessing(false);
-      setInterpreterMode(false);
+      resetStreamState();
       streamFinalizePendingRef.current = false;
       holdToTalkReleasePendingRef.current = false;
       if (streamRecorderRef.current === recorder) {
