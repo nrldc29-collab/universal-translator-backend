@@ -145,6 +145,7 @@ function App() {
   const [processing, setProcessing] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [streaming, setStreaming] = useState(false);
+  const [instantListening, setInstantListening] = useState(false);
   const [partialTranscript, setPartialTranscript] = useState('');
   const [liveTranslation, setLiveTranslation] = useState('');
   const [pipelineStage, setPipelineStage] = useState('Idle');
@@ -198,6 +199,10 @@ function App() {
   const ignoreNextMicClickRef = useRef(false);
   const ttsQueueRef = useRef([]);
   const ttsPlayingRef = useRef(false);
+
+  function haptic(pattern = 12) {
+    window.navigator?.vibrate?.(pattern);
+  }
 
   useEffect(() => {
     fetch(`${API_URL}/languages`)
@@ -557,6 +562,7 @@ function App() {
       socketRef.current.send(JSON.stringify({ type: 'finalize' }));
     }
     setStreaming(false);
+    setInstantListening(false);
     setProcessing(true);
     setPipelineStage('Processing');
     setStatus(nextStatus);
@@ -568,11 +574,15 @@ function App() {
       ignoreNextMicClickRef.current = false;
       return;
     }
+    haptic(socketRef.current ? 8 : 14);
+    setInstantListening(!socketRef.current);
     toggleStreaming({ interpreter: true, speakerMode: 'auto' });
   }
 
   function handleMicPointerDown(event) {
     if (socketRef.current || processing || playing) return;
+    haptic(8);
+    setInstantListening(true);
     event.currentTarget.setPointerCapture?.(event.pointerId);
     holdToTalkTimerRef.current = window.setTimeout(() => {
       holdToTalkActiveRef.current = true;
@@ -587,7 +597,11 @@ function App() {
       window.clearTimeout(holdToTalkTimerRef.current);
       holdToTalkTimerRef.current = null;
     }
-    if (!holdToTalkActiveRef.current) return;
+    if (!holdToTalkActiveRef.current) {
+      setInstantListening(false);
+      return;
+    }
+    haptic([8, 24, 8]);
     holdToTalkActiveRef.current = false;
     ignoreNextMicClickRef.current = true;
     if (!finalizeCurrentStream('Processing speech...')) {
@@ -761,6 +775,7 @@ function App() {
       streamFinalizePendingRef.current = false;
       setConnectionStatus('online');
       setStreaming(true);
+      setInstantListening(false);
       setResult(null);
       setPartialTranscript('');
       setLiveTranslation('');
@@ -880,11 +895,13 @@ function App() {
     socket.onerror = () => {
       setStatus('Stream connection error');
       setPipelineStage('Connection error');
+      setInstantListening(false);
       setProcessing(false);
     };
     socket.onclose = () => {
       clearStreamHeartbeat();
       setStreaming(false);
+      setInstantListening(false);
       setProcessing(false);
       setInterpreterMode(false);
       streamFinalizePendingRef.current = false;
@@ -947,6 +964,7 @@ function App() {
 
     ttsPlayingRef.current = true;
     setPlaying(true);
+    haptic(6);
     const url = ttsQueueRef.current.shift();
     const audio = new Audio(url);
     audio.onended = () => {
@@ -1131,7 +1149,8 @@ function App() {
   const languageDirection = `${languageFlags[sourceLanguage] || ''} ${sourceName} → ${languageFlags[targetLanguage] || ''} ${targetName}`;
   const sourceText = partialTranscript || result?.source_text || 'Hello, how are you?';
   const translatedText = liveTranslation || result?.translated_text || 'Hola, ¿cómo estás?';
-  const micState = playing ? 'speaking' : streaming ? 'listening' : processing ? 'processing' : 'idle';
+  const perceivedListening = streaming || instantListening;
+  const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
   const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
 
   return (
@@ -1149,7 +1168,7 @@ function App() {
 
         <section className="mic-panel">
           <button
-            className={`mic-orb ${micState} ${streaming ? 'listening-pulse' : ''}`}
+            className={`mic-orb ${micState} ${perceivedListening ? 'listening-pulse' : ''}`}
             onClick={handleMicClick}
             onPointerDown={handleMicPointerDown}
             onPointerUp={handleMicPointerUp}
