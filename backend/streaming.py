@@ -402,10 +402,13 @@ async def websocket_audio_translation(
 
             await websocket.send_json({"type": "stage", "stage": "stt", "message": "Speech finalized. Transcribing now..."})
             observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_start", audio_bytes=len(audio_bytes), mime_type=segment_mime_type)
+            stt_started_at = time()
             source_text = await run_pipeline_step("STT", pipeline.stt.transcribe, str(audio_path), active_source_language)
+            stt_ms = round((time() - stt_started_at) * 1000)
             if not source_text.strip() and segment_partial_text.strip():
                 source_text = segment_partial_text
-            print("STT:", source_text, flush=True)
+            print("STT:", stt_ms, "ms", source_text, flush=True)
+            await websocket.send_json({"type": "latency", "metric": "stt", "ms": stt_ms})
             observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_done", source_text=source_text)
             if not source_text.strip():
                 await websocket.send_json({"type": "error", "message": "No clear speech recognized. Try speaking closer to the mic."})
@@ -415,6 +418,7 @@ async def websocket_audio_translation(
             await websocket.send_json({"type": "semantic_context", "speaker": speaker, "speaker_label": speaker_label, **semantic_context})
             await websocket.send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
 
+            translation_started_at = time()
             improved_text = await run_pipeline_step(
                 "context improvement",
                 pipeline.context_layer.improve,
@@ -430,10 +434,12 @@ async def websocket_audio_translation(
                 active_source_language,
                 active_target_language,
             )
+            translation_ms = round((time() - translation_started_at) * 1000)
             intent = semantic_context.get("last_intent") or semantic_context.get("intent") or "statement"
             urgency = "high" if semantic_context.get("conversation_mood") == "urgent" else None
             tts_pacing = build_tts_pacing(translated_text, intent, urgency)
-            print("TRANSLATION:", translated_text, flush=True)
+            print("Translate:", translation_ms, "ms", translated_text, flush=True)
+            await websocket.send_json({"type": "latency", "metric": "translation", "ms": translation_ms})
             await websocket.send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": translated_text})
             await websocket.send_json({"type": "tts_style", "speaker": speaker, "speaker_label": speaker_label, **tts_pacing})
             observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="translation_done", translated_text=translated_text)
@@ -456,6 +462,7 @@ async def websocket_audio_translation(
                 tts_chunks.extend(chunk_text_for_tts(tts_segment))
             await websocket.send_json({"type": "tts_start", "speaker": speaker, "speaker_label": speaker_label, "chunks": len(tts_chunks)})
 
+            tts_started_at = time()
             for index, chunk in enumerate(tts_chunks, start=1):
                 chunk_output_path = await run_pipeline_step(
                     "TTS",
@@ -468,6 +475,9 @@ async def websocket_audio_translation(
                 tts_audio_bytes = Path(chunk_output_path).read_bytes()
                 observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="tts_chunk", index=index, total=len(tts_chunks), audio_bytes=len(tts_audio_bytes))
                 observability.increment("tts_playback_chunks_total")
+                tts_ms = round((time() - tts_started_at) * 1000)
+                print("TTS:", tts_ms, "ms", "chunk", index, "of", len(tts_chunks), flush=True)
+                await websocket.send_json({"type": "latency", "metric": "tts", "ms": tts_ms})
                 await websocket.send_json({
                     "type": "tts_audio_chunk",
                     "speaker": speaker,

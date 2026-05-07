@@ -56,6 +56,8 @@ const STREAM_HEARTBEAT_MS = 2500;
 const STREAM_HEARTBEAT_MAX_MISSES = 2;
 const STREAM_RECONNECT_MS = 1000;
 const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
+const MAX_AUDIO_SEND_QUEUE = 10;
+const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const HOLD_TO_TALK_DELAY_MS = 260;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -199,9 +201,28 @@ function App() {
   const ignoreNextMicClickRef = useRef(false);
   const ttsQueueRef = useRef([]);
   const ttsPlayingRef = useRef(false);
+  const audioSendQueueRef = useRef([]);
+  const wakeLockRef = useRef(null);
 
   function haptic(pattern = 12) {
     window.navigator?.vibrate?.(pattern);
+  }
+
+  async function requestWakeLock() {
+    try {
+      wakeLockRef.current = await navigator.wakeLock?.request?.('screen') || null;
+    } catch {
+      wakeLockRef.current = null;
+    }
+  }
+
+  async function releaseWakeLock() {
+    try {
+      await wakeLockRef.current?.release?.();
+    } catch {
+    } finally {
+      wakeLockRef.current = null;
+    }
   }
 
   useEffect(() => {
@@ -240,6 +261,19 @@ function App() {
   useEffect(() => {
     loadDiagnostics();
   }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && (streaming || instantListening) && !wakeLockRef.current) {
+        requestWakeLock();
+      }
+      if (document.visibilityState === 'hidden' && socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'ping' }));
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [streaming, instantListening]);
 
   useEffect(() => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -496,16 +530,49 @@ function App() {
     return Math.min(STREAM_PACKET_MS, 100);
   }
 
+  function sendAudioPacket(socket, packet) {
+    if (socket.readyState !== WebSocket.OPEN) return false;
+    try {
+      socket.send(JSON.stringify(packet.meta));
+      socket.send(packet.buffer);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function queueAudioPacket(packet) {
+    const queue = audioSendQueueRef.current;
+    if (queue.length >= MAX_BUFFERED_AUDIO_CHUNKS) queue.shift();
+    queue.push(packet);
+  }
+
+  function flushAudioSendQueue(socket) {
+    const queue = audioSendQueueRef.current;
+    while (queue.length > 0 && socket.readyState === WebSocket.OPEN) {
+      const packet = queue[0];
+      if (!sendAudioPacket(socket, packet)) break;
+      queue.shift();
+    }
+  }
+
   async function sendRecorderChunk(socket, event, recorder) {
-    if (event.data.size <= 0 || socket.readyState !== WebSocket.OPEN) return;
+    if (event.data.size <= 0) return;
+    if (audioSendQueueRef.current.length >= MAX_AUDIO_SEND_QUEUE && socket.readyState === WebSocket.OPEN) {
+      audioSendQueueRef.current.shift();
+    }
     const buffer = await event.data.arrayBuffer();
-    socket.send(JSON.stringify({
-      type: 'chunk_meta',
-      sent_at_ms: Date.now(),
-      bytes: buffer.byteLength,
-      mime_type: recorder?.mimeType || event.data.type || preferredAudioMimeType(),
-    }));
-    socket.send(buffer);
+    const packet = {
+      meta: {
+        type: 'chunk_meta',
+        sent_at_ms: Date.now(),
+        captured_at_ms: performance.now(),
+        bytes: buffer.byteLength,
+        mime_type: recorder?.mimeType || event.data.type || preferredAudioMimeType(),
+      },
+      buffer,
+    };
+    if (!sendAudioPacket(socket, packet)) queueAudioPacket(packet);
   }
 
   function stopTracks(stream) {
@@ -564,6 +631,7 @@ function App() {
     setStreaming(false);
     setInstantListening(false);
     setProcessing(true);
+    releaseWakeLock();
     setPipelineStage('Processing');
     setStatus(nextStatus);
     return true;
@@ -744,6 +812,7 @@ function App() {
     const selectedSpeakerMode = cleanOptions.speakerMode || speakerMode;
     setMicPermission('available');
     unlockMobileAudio();
+    requestWakeLock();
     setInterpreterMode(Boolean(cleanOptions.interpreter || selectedSpeakerMode === 'auto'));
     setDetectedSpeaker('-');
     setLatencyStats({ mic_to_backend: '-', backend_response: '-', first_audio: '-' });
@@ -792,6 +861,7 @@ function App() {
         speaker: selectedSpeakerMode === 'auto' ? 'auto' : 'A',
         mime_type: recorder.mimeType || preferredAudioMimeType(),
       }));
+      flushAudioSendQueue(socket);
       startStreamHeartbeat(socket);
       streamRecorderRef.current = recorder;
       recorder.start(activePacketMs());
@@ -860,6 +930,8 @@ function App() {
       if (data.type === 'error') {
         disableStreamReconnect();
         clearStreamHeartbeat();
+        audioSendQueueRef.current = [];
+        releaseWakeLock();
         setProcessing(false);
         setPipelineStage('Needs audio');
         setStatus(data.message || 'Stream failed');
@@ -874,6 +946,7 @@ function App() {
       if (data.type === 'final') {
         disableStreamReconnect();
         clearStreamHeartbeat();
+        audioSendQueueRef.current = [];
         rememberSpeaker(data);
         setResult(data);
         if (data.session) {
@@ -921,6 +994,8 @@ function App() {
 
       if (streamReconnectRef.current.attempts >= STREAM_RECONNECT_MAX_ATTEMPTS) {
         disableStreamReconnect();
+        audioSendQueueRef.current = [];
+        releaseWakeLock();
         setStatus('Connection lost. Tap to restart.');
         setPipelineStage('Connection lost');
         setConnectionStatus('offline');
