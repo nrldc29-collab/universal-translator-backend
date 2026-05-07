@@ -203,9 +203,18 @@ function App() {
   const ttsPlayingRef = useRef(false);
   const audioSendQueueRef = useRef([]);
   const wakeLockRef = useRef(null);
+  const audioContextRef = useRef(null);
 
   function haptic(pattern = 12) {
     window.navigator?.vibrate?.(pattern);
+  }
+
+  function ensureAudioContext() {
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextCtor) return null;
+    if (!audioContextRef.current) audioContextRef.current = new AudioContextCtor();
+    if (audioContextRef.current.state === 'suspended') audioContextRef.current.resume?.();
+    return audioContextRef.current;
   }
 
   async function requestWakeLock() {
@@ -334,6 +343,7 @@ function App() {
   }
 
   function unlockMobileAudio() {
+    ensureAudioContext();
     const audio = new Audio();
     audio.muted = true;
     audio.play().catch(() => {});
@@ -1017,6 +1027,7 @@ function App() {
       setPipelineStage('Low-bandwidth mode: text translation only');
       return;
     }
+    ensureAudioContext();
     const binary = atob(audioBase64);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
@@ -1042,6 +1053,10 @@ function App() {
     haptic(6);
     const url = ttsQueueRef.current.shift();
     const audio = new Audio(url);
+    audio.preload = 'auto';
+    audio.playsInline = true;
+    audio.muted = false;
+    audio.volume = 1;
     audio.onended = () => {
       URL.revokeObjectURL(url);
       ttsPlayingRef.current = false;
@@ -1052,9 +1067,10 @@ function App() {
       ttsPlayingRef.current = false;
       playNextTtsChunk();
     };
-    audio.play().catch(() => {
+    audio.play().catch((error) => {
       ttsPlayingRef.current = false;
-      setPipelineStage('Click page once to allow audio playback');
+      setPipelineStage(`Audio playback blocked: ${error?.name || 'tap again'}`);
+      setStatus('Tap the mic once more to enable speaker audio');
     });
   }
 
