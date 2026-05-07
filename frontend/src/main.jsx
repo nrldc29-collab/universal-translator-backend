@@ -91,25 +91,26 @@ function preferredAudioMimeType() {
 }
 
 function createAudioRecorder(stream) {
-  const options = { audioBitsPerSecond: STREAM_AUDIO_BITRATE };
-  if (window.MediaRecorder?.isTypeSupported?.('audio/webm;codecs=opus')) {
-    try {
-      return new MediaRecorder(stream, { ...options, mimeType: 'audio/webm;codecs=opus' });
-    } catch {
-    }
+  if (!window.MediaRecorder) {
+    window.alert?.('Recording not supported on this device/browser');
+    throw new Error('Recording not supported on this device/browser');
   }
-  const mimeType = preferredAudioMimeType();
-  if (mimeType) {
-    try {
-      return new MediaRecorder(stream, { ...options, mimeType });
-    } catch {
-    }
+  const options = {};
+  if (MediaRecorder.isTypeSupported?.('audio/webm;codecs=opus')) {
+    options.mimeType = 'audio/webm;codecs=opus';
+  } else if (MediaRecorder.isTypeSupported?.('audio/mp4')) {
+    options.mimeType = 'audio/mp4';
   }
-  try {
-    return new MediaRecorder(stream, options);
-  } catch {
-    return new MediaRecorder(stream);
-  }
+  return new MediaRecorder(stream, options);
+}
+
+function logAudioStream(stream) {
+  console.log('AUDIO STREAM:', stream);
+  console.log('AUDIO TRACKS:', stream.getAudioTracks());
+  stream.getAudioTracks().forEach((track) => {
+    console.log('TRACK ENABLED:', track.enabled);
+    console.log('TRACK STATE:', track.readyState);
+  });
 }
 
 function audioFileExtension(mimeType) {
@@ -774,6 +775,7 @@ function App() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       console.log('MIC STREAM ACTIVE:', stream);
+      logAudioStream(stream);
     } catch (error) {
       setMicPermission('denied');
       setStatus(mediaErrorMessage(error));
@@ -782,7 +784,14 @@ function App() {
     setMicPermission('available');
     chunksRef.current = [];
     recordingStoppedRef.current = false;
-    const recorder = createAudioRecorder(stream);
+    let recorder;
+    try {
+      recorder = createAudioRecorder(stream);
+    } catch (error) {
+      stopTracks(stream);
+      setStatus(error.message || 'Recording not supported');
+      return;
+    }
     mediaRecorderRef.current = recorder;
     recorder.ondataavailable = (event) => {
       console.log('MOBILE AUDIO SIZE:', event.data.size);
@@ -851,6 +860,7 @@ function App() {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       console.log('MIC STREAM ACTIVE:', stream);
+      logAudioStream(stream);
     } catch (error) {
       disableStreamReconnect();
       setMicPermission('denied');
@@ -875,7 +885,17 @@ function App() {
       },
       attempts: reconnecting ? streamReconnectRef.current.attempts : 0,
     };
-    const recorder = createAudioRecorder(stream);
+    let recorder;
+    try {
+      recorder = createAudioRecorder(stream);
+    } catch (error) {
+      stopTracks(stream);
+      disableStreamReconnect();
+      resetStreamState();
+      setStatus(error.message || 'Recording not supported');
+      setPipelineStage('Recording unsupported');
+      return;
+    }
     const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
@@ -1159,6 +1179,8 @@ function App() {
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log('MIC STREAM ACTIVE:', stream);
+      logAudioStream(stream);
     } catch (error) {
       setMicPermission('denied');
       updateDuplexSpeaker(speaker, { active: false, stage: mediaErrorMessage(error) });
@@ -1173,9 +1195,17 @@ function App() {
     refs.finalizePending = false;
     refs.socket = socket;
     socket.binaryType = 'arraybuffer';
-    const recorder = createAudioRecorder(stream);
+    let recorder;
+    try {
+      recorder = createAudioRecorder(stream);
+    } catch (error) {
+      stopTracks(stream);
+      updateDuplexSpeaker(speaker, { active: false, stage: error.message || 'Recording not supported' });
+      return;
+    }
     refs.recorder = recorder;
     recorder.ondataavailable = async (event) => {
+      console.log('MOBILE AUDIO SIZE:', event.data.size);
       await sendRecorderChunk(socket, event, recorder);
     };
     recorder.onstop = () => {
