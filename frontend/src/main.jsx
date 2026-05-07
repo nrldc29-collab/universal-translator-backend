@@ -204,6 +204,7 @@ function App() {
   const audioSendQueueRef = useRef([]);
   const wakeLockRef = useRef(null);
   const audioContextRef = useRef(null);
+  const streamSafetyTimeoutRef = useRef(null);
 
   function haptic(pattern = 12) {
     window.navigator?.vibrate?.(pattern);
@@ -536,6 +537,10 @@ function App() {
   }
 
   function resetStreamState() {
+    if (streamSafetyTimeoutRef.current) {
+      window.clearTimeout(streamSafetyTimeoutRef.current);
+      streamSafetyTimeoutRef.current = null;
+    }
     setRecording(false);
     setStreaming(false);
     setInstantListening(false);
@@ -581,6 +586,7 @@ function App() {
 
   async function sendRecorderChunk(socket, event, recorder) {
     if (event.data.size <= 0) return;
+    console.log('AUDIO CHUNK:', event.data);
     if (audioSendQueueRef.current.length >= MAX_AUDIO_SEND_QUEUE && socket.readyState === WebSocket.OPEN) {
       audioSendQueueRef.current.shift();
     }
@@ -857,6 +863,7 @@ function App() {
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
     recorder.ondataavailable = async (event) => {
+      console.log('AUDIO CHUNK:', event.data);
       await sendRecorderChunk(socket, event, recorder);
     };
     recorder.onstop = () => {
@@ -866,7 +873,22 @@ function App() {
       stopTracks(stream);
     };
     socket.onopen = () => {
-      console.log('WS CONNECTED');
+      console.log('WS OPEN');
+      if (streamSafetyTimeoutRef.current) window.clearTimeout(streamSafetyTimeoutRef.current);
+      streamSafetyTimeoutRef.current = window.setTimeout(() => {
+        console.log('FORCE RESET (safety timeout)');
+        resetStreamState();
+        disableStreamReconnect();
+        clearStreamHeartbeat();
+        audioSendQueueRef.current = [];
+        releaseWakeLock();
+        if (streamRecorderRef.current?.state === 'recording') streamRecorderRef.current.stop();
+        else stopTracks(stream);
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+        if (socketRef.current === socket) socketRef.current = null;
+        setStatus('Ready to try again');
+        setPipelineStage('Safety reset');
+      }, 15000);
       streamFinalizePendingRef.current = false;
       setConnectionStatus('online');
       setStreaming(true);
@@ -898,7 +920,8 @@ function App() {
     };
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      console.log('WS MESSAGE:', data.type, data);
+      console.log('WS MESSAGE:', event.data);
+      resetStreamState();
       if (data.type === 'pong') {
         markStreamPong();
         return;
@@ -993,8 +1016,8 @@ function App() {
         socketRef.current = null;
       }
     };
-    socket.onerror = () => {
-      console.log('WS ERROR');
+    socket.onerror = (event) => {
+      console.log('WS ERROR:', event);
       setStatus('Stream connection error');
       setPipelineStage('Connection error');
       resetStreamState();
