@@ -30,7 +30,7 @@ function defaultApiUrl() {
   if (isSameOriginBackendHost(window.location.hostname)) {
     return window.location.origin;
   }
-  return 'https://your-backend.up.railway.app';
+  return 'https://universal-translator-phone-production.up.railway.app';
 }
 
 function configuredUrl(value) {
