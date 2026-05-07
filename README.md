@@ -2,6 +2,10 @@
 
 A fully self-hosted real-time translation system designed to reduce language barriers without relying on external APIs or usage quotas.
 
+## Design Rule
+
+From this point onward, do not add more main-screen UI elements. Only refine spacing, animation, smoothness, and speed. Keep the primary experience focused on the app title, language direction, microphone, transcript, and translation.
+
 ## Project Goal
 
 Build a local pipeline that can:
