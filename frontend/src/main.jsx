@@ -382,6 +382,33 @@ function App() {
     setStatus('Mobile audio unlocked');
   }
 
+  async function playSpeakerTestSound() {
+    try {
+      const context = await ensureAudioContext();
+      if (!context) {
+        setStatus('Speaker test unavailable in this browser');
+        return;
+      }
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.28);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(context.currentTime);
+      oscillator.stop(context.currentTime + 0.3);
+      setMobileAudioUnlocked(true);
+      setPipelineStage('Speaker test played');
+      setStatus('Speaker test played');
+    } catch (error) {
+      setPipelineStage(`Speaker blocked: ${error?.name || 'tap again'}`);
+      setStatus('Speaker blocked. Check mute switch and volume.');
+    }
+  }
+
   async function translateText() {
     if (processing || !text.trim()) return;
     setProcessing(true);
@@ -1461,11 +1488,16 @@ function App() {
           </button>
           <p className="mic-label">{micLabel}</p>
           <p className="status-line">{statusText}</p>
-          {audioReplayAvailable && (
-            <button className="play-voice-button" type="button" onClick={playTranslationAudio} disabled={playing}>
-              Play Voice
+          <div className="sound-actions">
+            <button className="play-voice-button" type="button" onClick={playSpeakerTestSound} disabled={playing}>
+              Test Sound
             </button>
-          )}
+            {audioReplayAvailable && (
+              <button className="play-voice-button" type="button" onClick={playTranslationAudio} disabled={playing}>
+                Play Voice
+              </button>
+            )}
+          </div>
           {processing && !streaming && !playing && <p className="thinking">Translating...</p>}
         </section>
 

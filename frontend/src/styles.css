@@ -210,6 +210,13 @@ p { margin: 0; overflow-wrap: anywhere; }
   line-height: 1.25;
 }
 
+.sound-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
 .play-voice-button {
   min-height: 44px;
   padding: 10px 18px;
