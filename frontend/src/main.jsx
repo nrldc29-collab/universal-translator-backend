@@ -180,6 +180,7 @@ function App() {
   const [speechSpeed, setSpeechSpeed] = useState('normal');
   const [lowBandwidthMode, setLowBandwidthMode] = useState(false);
   const [mobileAudioUnlocked, setMobileAudioUnlocked] = useState(false);
+  const [audioReplayAvailable, setAudioReplayAvailable] = useState(false);
   const [interpreterMode, setInterpreterMode] = useState(false);
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
@@ -221,6 +222,7 @@ function App() {
   const holdToTalkReleasePendingRef = useRef(false);
   const ignoreNextMicClickRef = useRef(false);
   const ttsQueueRef = useRef([]);
+  const lastTtsItemRef = useRef(null);
   const ttsPlayingRef = useRef(false);
   const audioSendQueueRef = useRef([]);
   const wakeLockRef = useRef(null);
@@ -1170,27 +1172,30 @@ function App() {
     }
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     const url = URL.createObjectURL(new Blob([buffer], { type: mimeType || 'audio/wav' }));
-    ttsQueueRef.current.push({ url, buffer });
+    const item = { url, buffer, mimeType: mimeType || 'audio/wav' };
+    if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+    lastTtsItemRef.current = item;
+    setAudioReplayAvailable(true);
+    ttsQueueRef.current.push(item);
     playNextTtsChunk();
   }
 
-  function playNextTtsChunk() {
-    if (ttsPlayingRef.current || ttsQueueRef.current.length === 0) {
-      if (ttsQueueRef.current.length === 0) {
-        setPlaying(false);
-        setPipelineStage('Ready to listen');
-        setStatus('Ready to listen');
-      }
-      return;
-    }
-
+  function playTtsItem(item, { revokeOnFinish = true, manual = false } = {}) {
+    if (!item) return;
     ttsPlayingRef.current = true;
     setPlaying(true);
+    setPipelineStage(manual ? 'Playing translation voice' : 'Playing voice');
+    setStatus(manual ? 'Playing translation voice...' : 'Playing voice...');
     haptic(6);
-    const item = ttsQueueRef.current.shift();
     const finish = () => {
-      URL.revokeObjectURL(item.url);
+      if (revokeOnFinish) URL.revokeObjectURL(item.url);
       ttsPlayingRef.current = false;
+      if (manual) {
+        setPlaying(false);
+        setPipelineStage('Voice played');
+        setStatus('Voice played');
+        return;
+      }
       playNextTtsChunk();
     };
     const playWithHtmlAudio = () => {
@@ -1202,11 +1207,11 @@ function App() {
       audio.onended = finish;
       audio.onerror = finish;
       audio.play().catch((error) => {
-        URL.revokeObjectURL(item.url);
         ttsPlayingRef.current = false;
         setPlaying(false);
-        setPipelineStage(`Audio playback blocked: ${error?.name || 'tap again'}`);
-        setStatus('Tap the mic once more to enable speaker audio');
+        setAudioReplayAvailable(true);
+        setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
+        setStatus('Tap Play Voice to hear translation');
       });
     };
     ensureAudioContext()
@@ -1226,6 +1231,25 @@ function App() {
           .catch(playWithHtmlAudio);
       })
       .catch(playWithHtmlAudio);
+  }
+
+  async function playTranslationAudio() {
+    await unlockMobileAudio();
+    playTtsItem(lastTtsItemRef.current, { revokeOnFinish: false, manual: true });
+  }
+
+  function playNextTtsChunk() {
+    if (ttsPlayingRef.current || ttsQueueRef.current.length === 0) {
+      if (ttsQueueRef.current.length === 0) {
+        setPlaying(false);
+        setPipelineStage('Ready to listen');
+        setStatus('Ready to listen');
+      }
+      return;
+    }
+
+    const item = ttsQueueRef.current.shift();
+    playTtsItem(item, { revokeOnFinish: false });
   }
 
   function updateDuplexSpeaker(speaker, patch) {
@@ -1437,6 +1461,11 @@ function App() {
           </button>
           <p className="mic-label">{micLabel}</p>
           <p className="status-line">{statusText}</p>
+          {audioReplayAvailable && (
+            <button className="play-voice-button" type="button" onClick={playTranslationAudio} disabled={playing}>
+              Play Voice
+            </button>
+          )}
           {processing && !streaming && !playing && <p className="thinking">Translating...</p>}
         </section>
 
