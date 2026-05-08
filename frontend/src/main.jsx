@@ -1210,7 +1210,8 @@ function App() {
       return;
     }
     setMicPermission('available');
-    const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
+    const activeAuthToken = await ensureAuthToken();
+    const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, activeAuthToken));
     const source = speaker === 'A' ? sourceLanguage : targetLanguage;
     const target = speaker === 'A' ? targetLanguage : sourceLanguage;
     refs.manualClose = false;

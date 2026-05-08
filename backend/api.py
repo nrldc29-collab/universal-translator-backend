@@ -4,6 +4,7 @@ from uuid import uuid4
 from contextlib import asynccontextmanager
 from html import escape
 import json
+import os
 from time import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -55,6 +56,7 @@ metrics = {
     "websocket_connections": 0,
     "websocket_errors": 0,
 }
+RELEASE_ID = "2026-05-08-mobile-ws-anonymous-v2"
 logger = logging.getLogger("universal_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 HOP_BY_HOP_HEADERS = {
@@ -257,6 +259,17 @@ def root(request: Request):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/debug/version")
+async def debug_version():
+    return {
+        "release": RELEASE_ID,
+        "environment": os.getenv("ENVIRONMENT", ""),
+        "users_configured": bool(os.getenv("USERS", "")),
+        "api_keys_configured": bool(os.getenv("API_KEYS", "")),
+        "anonymous_websocket": True,
+    }
 
 
 @app.get("/ready")
