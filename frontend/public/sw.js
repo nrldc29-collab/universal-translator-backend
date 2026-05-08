@@ -1,5 +1,5 @@
-const CACHE_NAME = 'universal-translator-shell-v7';
-const RUNTIME_CACHE = 'universal-translator-runtime-v7';
+const CACHE_NAME = 'universal-translator-shell-v8';
+const RUNTIME_CACHE = 'universal-translator-runtime-v8';
 const OFFLINE_URL = '/offline.html';
 const PRECACHE_URLS = [
   '/',
@@ -102,6 +102,21 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (!CACHEABLE_DESTINATIONS.has(event.request.destination) && !isShellAsset(requestUrl)) return;
+
+  if (event.request.destination === 'script' || event.request.destination === 'style') {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((response) => response || caches.match(OFFLINE_URL)))
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
