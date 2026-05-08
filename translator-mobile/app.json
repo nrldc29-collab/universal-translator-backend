@@ -7,6 +7,9 @@
     "icon": "./assets/images/icon.png",
     "scheme": "translatormobile",
     "userInterfaceStyle": "automatic",
+    "extra": {
+      "apiUrl": "https://universal-translator-phone-production.up.railway.app"
+    },
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true

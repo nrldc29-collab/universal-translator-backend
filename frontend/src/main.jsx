@@ -416,7 +416,8 @@ function App() {
     });
     if (!response.ok) {
       const message = await responseErrorMessage(response, 'Auto-login failed');
-      throw new Error(message || 'Login required');
+      console.log('AUTH: auto-login failed, continuing anonymously', message);
+      return '';
     }
     const data = await response.json();
     localStorage.setItem('translator_token', data.access_token);
@@ -915,17 +916,7 @@ function App() {
       setPipelineStage('Recording unsupported');
       return;
     }
-    let activeAuthToken;
-    try {
-      activeAuthToken = await ensureAuthToken();
-    } catch (error) {
-      stopTracks(stream);
-      disableStreamReconnect();
-      resetStreamState();
-      setStatus(error.message || 'Login required');
-      setPipelineStage('Ready');
-      return;
-    }
+    const activeAuthToken = await ensureAuthToken();
     const socketUrl = withAuthToken(WS_AUDIO_URL, activeAuthToken);
     setWsDebug({ url: WS_AUDIO_URL, close: 'connecting', error: '-' });
     const socket = new WebSocket(socketUrl);
