@@ -59,6 +59,7 @@ const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
 const MAX_AUDIO_SEND_QUEUE = 10;
 const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const HOLD_TO_TALK_DELAY_MS = 260;
+const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
 registerServiceWorker();
@@ -209,7 +210,9 @@ function App() {
   const speakerLabelsRef = useRef({});
   const recordingStoppedRef = useRef(false);
   const streamFinalizePendingRef = useRef(false);
+  const streamFinalizeTimerRef = useRef(null);
   const streamStartedAtRef = useRef(0);
+  const streamRecordingStartedAtRef = useRef(0);
   const firstAudioSeenRef = useRef(false);
   const streamHeartbeatRef = useRef({ timer: null, missed: 0 });
   const streamReconnectRef = useRef({ enabled: false, options: null, attempts: 0 });
@@ -362,7 +365,14 @@ function App() {
   }
 
   async function unlockMobileAudio() {
-    await ensureAudioContext();
+    const context = await ensureAudioContext();
+    if (context) {
+      const buffer = context.createBuffer(1, 1, 22050);
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      source.connect(context.destination);
+      source.start(0);
+    }
     const audio = new Audio();
     audio.muted = true;
     audio.play().catch(() => {});
@@ -577,6 +587,10 @@ function App() {
       window.clearTimeout(streamSafetyTimeoutRef.current);
       streamSafetyTimeoutRef.current = null;
     }
+    if (streamFinalizeTimerRef.current) {
+      window.clearTimeout(streamFinalizeTimerRef.current);
+      streamFinalizeTimerRef.current = null;
+    }
     setRecording(false);
     setStreaming(false);
     setInstantListening(false);
@@ -585,6 +599,7 @@ function App() {
     setInterpreterMode(false);
     ttsPlayingRef.current = false;
     streamFinalizePendingRef.current = false;
+    streamRecordingStartedAtRef.current = 0;
     holdToTalkReleasePendingRef.current = false;
   }
 
@@ -681,15 +696,34 @@ function App() {
     streamReconnectRef.current = { ...streamReconnectRef.current, enabled: false };
   }
 
-  function finalizeCurrentStream(nextStatus = 'Processing stream...') {
+  function finalizeCurrentStream(nextStatus = 'Processing stream...', options = {}) {
     if (!socketRef.current) return false;
     if (socketRef.current.readyState !== WebSocket.OPEN && !streamRecorderRef.current) return false;
+    const recorder = streamRecorderRef.current;
+    if (options.delay !== false && recorder?.state === 'recording' && streamRecordingStartedAtRef.current) {
+      const remainingMs = MIN_STREAM_CAPTURE_MS - (performance.now() - streamRecordingStartedAtRef.current);
+      if (remainingMs > 0) {
+        if (!streamFinalizeTimerRef.current) {
+          setPipelineStage('Keep speaking');
+          setStatus('Keep speaking for a moment...');
+          streamFinalizeTimerRef.current = window.setTimeout(() => {
+            streamFinalizeTimerRef.current = null;
+            finalizeCurrentStream(nextStatus, { delay: false });
+          }, remainingMs);
+        }
+        return true;
+      }
+    }
+    if (streamFinalizeTimerRef.current) {
+      window.clearTimeout(streamFinalizeTimerRef.current);
+      streamFinalizeTimerRef.current = null;
+    }
     disableStreamReconnect();
     clearStreamHeartbeat();
     streamFinalizePendingRef.current = true;
-    if (streamRecorderRef.current?.state === 'recording') {
-      streamRecorderRef.current.requestData?.();
-      streamRecorderRef.current.stop();
+    if (recorder?.state === 'recording') {
+      recorder.requestData?.();
+      recorder.stop();
     } else if (socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type: 'finalize' }));
     }
@@ -971,10 +1005,11 @@ function App() {
       streamRecorderRef.current = recorder;
       console.log('STEP 9: starting recorder');
       recorder.start(activePacketMs());
+      streamRecordingStartedAtRef.current = performance.now();
       console.log('STEP 10: recorder started, state=', recorder.state);
       if (cleanOptions.holdToTalk && holdToTalkReleasePendingRef.current) {
         holdToTalkReleasePendingRef.current = false;
-        window.setTimeout(() => finalizeCurrentStream('Processing speech...'), 80);
+        finalizeCurrentStream('Processing speech...');
       }
     };
     socket.onmessage = (event) => {
@@ -1042,7 +1077,7 @@ function App() {
         audioSendQueueRef.current = [];
         releaseWakeLock();
         resetStreamState();
-        setPipelineStage('Needs audio');
+        setPipelineStage('Hold and speak longer');
         setStatus(data.message || 'Stream failed');
         streamFinalizePendingRef.current = false;
         holdToTalkReleasePendingRef.current = false;
@@ -1133,8 +1168,9 @@ function App() {
     for (let index = 0; index < binary.length; index += 1) {
       bytes[index] = binary.charCodeAt(index);
     }
-    const url = URL.createObjectURL(new Blob([bytes], { type: mimeType || 'audio/wav' }));
-    ttsQueueRef.current.push(url);
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const url = URL.createObjectURL(new Blob([buffer], { type: mimeType || 'audio/wav' }));
+    ttsQueueRef.current.push({ url, buffer });
     playNextTtsChunk();
   }
 
@@ -1151,29 +1187,45 @@ function App() {
     ttsPlayingRef.current = true;
     setPlaying(true);
     haptic(6);
-    const url = ttsQueueRef.current.shift();
-    const audio = new Audio(url);
-    audio.preload = 'auto';
-    audio.playsInline = true;
-    audio.muted = false;
-    audio.volume = 1;
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
+    const item = ttsQueueRef.current.shift();
+    const finish = () => {
+      URL.revokeObjectURL(item.url);
       ttsPlayingRef.current = false;
       playNextTtsChunk();
     };
-    audio.onerror = () => {
-      URL.revokeObjectURL(url);
-      ttsPlayingRef.current = false;
-      playNextTtsChunk();
+    const playWithHtmlAudio = () => {
+      const audio = new Audio(item.url);
+      audio.preload = 'auto';
+      audio.playsInline = true;
+      audio.muted = false;
+      audio.volume = 1;
+      audio.onended = finish;
+      audio.onerror = finish;
+      audio.play().catch((error) => {
+        URL.revokeObjectURL(item.url);
+        ttsPlayingRef.current = false;
+        setPlaying(false);
+        setPipelineStage(`Audio playback blocked: ${error?.name || 'tap again'}`);
+        setStatus('Tap the mic once more to enable speaker audio');
+      });
     };
-    audio.play().catch((error) => {
-      URL.revokeObjectURL(url);
-      ttsPlayingRef.current = false;
-      setPlaying(false);
-      setPipelineStage(`Audio playback blocked: ${error?.name || 'tap again'}`);
-      setStatus('Tap the mic once more to enable speaker audio');
-    });
+    ensureAudioContext()
+      .then((context) => {
+        if (!context || context.state !== 'running') {
+          playWithHtmlAudio();
+          return;
+        }
+        return context.decodeAudioData(item.buffer.slice(0))
+          .then((audioBuffer) => {
+            const source = context.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(context.destination);
+            source.onended = finish;
+            source.start(0);
+          })
+          .catch(playWithHtmlAudio);
+      })
+      .catch(playWithHtmlAudio);
   }
 
   function updateDuplexSpeaker(speaker, patch) {
