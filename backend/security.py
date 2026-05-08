@@ -104,6 +104,7 @@ class UsageLimiter:
 
 
 usage_limiter = UsageLimiter()
+WEBSOCKET_AUTH_RELEASE = "anonymous-ws-v3"
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -204,6 +205,9 @@ async def authenticate_websocket(websocket: WebSocket) -> tuple[bool, str]:
         identity = token or "anonymous"
     else:
         identity = "anonymous"
+
+    if identity == "anonymous":
+        return True, identity
 
     allowed, remaining = usage_limiter.check(identity)
     if not allowed:

@@ -40,7 +40,7 @@ from backend.config import (
 )
 from backend.pipeline import UniversalTranslatorPipeline
 from backend.observability import observability
-from backend.security import authenticate_http, authenticate_user, authenticate_websocket, usage_limiter
+from backend.security import WEBSOCKET_AUTH_RELEASE, authenticate_http, authenticate_user, authenticate_websocket, usage_limiter
 from backend.sessions import session_registry
 from backend.streaming import websocket_audio_translation, websocket_text_translation
 from speech import SileroVoiceActivityDetector
@@ -269,7 +269,13 @@ async def debug_version():
         "users_configured": bool(os.getenv("USERS", "")),
         "api_keys_configured": bool(os.getenv("API_KEYS", "")),
         "anonymous_websocket": True,
+        "websocket_auth_release": WEBSOCKET_AUTH_RELEASE,
     }
+
+
+@app.get("/api/debug/version")
+async def api_debug_version():
+    return await debug_version()
 
 
 @app.get("/ready")
@@ -482,8 +488,10 @@ async def websocket_translate(websocket: WebSocket):
 
 @app.websocket("/ws/audio")
 async def websocket_audio(websocket: WebSocket):
+    logger.info("audio_websocket_auth_start release=%s", WEBSOCKET_AUTH_RELEASE)
     ok, identity = await authenticate_websocket(websocket)
     if not ok:
+        logger.warning("audio_websocket_auth_rejected identity=%s", identity)
         return
     metrics["websocket_connections"] += 1
     logger.info("audio_websocket_connected identity=%s", identity)
@@ -499,6 +507,13 @@ async def websocket_audio(websocket: WebSocket):
         observability.record_event("websocket_error", identity=identity, mode="audio")
         logger.exception("audio_websocket_error identity=%s", identity)
         await websocket.close(code=1011, reason="Internal WebSocket error")
+
+
+@app.websocket("/ws/ping")
+async def websocket_ping(websocket: WebSocket):
+    await websocket.accept()
+    await websocket.send_json({"type": "ready", "release": RELEASE_ID, "websocket_auth_release": WEBSOCKET_AUTH_RELEASE})
+    await websocket.close()
 
 
 @app.get("/{full_path:path}")
