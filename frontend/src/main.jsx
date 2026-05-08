@@ -409,7 +409,6 @@ function App() {
 
   async function ensureAuthToken() {
     if (authToken) return authToken;
-    console.log('AUTH: no token, auto-login before WebSocket');
     const response = await fetch(`${API_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -417,13 +416,11 @@ function App() {
     });
     if (!response.ok) {
       const message = await responseErrorMessage(response, 'Auto-login failed');
-      console.log('AUTH: auto-login failed', message);
-      return '';
+      throw new Error(message || 'Login required');
     }
     const data = await response.json();
     localStorage.setItem('translator_token', data.access_token);
     setAuthToken(data.access_token);
-    console.log('AUTH: auto-login success');
     return data.access_token;
   }
 
@@ -871,9 +868,7 @@ function App() {
   }
 
   async function toggleStreaming(options = {}) {
-    console.log('STEP 1: toggleStreaming called, socketRef=', socketRef.current);
     if (socketRef.current) {
-      console.log('STEP 1a: socket exists, finalizing');
       finalizeCurrentStream();
       return;
     }
@@ -882,24 +877,18 @@ function App() {
     const cleanOptions = { ...options };
     delete cleanOptions.reconnect;
     let stream;
-    console.log('STEP 2: requesting getUserMedia');
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log('STEP 2a: MIC STREAM ACTIVE:', stream);
       logAudioStream(stream);
     } catch (error) {
-      console.log('STEP 2b: getUserMedia FAILED:', error);
       disableStreamReconnect();
       setMicPermission('denied');
       setStatus(mediaErrorMessage(error));
       return;
     }
-    console.log('STEP 3: getUserMedia success');
     const selectedSpeakerMode = cleanOptions.speakerMode || speakerMode;
     setMicPermission('available');
-    console.log('STEP 4: unlocking mobile audio');
     await unlockMobileAudio();
-    console.log('STEP 5: mobile audio unlocked');
     requestWakeLock();
     setInterpreterMode(Boolean(cleanOptions.interpreter || selectedSpeakerMode === 'auto'));
     setDetectedSpeaker('-');
@@ -916,12 +905,9 @@ function App() {
       attempts: reconnecting ? streamReconnectRef.current.attempts : 0,
     };
     let recorder;
-    console.log('STEP 6: creating audio recorder');
     try {
       recorder = createAudioRecorder(stream);
-      console.log('STEP 6a: recorder created, mimeType=', recorder.mimeType);
     } catch (error) {
-      console.log('STEP 6b: createAudioRecorder FAILED:', error);
       stopTracks(stream);
       disableStreamReconnect();
       resetStreamState();
@@ -929,17 +915,23 @@ function App() {
       setPipelineStage('Recording unsupported');
       return;
     }
-    console.log('STEP 7: creating WebSocket');
-    const activeAuthToken = await ensureAuthToken();
+    let activeAuthToken;
+    try {
+      activeAuthToken = await ensureAuthToken();
+    } catch (error) {
+      stopTracks(stream);
+      disableStreamReconnect();
+      resetStreamState();
+      setStatus(error.message || 'Login required');
+      setPipelineStage('Ready');
+      return;
+    }
     const socketUrl = withAuthToken(WS_AUDIO_URL, activeAuthToken);
-    console.log('STEP 7a: WS URL=', socketUrl.replace(/access_token=[^&]+/, 'access_token=***'));
     setWsDebug({ url: WS_AUDIO_URL, close: 'connecting', error: '-' });
     const socket = new WebSocket(socketUrl);
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
     recorder.ondataavailable = async (event) => {
-      console.log('MOBILE AUDIO SIZE:', event.data.size);
-      console.log('AUDIO CHUNK:', event.data);
       await sendRecorderChunk(socket, event, recorder);
     };
     recorder.onstop = () => {
@@ -949,10 +941,8 @@ function App() {
       stopTracks(stream);
     };
     socket.onopen = () => {
-      console.log('STEP 8: WS OPEN - socket connected');
       if (streamSafetyTimeoutRef.current) window.clearTimeout(streamSafetyTimeoutRef.current);
       streamSafetyTimeoutRef.current = window.setTimeout(() => {
-        console.log('FORCE RESET (safety timeout)');
         resetStreamState();
         disableStreamReconnect();
         clearStreamHeartbeat();
@@ -1094,14 +1084,12 @@ function App() {
       }
     };
     socket.onerror = (event) => {
-      console.log('STEP X: WS ERROR:', event);
       setWsDebug((current) => ({ ...current, error: 'socket error' }));
       setStatus('Stream connection error');
       setPipelineStage('Connection error');
       resetStreamState();
     };
     socket.onclose = (event) => {
-      console.log('STEP X: WS CLOSED', event.code, event.reason, event.wasClean);
       setWsDebug((current) => ({
         ...current,
         close: `${event.code || 'no-code'} ${event.reason || 'no-reason'} clean:${event.wasClean ? 1 : 0}`,
@@ -1369,11 +1357,12 @@ function App() {
   }
 
 
-  const sourceText = partialTranscript || result?.source_text || 'Hello, how are you?';
-  const translatedText = liveTranslation || result?.translated_text || 'Hola, ¿cómo estás?';
+  const sourceText = partialTranscript || result?.source_text || 'Ready to listen';
+  const translatedText = liveTranslation || result?.translated_text || 'Translation appears here';
   const perceivedListening = streaming || instantListening;
   const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
   const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
+  const statusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
 
   return (
     <main className="app-shell">
@@ -1402,47 +1391,9 @@ function App() {
             <span className="sr-only">{micLabel}</span>
             {streaming ? <Square size={46} /> : <Mic size={58} />}
           </button>
-          <button
-            className="debug-red-mic"
-            type="button"
-            onClick={() => {
-              console.log('MIC BUTTON CLICKED');
-              toggleStreaming({ interpreter: true, speakerMode: 'auto' });
-            }}
-          >
-            RED MIC TEST
-          </button>
-          <button
-            className="debug-force-unlock"
-            type="button"
-            onClick={() => {
-              console.log('FORCE UNLOCK CLICKED');
-              resetStreamState();
-              disableStreamReconnect();
-              clearStreamHeartbeat();
-              audioSendQueueRef.current = [];
-              releaseWakeLock();
-              if (streamRecorderRef.current?.state === 'recording') streamRecorderRef.current.stop();
-              if (socketRef.current) {
-                socketRef.current.close();
-                socketRef.current = null;
-              }
-              setStatus('Force unlocked - try again');
-              setPipelineStage('Ready');
-            }}
-          >
-            FORCE UNLOCK
-          </button>
           <p className="mic-label">{micLabel}</p>
+          <p className="status-line">{statusText}</p>
           {processing && !streaming && !playing && <p className="thinking">Translating...</p>}
-          <div className="debug-state-panel">
-            <div>R:{recording ? 1 : 0} S:{streaming ? 1 : 0} P:{processing ? 1 : 0} PL:{playing ? 1 : 0}</div>
-            <div>Socket:{socketRef.current ? (socketRef.current.readyState === 1 ? 'OPEN' : socketRef.current.readyState) : 'null'}</div>
-            <div>Stage:{pipelineStage}</div>
-            <div>Close:{wsDebug.close}</div>
-            <div>WSErr:{wsDebug.error}</div>
-            <div>WS:{wsDebug.url.replace(/^wss?:\/\//, '')}</div>
-          </div>
         </section>
 
         <section className="translation-stack">

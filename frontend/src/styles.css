@@ -15,7 +15,7 @@ body {
   margin: 0;
   background: linear-gradient(180deg, #0b1120 0%, #0f172a 50%, #020617 100%);
   color: #ffffff;
-  overflow: hidden;
+  overflow-x: hidden;
   overscroll-behavior: none;
 }
 
@@ -37,24 +37,29 @@ p { margin: 0; overflow-wrap: anywhere; }
   min-height: 100svh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: clamp(12px, 3vw, 24px);
 }
 
 .phone-frame {
   width: min(100%, 430px);
-  height: min(860px, calc(100svh - 36px));
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 18px;
-  padding: 32px;
+  min-height: min(860px, calc(100svh - 24px));
+  display: grid;
+  grid-template-rows: auto minmax(300px, 1fr) auto;
+  align-content: start;
+  gap: clamp(14px, 2.5svh, 22px);
+  padding: clamp(18px, 4vw, 30px);
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 36px;
   background: rgba(255, 255, 255, .045);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
   box-shadow: 0 30px 90px rgba(0, 0, 0, .42), inset 0 1px 0 rgba(255, 255, 255, .08);
-  overflow: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.phone-frame::-webkit-scrollbar {
+  display: none;
 }
 
 .clean-header {
@@ -71,7 +76,7 @@ p { margin: 0; overflow-wrap: anywhere; }
   justify-content: center;
   gap: 4px;
   margin: 0;
-  margin-bottom: 12px;
+  margin-bottom: 0;
   max-width: 360px;
   line-height: 1;
   text-align: center;
@@ -83,7 +88,7 @@ p { margin: 0; overflow-wrap: anywhere; }
   background: linear-gradient(135deg, #ffffff 0%, #bfdbfe 42%, #7dd3fc 100%);
   background-clip: text;
   -webkit-background-clip: text;
-  font-size: clamp(48px, 12vw, 64px);
+  font-size: clamp(34px, 10vw, 48px);
   font-weight: 900;
   letter-spacing: -.08em;
   text-shadow: 0 18px 48px rgba(125, 211, 252, .18);
@@ -115,16 +120,16 @@ p { margin: 0; overflow-wrap: anywhere; }
   display: grid;
   place-items: center;
   align-content: center;
-  gap: 24px;
+  gap: 12px;
   min-height: 0;
-  margin: 30px auto 16px;
+  margin: 0 auto;
 }
 
 .mic-orb {
   position: relative;
-  width: clamp(220px, 62vw, 286px);
-  height: clamp(220px, 62vw, 286px);
-  min-height: 220px;
+  width: clamp(190px, 56vw, 250px);
+  height: clamp(190px, 56vw, 250px);
+  min-height: 190px;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -190,45 +195,19 @@ p { margin: 0; overflow-wrap: anywhere; }
 
 .mic-label {
   color: rgba(255, 255, 255, .86);
-  font-size: 23px;
+  font-size: 22px;
   font-weight: 850;
   letter-spacing: -.02em;
 }
 
-.debug-red-mic {
-  margin-top: 12px;
-  border: 0;
-  border-radius: 999px;
-  padding: 12px 18px;
-  background: #ef4444;
-  color: white;
-  font-weight: 900;
-  letter-spacing: .08em;
-  box-shadow: 0 12px 28px rgba(239, 68, 68, .34);
-}
-
-.debug-force-unlock {
-  margin-top: 8px;
-  border: 0;
-  border-radius: 999px;
-  padding: 10px 16px;
-  background: #22c55e;
-  color: white;
-  font-weight: 900;
-  letter-spacing: .08em;
-  box-shadow: 0 8px 20px rgba(34, 197, 94, .34);
-}
-
-.debug-state-panel {
-  margin-top: 8px;
-  padding: 8px 12px;
-  background: rgba(0, 0, 0, 0.5);
-  border-radius: 8px;
-  font-family: monospace;
-  font-size: 11px;
-  color: #22c55e;
+.status-line {
+  max-width: 100%;
+  min-height: 20px;
+  color: rgba(191, 219, 254, .78);
+  font-size: 13px;
+  font-weight: 750;
   text-align: center;
-  line-height: 1.4;
+  line-height: 1.25;
 }
 
 .thinking {
@@ -242,7 +221,7 @@ p { margin: 0; overflow-wrap: anywhere; }
 
 .translation-stack {
   display: grid;
-  gap: 20px;
+  gap: 14px;
 }
 
 .transcript-card,
@@ -351,14 +330,13 @@ p { margin: 0; overflow-wrap: anywhere; }
   .app-shell { padding: 0; align-items: stretch; }
   .phone-frame {
     width: 100%;
-    height: 100svh;
+    min-height: 100svh;
     border: 0;
     border-radius: 0;
-    padding: 28px 22px 24px;
-    gap: 20px;
+    padding: max(16px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+    gap: 16px;
   }
-  .mic-panel { margin: 26px auto; }
-  .mic-orb { width: min(66vw, 252px); height: min(66vw, 252px); min-height: 214px; }
+  .mic-orb { width: min(58vw, 236px); height: min(58vw, 236px); min-height: 188px; }
   .translation-stack { gap: 14px; }
   .transcript-card,
   .translation-card { min-height: 86px; padding: 18px 20px; }
