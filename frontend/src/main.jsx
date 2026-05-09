@@ -370,6 +370,9 @@ function App() {
   async function unlockMobileAudio() {
     const context = await ensureAudioContext();
     if (context) {
+      if (context.state === 'suspended') {
+        await context.resume();
+      }
       const buffer = context.createBuffer(1, 1, 22050);
       const source = context.createBufferSource();
       source.buffer = buffer;
@@ -380,11 +383,22 @@ function App() {
     audio.muted = true;
     audio.play().catch(() => {});
     setMobileAudioUnlocked(true);
-    setStatus('Mobile audio unlocked');
+  }
+
+  async function ensureAudioUnlocked() {
+    if (!mobileAudioUnlocked) {
+      await unlockMobileAudio();
+    } else {
+      const context = await ensureAudioContext();
+      if (context && context.state === 'suspended') {
+        await context.resume();
+      }
+    }
   }
 
   async function playSpeakerTestSound() {
     try {
+      await ensureAudioUnlocked();
       const context = await ensureAudioContext();
       if (!context) {
         setStatus('Speaker test unavailable in this browser');
@@ -401,7 +415,6 @@ function App() {
       gain.connect(context.destination);
       oscillator.start(context.currentTime);
       oscillator.stop(context.currentTime + 0.3);
-      setMobileAudioUnlocked(true);
       setPipelineStage('Speaker test played');
       setStatus('Speaker test played');
     } catch (error) {
@@ -412,7 +425,7 @@ function App() {
 
   async function playServerVoiceTest() {
     try {
-      await unlockMobileAudio();
+      await ensureAudioUnlocked();
       setPipelineStage('Loading test voice');
       setStatus('Loading test voice...');
       const response = await fetch(`${API_URL}/debug/tts-sample.wav?ts=${Date.now()}`, { cache: 'no-store' });
@@ -432,7 +445,7 @@ function App() {
 
   async function testMicrophoneAndPlayback() {
     try {
-      await unlockMobileAudio();
+      await ensureAudioUnlocked();
       setPipelineStage('Testing microphone');
       setStatus('Tap to record, then playback...');
       
@@ -1332,7 +1345,7 @@ function App() {
   }
 
   async function playTranslationAudio() {
-    await unlockMobileAudio();
+    await ensureAudioUnlocked();
     playTtsItem(lastTtsItemRef.current, { revokeOnFinish: false, manual: true });
   }
 
