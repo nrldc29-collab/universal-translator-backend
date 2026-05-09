@@ -1487,6 +1487,10 @@ function App() {
             <span className="brand-mark">Anai</span>
             <sub>nrldc</sub>
           </h1>
+          <div className="connection-indicator" data-status={connectionStatus}>
+            <span className="connection-dot" />
+            <span className="connection-label">{connectionStatus}</span>
+          </div>
         </header>
 
         <section className="mic-panel">
