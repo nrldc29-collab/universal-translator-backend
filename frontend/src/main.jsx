@@ -1410,6 +1410,7 @@ function App() {
 
     const item = ttsQueueRef.current.shift();
     setTtsQueueLength(ttsQueueRef.current.length);
+    console.log(`Playing TTS chunk, ${ttsQueueRef.current.length} remaining in queue`);
     playTtsItem(item, { revokeOnFinish: false });
   }
 
