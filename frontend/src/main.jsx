@@ -1209,20 +1209,13 @@ function App() {
             console.log('No TTS chunks to play');
             return [];
           }
-          console.log(`Concatenating ${chunks.length} TTS chunks with WAV header stripping, total size: ${chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)} bytes`);
-          const wavHeaderSize = 44;
-          const pcmDataSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength - wavHeaderSize, 0) + wavHeaderSize;
-          const concatenatedBuffer = new Uint8Array(pcmDataSize);
+          console.log(`Concatenating ${chunks.length} TTS chunks without WAV header stripping, total size: ${chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)} bytes`);
+          const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+          const concatenatedBuffer = new Uint8Array(totalLength);
           let offset = 0;
-          for (let i = 0; i < chunks.length; i++) {
-            const chunk = new Uint8Array(chunks[i]);
-            if (i === 0) {
-              concatenatedBuffer.set(chunk, offset);
-              offset += chunk.byteLength;
-            } else {
-              concatenatedBuffer.set(chunk.slice(wavHeaderSize), offset);
-              offset += chunk.byteLength - wavHeaderSize;
-            }
+          for (const chunk of chunks) {
+            concatenatedBuffer.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
           }
           const url = URL.createObjectURL(new Blob([concatenatedBuffer.buffer], { type: 'audio/wav' }));
           const item = { url, buffer: concatenatedBuffer.buffer, mimeType: 'audio/wav', forceHtmlAudio: true };
