@@ -187,6 +187,7 @@ function App() {
   const [ttsQueueLength, setTtsQueueLength] = useState(0);
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [ttsChunksBuffer, setTtsChunksBuffer] = useState([]);
+  const [userRequestedPlayback, setUserRequestedPlayback] = useState(false);
   const [interpreterMode, setInterpreterMode] = useState(false);
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
@@ -864,6 +865,7 @@ function App() {
     releaseWakeLock();
     setPipelineStage('Processing');
     setStatus(nextStatus);
+    setUserRequestedPlayback(true);
     return true;
   }
 
@@ -1220,6 +1222,13 @@ function App() {
           setAudioReplayAvailable(true);
           setPipelineStage('Voice ready - tap to play');
           setStatus('Voice ready - tap to play');
+          setUserRequestedPlayback((requested) => {
+            if (requested) {
+              console.log('User requested playback, auto-playing');
+              setTimeout(() => playTtsItem(item, { revokeOnFinish: false, manual: true }), 100);
+            }
+            return false;
+          });
           return [];
         });
         setTtsQueueLength(0);
