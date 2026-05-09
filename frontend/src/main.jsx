@@ -188,6 +188,7 @@ function App() {
   const [ttsPlaying, setTtsPlaying] = useState(false);
   const [ttsChunksBuffer, setTtsChunksBuffer] = useState([]);
   const [userRequestedPlayback, setUserRequestedPlayback] = useState(false);
+  const [autoPlayFailed, setAutoPlayFailed] = useState(false);
   const [interpreterMode, setInterpreterMode] = useState(false);
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
@@ -1207,13 +1208,20 @@ function App() {
             console.log('No TTS chunks to play');
             return [];
           }
-          console.log(`Concatenating ${chunks.length} TTS chunks for user-triggered playback`);
-          const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-          const concatenatedBuffer = new Uint8Array(totalLength);
+          console.log(`Concatenating ${chunks.length} TTS chunks with WAV header stripping`);
+          const wavHeaderSize = 44;
+          const pcmDataSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength - wavHeaderSize, 0) + wavHeaderSize;
+          const concatenatedBuffer = new Uint8Array(pcmDataSize);
           let offset = 0;
-          for (const chunk of chunks) {
-            concatenatedBuffer.set(new Uint8Array(chunk), offset);
-            offset += chunk.byteLength;
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = new Uint8Array(chunks[i]);
+            if (i === 0) {
+              concatenatedBuffer.set(chunk, offset);
+              offset += chunk.byteLength;
+            } else {
+              concatenatedBuffer.set(chunk.slice(wavHeaderSize), offset);
+              offset += chunk.byteLength - wavHeaderSize;
+            }
           }
           const url = URL.createObjectURL(new Blob([concatenatedBuffer.buffer], { type: 'audio/wav' }));
           const item = { url, buffer: concatenatedBuffer.buffer, mimeType: 'audio/wav', forceHtmlAudio: true };
