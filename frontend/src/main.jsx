@@ -1225,7 +1225,7 @@ function App() {
           setUserRequestedPlayback((requested) => {
             if (requested) {
               console.log('User requested playback, auto-playing');
-              setTimeout(() => playTtsItem(item, { revokeOnFinish: false, manual: true }), 100);
+              playTtsItem(item, { revokeOnFinish: false, manual: true });
             }
             return false;
           });
