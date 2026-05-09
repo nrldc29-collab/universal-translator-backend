@@ -1301,7 +1301,7 @@ function App() {
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     const bufferCopy = buffer.slice(0);
     const url = URL.createObjectURL(new Blob([bufferCopy], { type: mimeType || 'audio/wav' }));
-    const item = { url, buffer: bufferCopy, mimeType: mimeType || 'audio/wav' };
+    const item = { url, buffer: bufferCopy, mimeType: mimeType || 'audio/wav', forceHtmlAudio: true };
     if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
     lastTtsItemRef.current = item;
     setAudioReplayAvailable(true);
@@ -1350,6 +1350,11 @@ function App() {
         setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
       });
     };
+    if (item.forceHtmlAudio) {
+      console.log('Forcing HTML audio for WebSocket TTS chunk');
+      playWithHtmlAudio();
+      return;
+    }
     ensureAudioContext()
       .then((context) => {
         if (!context || context.state !== 'running') {
