@@ -1206,19 +1206,54 @@ function App() {
             return [];
           }
           console.log(`Concatenating ${chunks.length} TTS chunks`);
-          const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-          const concatenatedBuffer = new Uint8Array(totalLength);
-          let offset = 0;
-          for (const chunk of chunks) {
-            concatenatedBuffer.set(new Uint8Array(chunk), offset);
-            offset += chunk.byteLength;
-          }
-          const url = URL.createObjectURL(new Blob([concatenatedBuffer.buffer], { type: 'audio/wav' }));
-          const item = { url, buffer: concatenatedBuffer.buffer, mimeType: 'audio/wav', forceHtmlAudio: true };
-          if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
-          lastTtsItemRef.current = item;
-          setAudioReplayAvailable(true);
-          playTtsItem(item, { revokeOnFinish: false, manual: false });
+          ensureAudioContext()
+            .then((context) => {
+              if (!context) {
+                console.error('AudioContext not available for concatenation');
+                return;
+              }
+              const decodePromises = chunks.map(chunk => context.decodeAudioData(chunk.slice(0)));
+              Promise.all(decodePromises)
+                .then((audioBuffers) => {
+                  console.log(`Decoded ${audioBuffers.length} audio buffers`);
+                  const totalLength = audioBuffers.reduce((sum, buffer) => sum + buffer.length, 0);
+                  const numberOfChannels = audioBuffers[0].numberOfChannels;
+                  const sampleRate = audioBuffers[0].sampleRate;
+                  const concatenatedBuffer = context.createBuffer(numberOfChannels, totalLength, sampleRate);
+                  let offset = 0;
+                  for (const audioBuffer of audioBuffers) {
+                    for (let channel = 0; channel < numberOfChannels; channel++) {
+                      const channelData = concatenatedBuffer.getChannelData(channel);
+                      const sourceData = audioBuffer.getChannelData(channel);
+                      channelData.set(sourceData, offset);
+                    }
+                    offset += audioBuffer.length;
+                  }
+                  console.log('Concatenated audio buffer created');
+                  const source = context.createBufferSource();
+                  source.buffer = concatenatedBuffer;
+                  source.connect(context.destination);
+                  source.onended = () => {
+                    setPlaying(false);
+                    setTtsPlaying(false);
+                    setPipelineStage('Voice played');
+                    setStatus('Voice played');
+                  };
+                  source.start(0);
+                  setPlaying(true);
+                  setTtsPlaying(true);
+                  setPipelineStage('Playing voice...');
+                  setStatus('Playing voice...');
+                })
+                .catch((error) => {
+                  console.error('Audio buffer concatenation failed:', error);
+                  setLastAudioError({ type: 'concatenation', name: error?.name, message: error?.message });
+                });
+            })
+            .catch((error) => {
+              console.error('AudioContext error during concatenation:', error);
+              setLastAudioError({ type: 'concatenation_context', name: error?.name, message: error?.message });
+            });
           return [];
         });
         setTtsQueueLength(0);
