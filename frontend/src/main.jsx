@@ -186,6 +186,7 @@ function App() {
   const [lastAudioError, setLastAudioError] = useState(null);
   const [ttsQueueLength, setTtsQueueLength] = useState(0);
   const [ttsPlaying, setTtsPlaying] = useState(false);
+  const [ttsChunksBuffer, setTtsChunksBuffer] = useState([]);
   const [interpreterMode, setInterpreterMode] = useState(false);
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
@@ -1199,6 +1200,28 @@ function App() {
       }
       if (data.type === 'tts_end') {
         setPipelineStage('Voice stream complete');
+        setTtsChunksBuffer((chunks) => {
+          if (chunks.length === 0) {
+            console.log('No TTS chunks to play');
+            return [];
+          }
+          console.log(`Concatenating ${chunks.length} TTS chunks`);
+          const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+          const concatenatedBuffer = new Uint8Array(totalLength);
+          let offset = 0;
+          for (const chunk of chunks) {
+            concatenatedBuffer.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
+          }
+          const url = URL.createObjectURL(new Blob([concatenatedBuffer.buffer], { type: 'audio/wav' }));
+          const item = { url, buffer: concatenatedBuffer.buffer, mimeType: 'audio/wav', forceHtmlAudio: true };
+          if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+          lastTtsItemRef.current = item;
+          setAudioReplayAvailable(true);
+          playTtsItem(item, { revokeOnFinish: false, manual: false });
+          return [];
+        });
+        setTtsQueueLength(0);
       }
       if (data.type === 'error') {
         console.log('WS ERROR MESSAGE:', data);
@@ -1300,14 +1323,8 @@ function App() {
     }
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     const bufferCopy = buffer.slice(0);
-    const url = URL.createObjectURL(new Blob([bufferCopy], { type: mimeType || 'audio/wav' }));
-    const item = { url, buffer: bufferCopy, mimeType: mimeType || 'audio/wav', forceHtmlAudio: true };
-    if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
-    lastTtsItemRef.current = item;
-    setAudioReplayAvailable(true);
-    ttsQueueRef.current.push(item);
-    setTtsQueueLength(ttsQueueRef.current.length);
-    playNextTtsChunk();
+    setTtsChunksBuffer((prev) => [...prev, bufferCopy]);
+    setTtsQueueLength((prev) => prev + 1);
   }
 
   function playTtsItem(item, { revokeOnFinish = true, manual = false } = {}) {
