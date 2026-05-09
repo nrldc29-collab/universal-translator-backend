@@ -1199,6 +1199,7 @@ function App() {
           updateLatency('first_audio', Math.round(performance.now() - streamStartedAtRef.current));
         }
         setPipelineStage(`Streaming voice: ${data.index}/${data.total}`);
+        console.log(`Received TTS chunk ${data.index}/${data.total}, text: "${data.text}", audio size: ${data.audio_base64?.length || 0} chars`);
         enqueueTtsChunk(data.audio_base64, data.mime_type);
       }
       if (data.type === 'tts_end') {
@@ -1208,7 +1209,7 @@ function App() {
             console.log('No TTS chunks to play');
             return [];
           }
-          console.log(`Concatenating ${chunks.length} TTS chunks with WAV header stripping`);
+          console.log(`Concatenating ${chunks.length} TTS chunks with WAV header stripping, total size: ${chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0)} bytes`);
           const wavHeaderSize = 44;
           const pcmDataSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength - wavHeaderSize, 0) + wavHeaderSize;
           const concatenatedBuffer = new Uint8Array(pcmDataSize);
@@ -1225,7 +1226,11 @@ function App() {
           }
           const url = URL.createObjectURL(new Blob([concatenatedBuffer.buffer], { type: 'audio/wav' }));
           const item = { url, buffer: concatenatedBuffer.buffer, mimeType: 'audio/wav', forceHtmlAudio: true };
-          if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+          console.log(`Created TTS audio blob, size: ${concatenatedBuffer.buffer.byteLength} bytes, url: ${url}`);
+          if (lastTtsItemRef.current?.url) {
+            console.log(`Revoking old URL: ${lastTtsItemRef.current.url}`);
+            URL.revokeObjectURL(lastTtsItemRef.current.url);
+          }
           lastTtsItemRef.current = item;
           setAudioReplayAvailable(true);
           setPipelineStage('Voice ready - tap to play');
