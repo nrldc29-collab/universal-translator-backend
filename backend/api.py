@@ -373,6 +373,18 @@ def languages():
     return {"languages": LANGUAGES}
 
 
+@app.get("/debug/tts-sample.wav")
+async def tts_sample():
+    output_path = Path("models/tts/debug-sample.wav")
+    try:
+        if not output_path.is_file():
+            await run_in_threadpool(pipeline.tts.synthesize, "This is a voice test.", str(output_path))
+    except Exception as exc:
+        logger.exception("tts_sample_failed")
+        raise HTTPException(status_code=503, detail=f"TTS sample unavailable: {exc}") from exc
+    return FileResponse(str(output_path), media_type="audio/wav", filename="tts-sample.wav", headers={"Cache-Control": "no-store"})
+
+
 @app.post("/auth/login")
 def login(request: LoginRequest):
     token = authenticate_user(request.username, request.password)

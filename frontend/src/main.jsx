@@ -409,6 +409,26 @@ function App() {
     }
   }
 
+  async function playServerVoiceTest() {
+    try {
+      await unlockMobileAudio();
+      setPipelineStage('Loading test voice');
+      setStatus('Loading test voice...');
+      const response = await fetch(`${API_URL}/debug/tts-sample.wav?ts=${Date.now()}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Voice test unavailable'));
+      const buffer = await response.arrayBuffer();
+      const url = URL.createObjectURL(new Blob([buffer], { type: response.headers.get('content-type') || 'audio/wav' }));
+      const item = { url, buffer, mimeType: 'audio/wav' };
+      if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+      lastTtsItemRef.current = item;
+      setAudioReplayAvailable(true);
+      playTtsItem(item, { revokeOnFinish: false, manual: true });
+    } catch (error) {
+      setPipelineStage('Voice test failed');
+      setStatus(error.message || 'Voice test failed');
+    }
+  }
+
   async function translateText() {
     if (processing || !text.trim()) return;
     setProcessing(true);
@@ -1491,6 +1511,9 @@ function App() {
           <div className="sound-actions">
             <button className="play-voice-button" type="button" onClick={playSpeakerTestSound} disabled={playing}>
               Test Sound
+            </button>
+            <button className="play-voice-button" type="button" onClick={playServerVoiceTest} disabled={playing}>
+              Test Voice
             </button>
             {audioReplayAvailable && (
               <button className="play-voice-button" type="button" onClick={playTranslationAudio} disabled={playing}>
