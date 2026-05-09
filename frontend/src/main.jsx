@@ -181,6 +181,7 @@ function App() {
   const [lowBandwidthMode, setLowBandwidthMode] = useState(false);
   const [mobileAudioUnlocked, setMobileAudioUnlocked] = useState(false);
   const [audioReplayAvailable, setAudioReplayAvailable] = useState(false);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [interpreterMode, setInterpreterMode] = useState(false);
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
@@ -1589,6 +1590,47 @@ function App() {
             <p className="translation-text fade-in" key={translatedText}>{translatedText}</p>
           </article>
         </section>
+
+        {showDebugPanel && (
+          <section className="debug-panel">
+            <div className="debug-header">
+              <h3>Debug Panel</h3>
+              <button type="button" onClick={() => setShowDebugPanel(false)}>×</button>
+            </div>
+            <div className="debug-grid">
+              <div className="debug-item">
+                <span className="debug-label">Connection:</span>
+                <span className="debug-value">{connectionStatus}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">Mic Permission:</span>
+                <span className="debug-value">{micPermission}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">Audio Unlocked:</span>
+                <span className="debug-value">{mobileAudioUnlocked ? 'Yes' : 'No'}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">Audio Replay:</span>
+                <span className="debug-value">{audioReplayAvailable ? 'Yes' : 'No'}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">Pipeline Stage:</span>
+                <span className="debug-value">{pipelineStage}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">Status:</span>
+                <span className="debug-value">{status}</span>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {!showDebugPanel && (
+          <button className="debug-toggle" type="button" onClick={() => setShowDebugPanel(true)}>
+            Debug
+          </button>
+        )}
       </section>
     </main>
   );

@@ -114,6 +114,81 @@ p { margin: 0; overflow-wrap: anywhere; }
   50% { opacity: .4; }
 }
 
+.debug-toggle {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, .42);
+  color: rgba(255, 255, 255, .6);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  border: 1px solid rgba(255, 255, 255, .1);
+  z-index: 100;
+}
+
+.debug-panel {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, .48);
+  border: 1px solid rgba(255, 255, 255, .08);
+}
+
+.debug-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.debug-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, .9);
+}
+
+.debug-header button {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .1);
+  color: rgba(255, 255, 255, .8);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.debug-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.debug-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.debug-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, .5);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.debug-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, .9);
+  word-break: break-word;
+}
+
+
 .app-title {
   position: relative;
   display: inline-flex;
