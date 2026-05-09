@@ -464,34 +464,48 @@ async def websocket_audio_translation(
 
             tts_started_at = time()
             for index, chunk in enumerate(tts_chunks, start=1):
-                chunk_output_path = await run_pipeline_step(
-                    "TTS",
-                    pipeline.tts.synthesize,
-                    chunk,
-                    f"models/tts/{uuid4()}-{index}.wav",
-                )
-                if audio_output_path is None:
-                    audio_output_path = chunk_output_path
-                tts_audio_bytes = Path(chunk_output_path).read_bytes()
-                observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="tts_chunk", index=index, total=len(tts_chunks), audio_bytes=len(tts_audio_bytes))
-                observability.increment("tts_playback_chunks_total")
-                tts_ms = round((time() - tts_started_at) * 1000)
-                print("TTS:", tts_ms, "ms", "chunk", index, "of", len(tts_chunks), flush=True)
-                await websocket.send_json({"type": "latency", "metric": "tts", "ms": tts_ms})
-                await websocket.send_json({
-                    "type": "tts_audio_chunk",
-                    "speaker": speaker,
-                    "speaker_label": speaker_label,
-                    "index": index,
-                    "total": len(tts_chunks),
-                    "text": chunk,
-                    "tts_style": tts_pacing["style"],
-                    "emotion": tts_pacing["emotion"],
-                    "intent": tts_pacing["intent"],
-                    "urgency": tts_pacing["urgency"],
-                    "audio_base64": base64.b64encode(tts_audio_bytes).decode("ascii"),
-                    "mime_type": "audio/wav",
-                })
+                try:
+                    chunk_output_path = await run_pipeline_step(
+                        "TTS",
+                        pipeline.tts.synthesize,
+                        chunk,
+                        f"models/tts/{uuid4()}-{index}.wav",
+                    )
+                    if audio_output_path is None:
+                        audio_output_path = chunk_output_path
+                    tts_audio_bytes = Path(chunk_output_path).read_bytes()
+                    # Validate audio data is not empty or too small
+                    if len(tts_audio_bytes) < 100:
+                        print(f"TTS chunk {index} too small ({len(tts_audio_bytes)} bytes), skipping", flush=True)
+                        continue
+                    observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="tts_chunk", index=index, total=len(tts_chunks), audio_bytes=len(tts_audio_bytes))
+                    observability.increment("tts_playback_chunks_total")
+                    tts_ms = round((time() - tts_started_at) * 1000)
+                    print("TTS:", tts_ms, "ms", "chunk", index, "of", len(tts_chunks), flush=True)
+                    await websocket.send_json({"type": "latency", "metric": "tts", "ms": tts_ms})
+                    await websocket.send_json({
+                        "type": "tts_audio_chunk",
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "index": index,
+                        "total": len(tts_chunks),
+                        "text": chunk,
+                        "tts_style": tts_pacing["style"],
+                        "emotion": tts_pacing["emotion"],
+                        "intent": tts_pacing["intent"],
+                        "urgency": tts_pacing["urgency"],
+                        "audio_base64": base64.b64encode(tts_audio_bytes).decode("ascii"),
+                        "mime_type": "audio/wav",
+                    })
+                except Exception as e:
+                    print(f"TTS synthesis failed for chunk {index}: {e}", flush=True)
+                    observability.record_event("mobile_stream_error", identity=identity, speaker=speaker, error=str(e), chunk_index=index)
+                    # Send error message to frontend instead of invalid audio
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": f"TTS synthesis failed for chunk {index}: {str(e)}"
+                    })
+                    break
 
             await websocket.send_json({"type": "tts_end", "speaker": speaker, "speaker_label": speaker_label})
             result = TranslationResult(
