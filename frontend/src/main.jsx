@@ -183,6 +183,7 @@ function App() {
   const [audioReplayAvailable, setAudioReplayAvailable] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [audioContextState, setAudioContextState] = useState('unknown');
+  const [lastAudioError, setLastAudioError] = useState(null);
   const [interpreterMode, setInterpreterMode] = useState(false);
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
@@ -405,6 +406,7 @@ function App() {
       const context = await ensureAudioContext();
       if (!context) {
         setStatus('Speaker test unavailable in this browser');
+        setLastAudioError({ type: 'no_audio_context', message: 'AudioContext not available' });
         return;
       }
       const oscillator = context.createOscillator();
@@ -420,9 +422,11 @@ function App() {
       oscillator.stop(context.currentTime + 0.3);
       setPipelineStage('Speaker test played');
       setStatus('Speaker test played');
+      setLastAudioError(null);
     } catch (error) {
       setPipelineStage(`Speaker blocked: ${error?.name || 'tap again'}`);
       setStatus('Speaker blocked. Check mute switch and volume.');
+      setLastAudioError({ type: 'speaker_test', name: error?.name, message: error?.message });
     }
   }
 
@@ -440,9 +444,11 @@ function App() {
       lastTtsItemRef.current = item;
       setAudioReplayAvailable(true);
       playTtsItem(item, { revokeOnFinish: false, manual: true });
+      setLastAudioError(null);
     } catch (error) {
       setPipelineStage('Voice test failed');
       setStatus(error.message || 'Voice test failed');
+      setLastAudioError({ type: 'voice_test', name: error?.name, message: error?.message });
     }
   }
 
@@ -469,10 +475,14 @@ function App() {
         audio.playsInline = true;
         audio.muted = false;
         audio.volume = 1;
-        audio.onended = () => URL.revokeObjectURL(url);
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          setLastAudioError(null);
+        };
         audio.onerror = () => {
           setPipelineStage('Mic playback failed');
           setStatus('Mic playback failed');
+          setLastAudioError({ type: 'mic_playback', message: 'Audio element error' });
         };
         audio.play().then(() => {
           setPipelineStage('Mic test played');
@@ -480,6 +490,7 @@ function App() {
         }).catch((error) => {
           setPipelineStage('Mic playback blocked');
           setStatus('Mic playback blocked: ' + (error?.name || 'unknown'));
+          setLastAudioError({ type: 'mic_playback_blocked', name: error?.name, message: error?.message });
         });
       };
       
@@ -493,6 +504,7 @@ function App() {
     } catch (error) {
       setPipelineStage('Mic test failed');
       setStatus(error.message || 'Microphone unavailable');
+      setLastAudioError({ type: 'mic_test', name: error?.name, message: error?.message });
     }
   }
 
@@ -1319,13 +1331,17 @@ function App() {
       audio.muted = false;
       audio.volume = 1;
       audio.onended = finish;
-      audio.onerror = finish;
+      audio.onerror = () => {
+        setLastAudioError({ type: 'tts_playback', message: 'HTML audio error' });
+        finish();
+      };
       audio.play().catch((error) => {
         ttsPlayingRef.current = false;
         setPlaying(false);
         setAudioReplayAvailable(true);
         setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
         setStatus('Tap Play Voice to hear translation');
+        setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
       });
     };
     ensureAudioContext()
@@ -1339,12 +1355,21 @@ function App() {
             const source = context.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(context.destination);
-            source.onended = finish;
+            source.onended = () => {
+              setLastAudioError(null);
+              finish();
+            };
             source.start(0);
           })
-          .catch(playWithHtmlAudio);
+          .catch((error) => {
+            setLastAudioError({ type: 'tts_decode', name: error?.name, message: error?.message });
+            playWithHtmlAudio();
+          });
       })
-      .catch(playWithHtmlAudio);
+      .catch((error) => {
+        setLastAudioError({ type: 'tts_context', name: error?.name, message: error?.message });
+        playWithHtmlAudio();
+      });
   }
 
   async function playTranslationAudio() {
@@ -1642,6 +1667,14 @@ function App() {
                 <span className="debug-label">Status:</span>
                 <span className="debug-value">{status}</span>
               </div>
+              {lastAudioError && (
+                <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
+                  <span className="debug-label">Last Error:</span>
+                  <span className="debug-value" style={{ color: '#fca5a5' }}>
+                    {lastAudioError.type}: {lastAudioError.name || ''} {lastAudioError.message || ''}
+                  </span>
+                </div>
+              )}
             </div>
           </section>
         )}
