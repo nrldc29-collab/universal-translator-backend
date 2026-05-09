@@ -1205,29 +1205,21 @@ function App() {
             console.log('No TTS chunks to play');
             return [];
           }
-          console.log(`Playing ${chunks.length} TTS chunks sequentially`);
-          let index = 0;
-          const playNextChunk = () => {
-            if (index >= chunks.length) {
-              console.log('All chunks played');
-              setPlaying(false);
-              setTtsPlaying(false);
-              setPipelineStage('Voice played');
-              setStatus('Voice played');
-              return;
-            }
-            const chunk = chunks[index];
-            const url = URL.createObjectURL(new Blob([chunk], { type: 'audio/wav' }));
-            const item = { url, buffer: chunk, mimeType: 'audio/wav', forceHtmlAudio: true };
-            if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
-            lastTtsItemRef.current = item;
-            setAudioReplayAvailable(true);
-            playTtsItem(item, { revokeOnFinish: true, manual: false, onEnd: () => {
-              index++;
-              playNextChunk();
-            }});
-          };
-          playNextChunk();
+          console.log(`Concatenating ${chunks.length} TTS chunks for user-triggered playback`);
+          const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+          const concatenatedBuffer = new Uint8Array(totalLength);
+          let offset = 0;
+          for (const chunk of chunks) {
+            concatenatedBuffer.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
+          }
+          const url = URL.createObjectURL(new Blob([concatenatedBuffer.buffer], { type: 'audio/wav' }));
+          const item = { url, buffer: concatenatedBuffer.buffer, mimeType: 'audio/wav', forceHtmlAudio: true };
+          if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+          lastTtsItemRef.current = item;
+          setAudioReplayAvailable(true);
+          setPipelineStage('Voice ready - tap to play');
+          setStatus('Voice ready - tap to play');
           return [];
         });
         setTtsQueueLength(0);
