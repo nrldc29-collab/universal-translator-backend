@@ -1336,12 +1336,18 @@ function App() {
       audio.playsInline = true;
       audio.muted = false;
       audio.volume = 1;
+      audio.crossOrigin = 'anonymous';
       audio.onended = finish;
-      audio.onerror = () => {
-        setLastAudioError({ type: 'tts_playback', message: 'HTML audio error' });
+      audio.onerror = (error) => {
+        console.error('HTML audio error:', error);
+        setLastAudioError({ type: 'tts_playback', message: `HTML audio error: ${error}` });
         finish();
       };
-      audio.play().catch((error) => {
+      audio.play().then(() => {
+        console.log('HTML audio playing successfully');
+        setLastAudioError(null);
+      }).catch((error) => {
+        console.error('HTML audio play failed:', error);
         ttsPlayingRef.current = false;
         setPlaying(false);
         setAudioReplayAvailable(true);
