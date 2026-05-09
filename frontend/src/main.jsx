@@ -1205,28 +1205,29 @@ function App() {
             console.log('No TTS chunks to play');
             return [];
           }
-          console.log(`Concatenating ${chunks.length} TTS chunks with WAV header stripping`);
-          const firstChunk = new Uint8Array(chunks[0]);
-          const wavHeaderSize = 44;
-          const pcmDataSize = chunks.reduce((sum, chunk) => sum + chunk.byteLength - wavHeaderSize, 0) + wavHeaderSize;
-          const concatenatedBuffer = new Uint8Array(pcmDataSize);
-          let offset = 0;
-          for (let i = 0; i < chunks.length; i++) {
-            const chunk = new Uint8Array(chunks[i]);
-            if (i === 0) {
-              concatenatedBuffer.set(chunk, offset);
-              offset += chunk.byteLength;
-            } else {
-              concatenatedBuffer.set(chunk.slice(wavHeaderSize), offset);
-              offset += chunk.byteLength - wavHeaderSize;
+          console.log(`Playing ${chunks.length} TTS chunks sequentially`);
+          let index = 0;
+          const playNextChunk = () => {
+            if (index >= chunks.length) {
+              console.log('All chunks played');
+              setPlaying(false);
+              setTtsPlaying(false);
+              setPipelineStage('Voice played');
+              setStatus('Voice played');
+              return;
             }
-          }
-          const url = URL.createObjectURL(new Blob([concatenatedBuffer.buffer], { type: 'audio/wav' }));
-          const item = { url, buffer: concatenatedBuffer.buffer, mimeType: 'audio/wav', forceHtmlAudio: true };
-          if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
-          lastTtsItemRef.current = item;
-          setAudioReplayAvailable(true);
-          playTtsItem(item, { revokeOnFinish: false, manual: false });
+            const chunk = chunks[index];
+            const url = URL.createObjectURL(new Blob([chunk], { type: 'audio/wav' }));
+            const item = { url, buffer: chunk, mimeType: 'audio/wav', forceHtmlAudio: true };
+            if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+            lastTtsItemRef.current = item;
+            setAudioReplayAvailable(true);
+            playTtsItem(item, { revokeOnFinish: true, manual: false, onEnd: () => {
+              index++;
+              playNextChunk();
+            }});
+          };
+          playNextChunk();
           return [];
         });
         setTtsQueueLength(0);
@@ -1335,7 +1336,7 @@ function App() {
     setTtsQueueLength((prev) => prev + 1);
   }
 
-  function playTtsItem(item, { revokeOnFinish = true, manual = false } = {}) {
+  function playTtsItem(item, { revokeOnFinish = true, manual = false, onEnd } = {}) {
     if (!item) return;
     ttsPlayingRef.current = true;
     setTtsPlaying(true);
@@ -1347,6 +1348,7 @@ function App() {
       if (revokeOnFinish) URL.revokeObjectURL(item.url);
       ttsPlayingRef.current = false;
       setTtsPlaying(false);
+      if (onEnd) onEnd();
       if (manual) {
         setPlaying(false);
         setPipelineStage('Voice played');
