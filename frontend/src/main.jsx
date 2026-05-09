@@ -182,6 +182,7 @@ function App() {
   const [mobileAudioUnlocked, setMobileAudioUnlocked] = useState(false);
   const [audioReplayAvailable, setAudioReplayAvailable] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [audioContextState, setAudioContextState] = useState('unknown');
   const [interpreterMode, setInterpreterMode] = useState(false);
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
@@ -238,7 +239,9 @@ function App() {
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) return null;
     if (!audioContextRef.current) audioContextRef.current = new AudioContextCtor();
-    if (audioContextRef.current.state === 'suspended') await audioContextRef.current.resume?.();
+    const state = audioContextRef.current.state;
+    setAudioContextState(state);
+    if (state === 'suspended') await audioContextRef.current.resume?.();
     return audioContextRef.current;
   }
 
@@ -1618,6 +1621,10 @@ function App() {
               <div className="debug-item">
                 <span className="debug-label">Mic Permission:</span>
                 <span className="debug-value">{micPermission}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">Audio Context:</span>
+                <span className="debug-value">{audioContextState}</span>
               </div>
               <div className="debug-item">
                 <span className="debug-label">Audio Unlocked:</span>

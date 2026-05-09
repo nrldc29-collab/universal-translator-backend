@@ -167,6 +167,12 @@ p { margin: 0; overflow-wrap: anywhere; }
   gap: 10px;
 }
 
+@media (min-width: 480px) {
+  .debug-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
 .debug-item {
   display: flex;
   flex-direction: column;
