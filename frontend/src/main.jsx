@@ -79,16 +79,22 @@ function isManualInstallBrowser() {
   return isIos || isSafari;
 }
 
+function isIosOrSafariRecorder() {
+  const userAgent = navigator.userAgent || '';
+  const platform = navigator.platform || '';
+  const isIos =
+    /iphone|ipad|ipod/i.test(userAgent) ||
+    (platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+  const isSafari = /safari/i.test(userAgent) && !/chrome|crios|fxios|edg|edgios/i.test(userAgent);
+  return isIos || isSafari;
+}
+
 function preferredAudioMimeType() {
   if (!window.MediaRecorder?.isTypeSupported) return '';
-  return [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/mp4',
-    'audio/aac',
-    'audio/ogg;codecs=opus',
-    'audio/ogg',
-  ].find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || '';
+  const candidates = isIosOrSafariRecorder()
+    ? ['audio/mp4', 'audio/aac', 'audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/webm']
+    : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac', 'audio/ogg;codecs=opus', 'audio/ogg'];
+  return candidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || '';
 }
 
 function createAudioRecorder(stream) {
@@ -97,12 +103,15 @@ function createAudioRecorder(stream) {
     throw new Error('Recording not supported on this device/browser');
   }
   const options = {};
-  if (MediaRecorder.isTypeSupported?.('audio/webm;codecs=opus')) {
-    options.mimeType = 'audio/webm;codecs=opus';
-  } else if (MediaRecorder.isTypeSupported?.('audio/mp4')) {
-    options.mimeType = 'audio/mp4';
+  const mimeType = preferredAudioMimeType();
+  if (mimeType) options.mimeType = mimeType;
+  options.audioBitsPerSecond = 96000;
+  try {
+    return new MediaRecorder(stream, options);
+  } catch (err) {
+    console.warn('MediaRecorder rejected options, retrying without explicit mimeType', err);
+    return new MediaRecorder(stream);
   }
-  return new MediaRecorder(stream, options);
 }
 
 function logAudioStream(stream) {
@@ -738,6 +747,7 @@ function App() {
 
   function activePacketMs() {
     if (lowBandwidthMode) return 500;
+    if (isIosOrSafariRecorder()) return Math.max(STREAM_PACKET_MS, 400);
     return Math.min(STREAM_PACKET_MS, 100);
   }
 
@@ -876,6 +886,12 @@ function App() {
       ignoreNextMicClickRef.current = false;
       return;
     }
+    if (isIosOrSafariRecorder()) {
+      haptic(recording ? 8 : 14);
+      if (recording) stopRecording();
+      else startRecording();
+      return;
+    }
     haptic(socketRef.current ? 8 : 14);
     setInstantListening(!socketRef.current);
     toggleStreaming({ interpreter: true, speakerMode: 'auto' });
@@ -883,6 +899,7 @@ function App() {
 
   function handleMicPointerDown(event) {
     console.log('MIC BUTTON CLICKED');
+    if (isIosOrSafariRecorder()) return;
     if (socketRef.current || processing || playing) return;
     haptic(8);
     setInstantListening(true);
@@ -987,7 +1004,11 @@ function App() {
       if (event.data.size > 0) chunksRef.current.push(event.data);
     };
     recorder.onstop = uploadRecording;
-    recorder.start(250);
+    if (isIosOrSafariRecorder()) {
+      recorder.start();
+    } else {
+      recorder.start(250);
+    }
     setRecording(true);
     setStatus('Listening...');
   }
@@ -1744,6 +1765,16 @@ function App() {
                   </span>
                 </div>
               )}
+              <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
+                <span className="debug-label">Build:</span>
+                <span className="debug-value" style={{ color: '#86efac' }}>ios-audio-fix-v3</span>
+              </div>
+              <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
+                <span className="debug-label">iOS path:</span>
+                <span className="debug-value">
+                  {isIosOrSafariRecorder() ? 'HTTP record-and-upload (no chunked WS)' : 'WebSocket streaming'}
+                </span>
+              </div>
             </div>
           </section>
         )}

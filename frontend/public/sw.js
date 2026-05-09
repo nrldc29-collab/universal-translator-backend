@@ -1,5 +1,6 @@
-const CACHE_NAME = 'universal-translator-shell-v8';
-const RUNTIME_CACHE = 'universal-translator-runtime-v8';
+const CACHE_VERSION = 'v9-ios-audio-fix';
+const CACHE_NAME = `universal-translator-shell-${CACHE_VERSION}`;
+const RUNTIME_CACHE = `universal-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
 const PRECACHE_URLS = [
   '/',
@@ -12,7 +13,7 @@ const PRECACHE_URLS = [
   '/icons/icon-512.png',
   '/icons/maskable-512.png',
 ];
-const CACHEABLE_DESTINATIONS = new Set(['document', 'script', 'style', 'font', 'image', 'manifest']);
+const CACHEABLE_DESTINATIONS = new Set(['document', 'style', 'font', 'image', 'manifest']);
 const NEVER_CACHE_PATHS = [
   '/health',
   '/ready',
@@ -23,6 +24,7 @@ const NEVER_CACHE_PATHS = [
   '/translate/',
   '/vad',
   '/ws/',
+  '/version',
 ];
 
 function shouldBypass(requestUrl) {
@@ -31,7 +33,6 @@ function shouldBypass(requestUrl) {
 
 function isShellAsset(requestUrl) {
   return (
-    requestUrl.pathname.startsWith('/assets/') ||
     requestUrl.pathname.startsWith('/icons/') ||
     PRECACHE_URLS.includes(requestUrl.pathname)
   );
@@ -41,19 +42,17 @@ async function cacheDiscoveredShellAssets(cache) {
   try {
     const response = await fetch('/', { cache: 'reload' });
     if (!response.ok) return;
-
     await cache.put('/', response.clone());
     const html = await response.text();
     const discoveredUrls = [...html.matchAll(/\b(?:href|src)="([^"]+)"/g)]
       .map((match) => new URL(match[1], self.location.origin))
       .filter((url) => url.origin === self.location.origin)
       .filter((url) => !shouldBypass(url))
-      .filter((url) => isShellAsset(url) || /\.(?:css|js|woff2?|png|svg|webp|ico)$/.test(url.pathname))
+      .filter((url) => isShellAsset(url) || /\.(?:css|woff2?|png|svg|webp|ico)$/.test(url.pathname))
       .map((url) => url.pathname + url.search);
-
     await Promise.all([...new Set(discoveredUrls)].map((url) => cache.add(url).catch(() => {})));
   } catch {
-    // The static fallback still keeps the installable shell available.
+    // Static fallback still keeps the installable shell available.
   }
 }
 
@@ -77,46 +76,33 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('message', (event) => {
-  if (event.data?.type === 'SKIP_WAITING') {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
 });
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-
   const requestUrl = new URL(event.request.url);
   if (requestUrl.origin !== self.location.origin || shouldBypass(requestUrl)) return;
 
-  if (event.request.mode === 'navigate') {
+  // Always go to network for the HTML shell + JS bundle so iOS picks up new builds.
+  if (event.request.mode === 'navigate' || event.request.destination === 'script') {
     event.respondWith(
-      fetch(event.request)
+      fetch(event.request, { cache: 'no-store' })
         .then((response) => {
-          const copy = response.clone();
-          caches.open(RUNTIME_CACHE).then((cache) => cache.put('/', copy));
-          return response;
-        })
-        .catch(() => caches.match('/').then((response) => response || caches.match(OFFLINE_URL)))
-    );
-    return;
-  }
-
-  if (!CACHEABLE_DESTINATIONS.has(event.request.destination) && !isShellAsset(requestUrl)) return;
-
-  if (event.request.destination === 'script' || event.request.destination === 'style') {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (response.ok) {
+          if (response.ok && event.request.destination === 'script') {
             const copy = response.clone();
             caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy));
           }
           return response;
         })
-        .catch(() => caches.match(event.request).then((response) => response || caches.match(OFFLINE_URL)))
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match(OFFLINE_URL)))
     );
     return;
   }
+
+  if (!CACHEABLE_DESTINATIONS.has(event.request.destination) && !isShellAsset(requestUrl)) return;
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
@@ -129,7 +115,6 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() => cached || caches.match(OFFLINE_URL));
-
       return cached || networkFetch;
     })
   );

@@ -35,6 +35,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from backend.pipeline import UniversalTranslatorPipeline
 from speech import SileroVoiceActivityDetector
+from speech.audio_decode import transcode_to_wav
 
 
 def chunk_text_for_tts(text: str, max_chars: int | None = None) -> list[str]:
@@ -400,10 +401,38 @@ async def websocket_audio_translation(
             audio_path = upload_dir / f"{uuid4()}{segment_audio_suffix}"
             audio_path.write_bytes(audio_bytes)
 
+            # Re-mux iOS Safari WebM/MP4 chunks to clean PCM WAV before decoding
+            stt_input_path = str(audio_path)
+            transcoded_path = None
+            if segment_audio_suffix.lower() in {".webm", ".m4a", ".mp4", ".ogg", ".aac"}:
+                try:
+                    transcoded_path = await run_in_threadpool(transcode_to_wav, str(audio_path))
+                except Exception as transcode_exc:
+                    observability.record_event(
+                        "audio_transcode_failed",
+                        identity=identity,
+                        speaker=speaker,
+                        error=str(transcode_exc),
+                    )
+                    transcoded_path = None
+                if transcoded_path:
+                    stt_input_path = transcoded_path
+
             await websocket.send_json({"type": "stage", "stage": "stt", "message": "Speech finalized. Transcribing now..."})
             observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="stt_start", audio_bytes=len(audio_bytes), mime_type=segment_mime_type)
             stt_started_at = time()
-            source_text = await run_pipeline_step("STT", pipeline.stt.transcribe, str(audio_path), active_source_language)
+            try:
+                source_text = await run_pipeline_step("STT", pipeline.stt.transcribe, stt_input_path, active_source_language)
+            except Exception as stt_exc:
+                message = str(stt_exc)
+                if "Invalid data found" in message or "1094995529" in message:
+                    message = "Could not decode that audio clip. Try speaking again - hold the button a moment longer."
+                await websocket.send_json({"type": "error", "message": message, "recoverable": True})
+                observability.record_event("stt_failed", identity=identity, speaker=speaker, error=str(stt_exc), mime_type=segment_mime_type)
+                return
+            finally:
+                if transcoded_path:
+                    Path(transcoded_path).unlink(missing_ok=True)
             stt_ms = round((time() - stt_started_at) * 1000)
             if not source_text.strip() and segment_partial_text.strip():
                 source_text = segment_partial_text

@@ -29,8 +29,10 @@ def get_whisper_compute_type() -> str:
 
 
 def get_whisper_model_size() -> str:
+    # Optimize for faster partial translations - use tiny model for speed
     if os.getenv("GPU_COST_MODE", "balanced").lower() == "low":
         return os.getenv("WHISPER_MODEL_SIZE", "tiny")
+    # Use tiny model by default for fastest partial STT
     return os.getenv("WHISPER_MODEL_SIZE", "tiny")
 
 
@@ -175,6 +177,7 @@ def get_vad_force_final_seconds() -> float:
 
 
 def get_near_zero_latency_mode() -> bool:
+    # Enable near-zero latency mode by default for streaming partial translation
     return os.getenv("NEAR_ZERO_LATENCY_MODE", "1") == "1"
 
 
@@ -183,11 +186,13 @@ def get_stream_hot_path_logging() -> bool:
 
 
 def get_partial_stt_min_bytes() -> int:
-    return int(os.getenv("PARTIAL_STT_MIN_BYTES", "4000"))
+    # Lower threshold for faster partial STT (was 4000)
+    return int(os.getenv("PARTIAL_STT_MIN_BYTES", "2000"))
 
 
 def get_partial_stt_interval_ms() -> int:
-    return int(os.getenv("PARTIAL_STT_INTERVAL_MS", "250"))
+    # More frequent partial STT checks for faster streaming (was 250ms)
+    return int(os.getenv("PARTIAL_STT_INTERVAL_MS", "150"))
 
 
 def get_min_speech_bytes() -> int:

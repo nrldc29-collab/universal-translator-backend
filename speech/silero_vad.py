@@ -1,5 +1,10 @@
+import logging
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+
+from speech.audio_decode import transcode_to_wav
+
+logger = logging.getLogger(__name__)
 
 
 class SileroVoiceActivityDetector:
@@ -36,14 +41,31 @@ class SileroVoiceActivityDetector:
         get_speech_timestamps = utils[0]
         read_audio = utils[2]
 
-        wav = read_audio(str(path), sampling_rate=16000)
-        speech_timestamps = get_speech_timestamps(
-            wav,
-            model,
-            threshold=self.threshold,
-            min_speech_duration_ms=self.min_speech_duration_ms,
-            sampling_rate=16000,
-        )
+        transcoded_path = None
+        try:
+            try:
+                wav = read_audio(str(path), sampling_rate=16000)
+            except Exception as exc:
+                logger.warning(
+                    "Silero VAD could not read %s (%s); attempting ffmpeg transcode fallback",
+                    audio_path,
+                    exc,
+                )
+                transcoded_path = transcode_to_wav(str(path))
+                if not transcoded_path:
+                    raise
+                wav = read_audio(transcoded_path, sampling_rate=16000)
+
+            speech_timestamps = get_speech_timestamps(
+                wav,
+                model,
+                threshold=self.threshold,
+                min_speech_duration_ms=self.min_speech_duration_ms,
+                sampling_rate=16000,
+            )
+        finally:
+            if transcoded_path:
+                Path(transcoded_path).unlink(missing_ok=True)
         speech_seconds = sum((item["end"] - item["start"]) / 16000 for item in speech_timestamps)
 
         return {
