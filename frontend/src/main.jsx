@@ -1353,6 +1353,7 @@ function App() {
     ensureAudioContext()
       .then((context) => {
         if (!context || context.state !== 'running') {
+          console.log('AudioContext not running, using HTML audio fallback');
           playWithHtmlAudio();
           return;
         }
@@ -1368,11 +1369,13 @@ function App() {
             source.start(0);
           })
           .catch((error) => {
+            console.error('AudioContext decode failed, using HTML audio fallback:', error);
             setLastAudioError({ type: 'tts_decode', name: error?.name, message: error?.message });
             playWithHtmlAudio();
           });
       })
       .catch((error) => {
+        console.error('AudioContext error, using HTML audio fallback:', error);
         setLastAudioError({ type: 'tts_context', name: error?.name, message: error?.message });
         playWithHtmlAudio();
       });
