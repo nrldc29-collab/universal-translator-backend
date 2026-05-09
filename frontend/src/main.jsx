@@ -429,6 +429,56 @@ function App() {
     }
   }
 
+  async function testMicrophoneAndPlayback() {
+    try {
+      await unlockMobileAudio();
+      setPipelineStage('Testing microphone');
+      setStatus('Tap to record, then playback...');
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const chunks = [];
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+      
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.preload = 'auto';
+        audio.playsInline = true;
+        audio.muted = false;
+        audio.volume = 1;
+        audio.onended = () => URL.revokeObjectURL(url);
+        audio.onerror = () => {
+          setPipelineStage('Mic playback failed');
+          setStatus('Mic playback failed');
+        };
+        audio.play().then(() => {
+          setPipelineStage('Mic test played');
+          setStatus('Mic test: recording played back');
+        }).catch((error) => {
+          setPipelineStage('Mic playback blocked');
+          setStatus('Mic playback blocked: ' + (error?.name || 'unknown'));
+        });
+      };
+      
+      mediaRecorder.start();
+      setPipelineStage('Recording...');
+      setStatus('Recording 1 second...');
+      
+      setTimeout(() => {
+        mediaRecorder.stop();
+      }, 1000);
+    } catch (error) {
+      setPipelineStage('Mic test failed');
+      setStatus(error.message || 'Microphone unavailable');
+    }
+  }
+
   async function translateText() {
     if (processing || !text.trim()) return;
     setProcessing(true);
@@ -1518,6 +1568,9 @@ function App() {
             </button>
             <button className="play-voice-button" type="button" onClick={playServerVoiceTest} disabled={playing}>
               Test Voice
+            </button>
+            <button className="play-voice-button" type="button" onClick={testMicrophoneAndPlayback} disabled={playing}>
+              Test Mic
             </button>
             {audioReplayAvailable && (
               <button className="play-voice-button" type="button" onClick={playTranslationAudio} disabled={playing}>
