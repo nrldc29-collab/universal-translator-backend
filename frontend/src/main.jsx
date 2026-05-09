@@ -1299,8 +1299,9 @@ function App() {
       bytes[index] = binary.charCodeAt(index);
     }
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-    const url = URL.createObjectURL(new Blob([buffer], { type: mimeType || 'audio/wav' }));
-    const item = { url, buffer, mimeType: mimeType || 'audio/wav' };
+    const bufferCopy = buffer.slice(0);
+    const url = URL.createObjectURL(new Blob([bufferCopy], { type: mimeType || 'audio/wav' }));
+    const item = { url, buffer: bufferCopy, mimeType: mimeType || 'audio/wav' };
     if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
     lastTtsItemRef.current = item;
     setAudioReplayAvailable(true);
