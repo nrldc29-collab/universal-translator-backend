@@ -184,6 +184,8 @@ function App() {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [audioContextState, setAudioContextState] = useState('unknown');
   const [lastAudioError, setLastAudioError] = useState(null);
+  const [ttsQueueLength, setTtsQueueLength] = useState(0);
+  const [ttsPlaying, setTtsPlaying] = useState(false);
   const [interpreterMode, setInterpreterMode] = useState(false);
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
@@ -1303,12 +1305,14 @@ function App() {
     lastTtsItemRef.current = item;
     setAudioReplayAvailable(true);
     ttsQueueRef.current.push(item);
+    setTtsQueueLength(ttsQueueRef.current.length);
     playNextTtsChunk();
   }
 
   function playTtsItem(item, { revokeOnFinish = true, manual = false } = {}) {
     if (!item) return;
     ttsPlayingRef.current = true;
+    setTtsPlaying(true);
     setPlaying(true);
     setPipelineStage(manual ? 'Playing translation voice' : 'Playing voice');
     setStatus(manual ? 'Playing translation voice...' : 'Playing voice...');
@@ -1316,6 +1320,7 @@ function App() {
     const finish = () => {
       if (revokeOnFinish) URL.revokeObjectURL(item.url);
       ttsPlayingRef.current = false;
+      setTtsPlaying(false);
       if (manual) {
         setPlaying(false);
         setPipelineStage('Voice played');
@@ -1381,6 +1386,7 @@ function App() {
     if (ttsPlayingRef.current || ttsQueueRef.current.length === 0) {
       if (ttsQueueRef.current.length === 0) {
         setPlaying(false);
+        setTtsQueueLength(0);
         setPipelineStage('Ready to listen');
         setStatus('Ready to listen');
       }
@@ -1388,6 +1394,7 @@ function App() {
     }
 
     const item = ttsQueueRef.current.shift();
+    setTtsQueueLength(ttsQueueRef.current.length);
     playTtsItem(item, { revokeOnFinish: false });
   }
 
@@ -1658,6 +1665,14 @@ function App() {
               <div className="debug-item">
                 <span className="debug-label">Audio Replay:</span>
                 <span className="debug-value">{audioReplayAvailable ? 'Yes' : 'No'}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">TTS Queue:</span>
+                <span className="debug-value">{ttsQueueLength}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">TTS Playing:</span>
+                <span className="debug-value">{ttsPlaying ? 'Yes' : 'No'}</span>
               </div>
               <div className="debug-item">
                 <span className="debug-label">Pipeline Stage:</span>
