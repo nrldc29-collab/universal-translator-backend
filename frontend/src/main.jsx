@@ -970,12 +970,13 @@ function App() {
     return true;
   }
 
-  function handleMicClick() {
+  async function handleMicClick() {
     console.log('MIC BUTTON CLICKED');
     if (ignoreNextMicClickRef.current) {
       ignoreNextMicClickRef.current = false;
       return;
     }
+    await ensureAudioUnlocked();
     if (isIosOrSafariRecorder()) {
       haptic(recording ? 8 : 14);
       if (recording) stopRecording();
@@ -987,8 +988,9 @@ function App() {
     toggleStreaming({ interpreter: true, speakerMode: 'auto' });
   }
 
-  function handleMicPointerDown(event) {
+  async function handleMicPointerDown(event) {
     console.log('MIC BUTTON CLICKED');
+    await ensureAudioUnlocked();
     if (isIosOrSafariRecorder()) return;
     if (socketRef.current || processing || playing) return;
     haptic(8);
