@@ -60,8 +60,8 @@ const MAX_AUDIO_SEND_QUEUE = 10;
 const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
-const EXPECTED_BACKEND_RELEASE = '2026-05-09-ios-audio-fix-v4';
-const FRONTEND_BUILD_ID = 'ios-audio-fix-v4';
+const EXPECTED_BACKEND_RELEASE = '2026-05-10-mic-meter-v5';
+const FRONTEND_BUILD_ID = 'mic-meter-v5';
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
 registerServiceWorker();
@@ -223,7 +223,9 @@ function App() {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [pwaInstalled, setPwaInstalled] = useState(() => window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone === true);
   const [updateAvailable, setUpdateAvailable] = useState(null);
+  const [micLevel, setMicLevel] = useState(0);
   const mediaRecorderRef = useRef(null);
+  const micMeterRef = useRef({});
   const streamRecorderRef = useRef(null);
   const chunksRef = useRef([]);
   const socketRef = useRef(null);
@@ -826,6 +828,7 @@ function App() {
   }
 
   function stopTracks(stream) {
+    stopMicMeter();
     stream?.getTracks().forEach((track) => track.stop());
   }
 
@@ -1002,6 +1005,45 @@ function App() {
     }
   }
 
+  function startMicMeter(stream) {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx || !stream) return;
+      const ctx = micMeterRef.current.ctx || new Ctx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.6;
+      source.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      micMeterRef.current = { ctx, analyser, source, data, raf: 0, stopped: false };
+      const tick = () => {
+        if (micMeterRef.current.stopped) return;
+        analyser.getByteFrequencyData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i += 1) sum += data[i] * data[i];
+        const rms = Math.sqrt(sum / data.length) / 255;
+        setMicLevel(Math.min(1, rms * 1.6));
+        micMeterRef.current.raf = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (err) {
+      console.warn('mic meter failed to start', err);
+    }
+  }
+
+  function stopMicMeter() {
+    const m = micMeterRef.current;
+    if (!m) return;
+    m.stopped = true;
+    if (m.raf) cancelAnimationFrame(m.raf);
+    try { m.source && m.source.disconnect(); } catch {}
+    try { m.analyser && m.analyser.disconnect(); } catch {}
+    try { m.ctx && m.ctx.state !== 'closed' && m.ctx.close(); } catch {}
+    micMeterRef.current = {};
+    setMicLevel(0);
+  }
+
   async function startRecording() {
     if (recording || processing) return;
     let stream;
@@ -1030,7 +1072,8 @@ function App() {
       console.log('MOBILE AUDIO SIZE:', event.data.size);
       if (event.data.size > 0) chunksRef.current.push(event.data);
     };
-    recorder.onstop = uploadRecording;
+    recorder.onstop = () => { stopMicMeter(); uploadRecording(); };
+    startMicMeter(stream);
     if (isIosOrSafariRecorder()) {
       recorder.start();
     } else {
@@ -1187,6 +1230,7 @@ function App() {
       streamRecorderRef.current = recorder;
       console.log('STEP 9: starting recorder');
       recorder.start(activePacketMs());
+      startMicMeter(stream);
       streamRecordingStartedAtRef.current = performance.now();
       console.log('STEP 10: recorder started, state=', recorder.state);
       if (cleanOptions.holdToTalk && holdToTalkReleasePendingRef.current) {
@@ -1577,6 +1621,7 @@ function App() {
         mime_type: recorder.mimeType || preferredAudioMimeType(),
       }));
       recorder.start(activePacketMs());
+      startMicMeter(stream);
     };
 
     socket.onmessage = (event) => {
@@ -1726,6 +1771,24 @@ function App() {
             {streaming ? <Square size={46} /> : <Mic size={58} />}
           </button>
           <p className="mic-label">{micLabel}</p>
+          {(streaming || recording) && (
+            <div aria-hidden="true" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: 4, height: 28, marginTop: 8 }}>
+              {[0, 1, 2, 3, 4, 5, 6].map((i) => {
+                const threshold = (i + 1) / 8;
+                const active = micLevel >= threshold * 0.6;
+                const heightPx = Math.max(6, Math.min(28, 6 + micLevel * 28 * (i === 3 ? 1 : 0.65 + Math.abs(3 - i) * 0.08)));
+                return (
+                  <span key={i} style={{
+                    width: 5,
+                    height: heightPx,
+                    borderRadius: 3,
+                    background: active ? 'linear-gradient(180deg,#34d399,#10b981)' : 'rgba(148,163,184,.35)',
+                    transition: 'height 80ms ease, background 120ms ease',
+                  }} />
+                );
+              })}
+            </div>
+          )}
           <p className="status-line">{statusText}</p>
           <div className="sound-actions">
             <button className="play-voice-button" type="button" onClick={playSpeakerTestSound} disabled={playing}>
