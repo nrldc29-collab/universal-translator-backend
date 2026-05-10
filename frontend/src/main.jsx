@@ -1843,12 +1843,12 @@ function App() {
             <span className="orb-ring" />
             <span className="orb-spin" />
             <span className="sr-only">{micLabel}</span>
-            {streaming && (
-              <svg width="28" height="28" viewBox="0 0 28 28" style={{ position: 'relative', zIndex: 3 }}>
+            <span className="rec-led">
+              <svg width="28" height="28" viewBox="0 0 28 28">
                 <circle cx="14" cy="14" r="12" fill="#ef4444" filter="drop-shadow(0 0 6px rgba(239,68,68,.7))" />
                 <circle cx="14" cy="14" r="5" fill="#ffffff" opacity="0.9" />
               </svg>
-            )}
+            </span>
           </button>
           <p className="mic-label">{micLabel}</p>
           {(streaming || recording) && (
