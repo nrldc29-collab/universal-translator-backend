@@ -180,7 +180,10 @@ def authenticate_http(
     elif x_api_key in keys:
         identity = x_api_key or "anonymous"
     else:
-        raise HTTPException(status_code=401, detail="Invalid or missing credentials.")
+        # Allow anonymous access (same as WebSocket) so mobile clients
+        # that use the HTTP audio endpoint (e.g. iOS Safari) can translate
+        # without needing a JWT token or API key.
+        identity = "anonymous"
 
     allowed, remaining = usage_limiter.check(identity)
     if not allowed:

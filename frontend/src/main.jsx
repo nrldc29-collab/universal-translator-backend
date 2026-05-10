@@ -1174,7 +1174,11 @@ function App() {
   }
 
   async function startRecording() {
-    if (recording || processing) return;
+    console.log('startRecording: called');
+    if (recording || processing) {
+      console.log('startRecording: already recording or processing, skipping');
+      return;
+    }
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1213,7 +1217,11 @@ function App() {
   }
 
   function stopRecording() {
-    if (recordingStoppedRef.current) return;
+    console.log('stopRecording: called');
+    if (recordingStoppedRef.current) {
+      console.log('stopRecording: already stopped, skipping');
+      return;
+    }
     recordingStoppedRef.current = true;
     mediaRecorderRef.current?.stop();
     mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
@@ -1237,9 +1245,18 @@ function App() {
     formData.append('synthesize_audio', 'true');
 
     try {
+      console.log('UPLOAD: posting audio to', `${API_URL}/translate/audio`, 'size', blob.size);
       const response = await fetch(`${API_URL}/translate/audio`, { method: 'POST', headers: authHeaders(authToken), body: formData });
-      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Audio translation failed'));
+      console.log('UPLOAD: response status', response.status);
+      if (!response.ok) {
+        const errText = await responseErrorMessage(response, 'Audio translation failed');
+        console.error('UPLOAD: response not ok', response.status, errText);
+        throw new Error(errText);
+      }
       const data = await response.json();
+      console.log('UPLOAD: response data keys', Object.keys(data));
+      console.log('UPLOAD: translated_text', data.translated_text ? 'yes' : 'no');
+      console.log('UPLOAD: audio_base64 length', data.audio_base64?.length || 0);
       setResult(data);
       setStatus(data.translated_text ? (data.audio_base64 ? 'Playing...' : 'Audio translated') : 'No clear speech recognized');
       if (data.audio_base64) {
@@ -1248,18 +1265,22 @@ function App() {
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        console.log('UPLOAD: decoded audio buffer size', buffer.byteLength);
         const url = URL.createObjectURL(new Blob([buffer], { type: data.mime_type || 'audio/wav' }));
         const item = { url, buffer, mimeType: data.mime_type || 'audio/wav' };
         if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
         lastTtsItemRef.current = item;
         setAudioReplayAvailable(true);
         setPlaying(true);
+        console.log('UPLOAD: calling playTtsItem');
         playTtsItem(item, { revokeOnFinish: true, manual: true, onEnd: () => {
+          console.log('UPLOAD: playTtsItem finished');
           setPlaying(false);
           setStatus('Audio translated');
         }});
       }
     } catch (error) {
+      console.error('UPLOAD: catch error', error);
       setStatus(error.message || 'Audio translation failed');
     } finally {
       setProcessing(false);
@@ -1577,6 +1598,7 @@ function App() {
 
   function playTtsItem(item, { revokeOnFinish = true, manual = false, onEnd } = {}) {
     if (!item) return;
+    console.log('playTtsItem: starting playback, manual=', manual, 'mimeType=', item.mimeType, 'buffer size=', item.buffer?.byteLength || 0);
     ttsPlayingRef.current = true;
     setTtsPlaying(true);
     setPlaying(true);
@@ -1597,11 +1619,7 @@ function App() {
       playNextTtsChunk();
     };
     const playWithHtmlAudio = () => {
-      /*
-        On iOS Safari, new Audio().play() from a WebSocket callback is blocked.
-        We reuse the SAME <audio> element that was primed during the mic-button
-        user gesture. This is the only reliable way to autoplay on mobile.
-      */
+      console.log('playWithHtmlAudio: using persistent audio element');
       const audio = persistentAudioRef.current;
       if (audio) {
         audio.src = item.url;
@@ -1667,8 +1685,10 @@ function App() {
         setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
       });
     };
+    console.log('playTtsItem: trying AudioContext path');
     ensureAudioContext()
       .then((context) => {
+        console.log('playTtsItem: AudioContext state', context?.state);
         if (!context || context.state !== 'running') {
           console.log('AudioContext not running, using HTML audio fallback');
           playWithHtmlAudio();
@@ -1676,6 +1696,7 @@ function App() {
         }
         return context.decodeAudioData(item.buffer.slice(0))
           .then((audioBuffer) => {
+            console.log('playTtsItem: decoded audio buffer, duration', audioBuffer.duration);
             const source = context.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(context.destination);
@@ -1684,6 +1705,7 @@ function App() {
               finish();
             };
             source.start(0);
+            console.log('playTtsItem: AudioBufferSource started');
           })
           .catch((error) => {
             console.error('AudioContext decode failed, using HTML audio fallback:', error);
