@@ -488,6 +488,8 @@ function App() {
     audio.setAttribute('playsinline', '');
     audio.setAttribute('webkit-playsinline', '');
     audio.setAttribute('preload', 'auto');
+    audio.setAttribute('disableRemotePlayback', '');
+    audio.setAttribute('x-webkit-airplay', 'deny');
     audio.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
     document.body.appendChild(audio);
     persistentAudioRef.current = audio;
@@ -523,8 +525,31 @@ function App() {
     }
 
     const audio = createPersistentAudio();
-    const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAAAAAA==';
-    audio.src = silentWav;
+    // Build a valid silent WAV programmatically so iOS Safari accepts it
+    const sampleRate = 22050;
+    const seconds = 0.05;
+    const numSamples = Math.floor(sampleRate * seconds);
+    const dataSize = numSamples * 2; // mono 16-bit
+    const fileSize = 36 + dataSize;
+    const wavBuf = new ArrayBuffer(8 + fileSize);
+    const view = new DataView(wavBuf);
+    const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, fileSize, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);   // PCM
+    view.setUint16(22, 1, true);   // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);  // 16-bit
+    writeStr(36, 'data');
+    view.setUint32(40, dataSize, true);
+    // ArrayBuffer is already zero-filled (silence)
+    const silentUrl = URL.createObjectURL(new Blob([wavBuf], { type: 'audio/wav' }));
+    audio.src = silentUrl;
     audio.muted = false;
     audio.volume = 0.001;
     try {
@@ -1634,6 +1659,11 @@ function App() {
       console.log('playWithHtmlAudio: using persistent audio element');
       const audio = persistentAudioRef.current;
       if (audio) {
+        // Clean slate: clear old handlers, pause, reset time
+        audio.onended = null;
+        audio.onerror = null;
+        audio.pause();
+        audio.currentTime = 0;
         audio.src = item.url;
         audio.preload = 'auto';
         audio.muted = false;
