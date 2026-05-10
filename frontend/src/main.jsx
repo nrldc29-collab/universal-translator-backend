@@ -573,14 +573,20 @@ function App() {
     // ArrayBuffer is already zero-filled (silence)
     const silentUrl = URL.createObjectURL(new Blob([wavBuf], { type: 'audio/wav' }));
     audio.src = silentUrl;
-    audio.muted = false;
-    audio.volume = 0.001;
+    // Prime the element with muted playback during the user gesture.
+    // iOS Safari requires this to grant autoplay permission for the element.
+    // After priming, we can play unmuted audio from the same element.
+    audio.muted = true;
+    audio.volume = 1;
     try {
-      audio.play().then(() => {
-        console.log('Audio unlocked successfully');
-      }).catch((e) => {
-        console.warn('Audio unlock play failed:', e);
-      });
+      const p = audio.play();
+      if (p && p.then) {
+        p.then(() => {
+          console.log('Audio unlocked successfully (muted priming)');
+        }).catch((e) => {
+          console.warn('Audio unlock play failed:', e);
+        });
+      }
     } catch (e) {
       console.warn('Audio unlock play threw:', e);
     }
@@ -1696,6 +1702,11 @@ function App() {
     };
     const playWithHtmlAudio = () => {
       console.log('playWithHtmlAudio: using persistent audio element');
+      if (!item?.url) {
+        console.error('playWithHtmlAudio: no item.url available');
+        finish();
+        return;
+      }
       const audio = persistentAudioRef.current;
       if (audio) {
         // Clean slate: clear old handlers, pause, reset time
