@@ -1849,12 +1849,31 @@ function App() {
                 <circle cx="14" cy="14" r="5" fill="#ffffff" opacity="0.9" />
               </svg>
             ) : (
-              <svg width="52" height="52" viewBox="0 0 52 52" fill="none" style={{ position: 'relative', zIndex: 3, opacity: 0.45 }}>
-                {/* Stylized broadcast microphone silhouette */}
-                <rect x="19" y="8" width="14" height="22" rx="7" stroke="currentColor" strokeWidth="2.2" fill="none" />
-                <path d="M14 22c0 6.6 5.4 12 12 12s12-5.4 12-12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" fill="none" />
-                <line x1="26" y1="34" x2="26" y2="42" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-                <line x1="20" y1="42" x2="32" y2="42" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+              <svg width="56" height="56" viewBox="0 0 56 56" style={{ position: 'relative', zIndex: 3, opacity: 0.55 }}>
+                {/* Miniature studio microphone with mesh grill head */}
+                <defs>
+                  {/* Mesh pattern for mic head */}
+                  <pattern id="micMesh" x="0" y="0" width="3" height="3" patternUnits="userSpaceOnUse">
+                    <circle cx="1.5" cy="1.5" r="0.9" fill="currentColor" opacity="0.7" />
+                  </pattern>
+                  <clipPath id="micHeadClip">
+                    <rect x="20" y="6" width="16" height="24" rx="8" />
+                  </clipPath>
+                </defs>
+                {/* Mic head outer ring */}
+                <rect x="20" y="6" width="16" height="24" rx="8" stroke="currentColor" strokeWidth="1.6" fill="none" opacity="0.8" />
+                {/* Mic head mesh fill (clipped to head shape) */}
+                <rect x="20" y="6" width="16" height="24" rx="8" fill="url(#micMesh)" opacity="0.6" clipPath="url(#micHeadClip)" />
+                {/* Mic head inner highlight */}
+                <rect x="22" y="8" width="12" height="10" rx="5" fill="currentColor" opacity="0.08" clipPath="url(#micHeadClip)" />
+                {/* Side bars (mic cradle / U-mount) */}
+                <path d="M14 26c0 7.7 6.3 14 14 14s14-6.3 14-14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" fill="none" opacity="0.7" />
+                {/* Stand stem */}
+                <line x1="28" y1="40" x2="28" y2="48" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" opacity="0.7" />
+                {/* Base */}
+                <rect x="22" y="47" width="12" height="3" rx="1.5" stroke="currentColor" strokeWidth="1.6" fill="none" opacity="0.7" />
+                {/* Bottom connector ring */}
+                <rect x="25" y="29" width="6" height="2.5" rx="1.2" fill="currentColor" opacity="0.25" />
               </svg>
             )}
           </button>
