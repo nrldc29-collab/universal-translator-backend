@@ -495,15 +495,35 @@ function App() {
     NO await before it.
   */
   function synchronousAudioUnlock() {
+    /*
+      iOS Safari requires audio.play() to be called SYNCHRONOUSLY inside a user
+      gesture handler. An async handler that awaits something before calling
+      play() will fail because the gesture context expires.
+      We also create the AudioContext here so it's born inside the gesture.
+    */
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextCtor && !audioContextRef.current) {
+      audioContextRef.current = new AudioContextCtor();
+    }
+    const context = audioContextRef.current;
+    if (context && context.state === 'suspended') {
+      context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
+    }
+
     const audio = createPersistentAudio();
     const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAAAAAA==';
     audio.src = silentWav;
+    audio.load();
     audio.muted = false;
     audio.volume = 0.001;
     try {
-      audio.play().catch(() => {});
-    } catch {
-      // Ignore — we will retry via ensureAudioUnlocked later
+      audio.play().then(() => {
+        console.log('Audio unlocked successfully');
+      }).catch((e) => {
+        console.warn('Audio unlock play failed:', e);
+      });
+    } catch (e) {
+      console.warn('Audio unlock play threw:', e);
     }
     setMobileAudioUnlocked(true);
   }
@@ -512,7 +532,7 @@ function App() {
     const context = await ensureAudioContext();
     if (context) {
       if (context.state === 'suspended') {
-        await context.resume().catch(() => {});
+        await context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
       }
       const buffer = context.createBuffer(1, 1, 22050);
       const source = context.createBufferSource();
@@ -529,7 +549,7 @@ function App() {
     } else {
       const context = await ensureAudioContext();
       if (context && context.state === 'suspended') {
-        await context.resume();
+        await context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
       }
     }
   }
@@ -878,7 +898,8 @@ function App() {
       socket.send(JSON.stringify(packet.meta));
       socket.send(packet.buffer);
       return true;
-    } catch {
+    } catch (e) {
+      console.error('WebSocket send failed:', e);
       return false;
     }
   }
@@ -1145,9 +1166,9 @@ function App() {
     if (!m) return;
     m.stopped = true;
     if (m.raf) cancelAnimationFrame(m.raf);
-    try { m.source && m.source.disconnect(); } catch {}
-    try { m.analyser && m.analyser.disconnect(); } catch {}
-    try { m.ctx && m.ctx.state !== 'closed' && m.ctx.close(); } catch {}
+    try { m.source && m.source.disconnect(); } catch (e) { console.warn('Mic meter source disconnect error:', e); }
+    try { m.analyser && m.analyser.disconnect(); } catch (e) { console.warn('Mic meter analyser disconnect error:', e); }
+    try { m.ctx && m.ctx.state !== 'closed' && m.ctx.close(); } catch (e) { console.warn('Mic meter context close error:', e); }
     micMeterRef.current = {};
     setMicLevel(0);
   }
@@ -1400,7 +1421,7 @@ function App() {
         }
         setPipelineStage(`Streaming voice: ${data.index}/${data.total}`);
         console.log(`Received TTS chunk ${data.index}/${data.total}, text: "${data.text}", audio size: ${data.audio_base64?.length || 0} chars`);
-        ensureAudioUnlocked().catch(() => {});
+        ensureAudioUnlocked().catch((e) => console.warn('TTS chunk audio unlock failed:', e));
         enqueueTtsChunk(data.audio_base64, data.mime_type);
       }
       if (data.type === 'tts_end') {
@@ -1433,7 +1454,7 @@ function App() {
               playNextChunk();
             }});
           };
-          ensureAudioUnlocked().catch(() => {});
+          ensureAudioUnlocked().catch((e) => console.warn('TTS end audio unlock failed:', e));
           console.log('Starting sequential TTS playback');
           playNextChunk();
           return [];
@@ -1532,7 +1553,7 @@ function App() {
       setPipelineStage('Low-bandwidth mode: text translation only');
       return;
     }
-    ensureAudioContext().catch(() => {});
+    ensureAudioContext().catch((e) => console.warn('enqueueTtsChunk AudioContext failed:', e));
     const binary = atob(audioBase64);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
@@ -1574,6 +1595,7 @@ function App() {
       const audio = persistentAudioRef.current;
       if (audio) {
         audio.src = item.url;
+        audio.load();
         audio.preload = 'auto';
         audio.muted = false;
         audio.volume = 1;
@@ -1610,6 +1632,7 @@ function App() {
 
       // Fallback for browsers that don't need the persistent element trick
       const fallbackAudio = new Audio(item.url);
+      fallbackAudio.load();
       fallbackAudio.preload = 'auto';
       fallbackAudio.playsInline = true;
       fallbackAudio.muted = false;
@@ -1634,11 +1657,6 @@ function App() {
         setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
       });
     };
-    if (item.forceHtmlAudio) {
-      console.log('Forcing HTML audio for WebSocket TTS chunk');
-      playWithHtmlAudio();
-      return;
-    }
     ensureAudioContext()
       .then((context) => {
         if (!context || context.state !== 'running') {
@@ -1816,7 +1834,7 @@ function App() {
         updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Live translation' });
       }
       if (data.type === 'tts_audio_chunk') {
-        ensureAudioUnlocked().catch(() => {});
+        ensureAudioUnlocked().catch((e) => console.warn('Duplex TTS chunk audio unlock failed:', e));
         enqueueTtsChunk(data.audio_base64, data.mime_type);
       }
       if (data.type === 'error') {
