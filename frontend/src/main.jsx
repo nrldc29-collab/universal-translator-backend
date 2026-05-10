@@ -310,6 +310,7 @@ function App() {
   const wakeLockRef = useRef(null);
   const audioContextRef = useRef(null);
   const persistentAudioRef = useRef(null);
+  const mobileAudioUnlockedRef = useRef(false);
   const streamSafetyTimeoutRef = useRef(null);
 
   function haptic(pattern = 12) {
@@ -507,6 +508,11 @@ function App() {
       play() will fail because the gesture context expires.
       We also create the AudioContext here so it's born inside the gesture.
     */
+    if (mobileAudioUnlockedRef.current) {
+      // Already unlocked — don't change audio.src or interrupt playback
+      return;
+    }
+
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (AudioContextCtor && !audioContextRef.current) {
       audioContextRef.current = new AudioContextCtor();
@@ -519,7 +525,6 @@ function App() {
     const audio = createPersistentAudio();
     const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAAAAAA==';
     audio.src = silentWav;
-    audio.load();
     audio.muted = false;
     audio.volume = 0.001;
     try {
@@ -531,6 +536,7 @@ function App() {
     } catch (e) {
       console.warn('Audio unlock play threw:', e);
     }
+    mobileAudioUnlockedRef.current = true;
     setMobileAudioUnlocked(true);
   }
 
@@ -550,7 +556,7 @@ function App() {
   }
 
   async function ensureAudioUnlocked() {
-    if (!mobileAudioUnlocked) {
+    if (!mobileAudioUnlockedRef.current) {
       await unlockMobileAudio();
     } else {
       const context = await ensureAudioContext();
