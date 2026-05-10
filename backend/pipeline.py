@@ -61,7 +61,7 @@ class UniversalTranslatorPipeline:
         audio_output_path = None
 
         if synthesize_audio:
-            audio_output_path = self.tts.synthesize(translated_text, output_audio_path)
+            audio_output_path = self.tts.synthesize(translated_text, output_audio_path, language=target_language)
 
         return TranslationResult(
             source_text=text,

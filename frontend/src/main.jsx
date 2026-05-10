@@ -209,7 +209,16 @@ function App() {
   const [password, setPassword] = useState('demo');
   const [sessionId, setSessionId] = useState(INITIAL_SESSION_ID);
   const [sharedSession, setSharedSession] = useState(null);
-  const [conversationTurns, setConversationTurns] = useState([]);
+  const [conversationTurns, setConversationTurns] = useState(() => {
+    try {
+      const raw = localStorage.getItem('translator_conversation_turns');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.slice(-50) : [];
+    } catch {
+      return [];
+    }
+  });
   const [analytics, setAnalytics] = useState(null);
   const [diagnostics, setDiagnostics] = useState(null);
   const [diagnosticsStatus, setDiagnosticsStatus] = useState('checking');
@@ -224,6 +233,37 @@ function App() {
   const [pwaInstalled, setPwaInstalled] = useState(() => window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone === true);
   const [updateAvailable, setUpdateAvailable] = useState(null);
   const [micLevel, setMicLevel] = useState(0);
+  const [copiedKey, setCopiedKey] = useState(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('translator_conversation_turns', JSON.stringify(conversationTurns.slice(-50)));
+    } catch {
+      /* ignore quota errors */
+    }
+  }, [conversationTurns]);
+
+  async function copyToClipboard(text, key) {
+    if (!text) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedKey(key);
+      window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1400);
+    } catch (err) {
+      console.warn('copy failed', err);
+    }
+  }
   const mediaRecorderRef = useRef(null);
   const micMeterRef = useRef({});
   const streamRecorderRef = useRef(null);
@@ -1810,11 +1850,31 @@ function App() {
         </section>
 
         <section className="translation-stack">
-          <article className="transcript-card">
+          <article className="transcript-card" style={{ position: 'relative' }}>
             <p className="transcript-text fade-in" key={sourceText}>{sourceText}</p>
+            {sourceText && (
+              <button
+                type="button"
+                onClick={() => copyToClipboard(sourceText, 'src')}
+                aria-label="Copy transcript"
+                style={{ position: 'absolute', top: 8, right: 8, padding: '4px 10px', borderRadius: 999, border: '1px solid rgba(148,163,184,.4)', background: copiedKey === 'src' ? '#10b981' : 'rgba(15,23,42,.55)', color: '#e5ecff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+              >
+                {copiedKey === 'src' ? 'Copied' : 'Copy'}
+              </button>
+            )}
           </article>
-          <article className="translation-card">
+          <article className="translation-card" style={{ position: 'relative' }}>
             <p className="translation-text fade-in" key={translatedText}>{translatedText}</p>
+            {translatedText && (
+              <button
+                type="button"
+                onClick={() => copyToClipboard(translatedText, 'tr')}
+                aria-label="Copy translation"
+                style={{ position: 'absolute', top: 8, right: 8, padding: '4px 10px', borderRadius: 999, border: '1px solid rgba(148,163,184,.4)', background: copiedKey === 'tr' ? '#10b981' : 'rgba(15,23,42,.55)', color: '#e5ecff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+              >
+                {copiedKey === 'tr' ? 'Copied' : 'Copy'}
+              </button>
+            )}
           </article>
         </section>
 

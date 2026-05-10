@@ -56,7 +56,9 @@ COPY translation translation/
 COPY tts tts/
 RUN mkdir -p models/tts && \
     curl -L -o models/tts/en_US-lessac-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx && \
-    curl -L -o models/tts/en_US-lessac-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+    curl -L -o models/tts/en_US-lessac-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json && \
+    curl -L -o models/tts/es_ES-davefx-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/davefx/medium/es_ES-davefx-medium.onnx && \
+    curl -L -o models/tts/es_ES-davefx-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/davefx/medium/es_ES-davefx-medium.onnx.json
 COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000

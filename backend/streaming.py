@@ -276,9 +276,11 @@ async def websocket_audio_translation(
                 try:
                     partial_tts_path = await run_pipeline_step(
                         "partial TTS",
-                        pipeline.tts.synthesize,
-                        partial_translation,
-                        f"models/tts/{uuid4()}-partial.wav",
+                        lambda: pipeline.tts.synthesize(
+                            partial_translation,
+                            f"models/tts/{uuid4()}-partial.wav",
+                            language=partial_target_language,
+                        ),
                     )
                 except Exception:
                     partial_tts_path = None
@@ -496,9 +498,11 @@ async def websocket_audio_translation(
                 try:
                     chunk_output_path = await run_pipeline_step(
                         "TTS",
-                        pipeline.tts.synthesize,
-                        chunk,
-                        f"models/tts/{uuid4()}-{index}.wav",
+                        lambda c=chunk, idx=index: pipeline.tts.synthesize(
+                            c,
+                            f"models/tts/{uuid4()}-{idx}.wav",
+                            language=active_target_language,
+                        ),
                     )
                     if audio_output_path is None:
                         audio_output_path = chunk_output_path
