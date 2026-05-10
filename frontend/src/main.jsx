@@ -1344,11 +1344,16 @@ function App() {
         setAudioReplayAvailable(true);
         setPlaying(true);
         console.log('UPLOAD: calling playTtsItem');
-        playTtsItem(item, { revokeOnFinish: false, manual: true, onEnd: () => {
-          console.log('UPLOAD: playTtsItem finished');
-          setPlaying(false);
-          setStatus('Audio translated');
-        }});
+        // iOS needs a small delay after mic release before playback works
+        const playDelay = isIosOrSafariRecorder() ? 150 : 0;
+        window.setTimeout(() => {
+          console.log('UPLOAD: starting playback after', playDelay, 'ms delay');
+          playTtsItem(item, { revokeOnFinish: false, manual: true, onEnd: () => {
+            console.log('UPLOAD: playTtsItem finished');
+            setPlaying(false);
+            setStatus('Audio translated');
+          }});
+        }, playDelay);
       }
     } catch (error) {
       console.error('UPLOAD: catch error', error);
@@ -1749,6 +1754,14 @@ function App() {
         setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
       });
     };
+    // iOS Safari: skip AudioContext and use persistent HTML audio directly.
+    // After microphone use, iOS audio session transitions can break AudioContext.
+    if (isIosOrSafariRecorder()) {
+      console.log('playTtsItem: iOS detected, using HTML audio directly');
+      playWithHtmlAudio();
+      return;
+    }
+
     console.log('playTtsItem: trying AudioContext path');
     ensureAudioContext()
       .then((context) => {
