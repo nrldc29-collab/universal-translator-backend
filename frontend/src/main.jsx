@@ -60,6 +60,8 @@ const MAX_AUDIO_SEND_QUEUE = 10;
 const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
+const EXPECTED_BACKEND_RELEASE = '2026-05-09-ios-audio-fix-v4';
+const FRONTEND_BUILD_ID = 'ios-audio-fix-v4';
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
 registerServiceWorker();
@@ -220,6 +222,7 @@ function App() {
   });
   const [installPrompt, setInstallPrompt] = useState(null);
   const [pwaInstalled, setPwaInstalled] = useState(() => window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone === true);
+  const [updateAvailable, setUpdateAvailable] = useState(null);
   const mediaRecorderRef = useRef(null);
   const streamRecorderRef = useRef(null);
   const chunksRef = useRef([]);
@@ -276,6 +279,30 @@ function App() {
       wakeLockRef.current = null;
     }
   }
+
+  useEffect(() => {
+    let cancelled = false;
+    async function checkRelease() {
+      try {
+        const response = await fetch(`${API_URL}/debug/version?cb=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const data = await response.json();
+        if (cancelled) return;
+        const live = String(data && data.release || '');
+        if (live && live !== EXPECTED_BACKEND_RELEASE) {
+          console.warn('Frontend/backend release mismatch', { frontend: EXPECTED_BACKEND_RELEASE, backend: live });
+          setUpdateAvailable({ frontend: EXPECTED_BACKEND_RELEASE, backend: live });
+        } else if (live) {
+          setUpdateAvailable(null);
+        }
+      } catch {
+        // ignore network errors
+      }
+    }
+    checkRelease();
+    const interval = window.setInterval(checkRelease, 60000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, []);
 
   useEffect(() => {
     fetch(`${API_URL}/languages`)
@@ -1655,6 +1682,20 @@ function App() {
 
   return (
     <main className="app-shell">
+      {updateAvailable && (
+        <div role="alert" style={{ background: '#1d4ed8', color: '#ffffff', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', fontSize: '14px', fontWeight: 600, position: 'sticky', top: 0, zIndex: 50 }}>
+          <span>Update available. Backend: <code style={{ background: 'rgba(255,255,255,.18)', padding: '2px 6px', borderRadius: 4 }}>{updateAvailable.backend}</code> | App: <code style={{ background: 'rgba(255,255,255,.18)', padding: '2px 6px', borderRadius: 4 }}>{updateAvailable.frontend}</code></span>
+          <button type="button" onClick={async () => {
+            try {
+              const regs = await (navigator.serviceWorker && navigator.serviceWorker.getRegistrations && navigator.serviceWorker.getRegistrations());
+              if (regs) { regs.forEach((r) => r.waiting && r.waiting.postMessage({ type: 'SKIP_WAITING' })); }
+              const cacheNames = await caches.keys();
+              await Promise.all(cacheNames.map((name) => caches.delete(name)));
+            } catch (err) { console.warn('cache clear failed', err); }
+            window.location.reload();
+          }} style={{ background: '#ffffff', color: '#1d4ed8', border: 'none', padding: '6px 14px', borderRadius: 999, fontWeight: 700, cursor: 'pointer' }}>Reload</button>
+        </div>
+      )}
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
         <header className="clean-header">
           <h1 className="app-title">
