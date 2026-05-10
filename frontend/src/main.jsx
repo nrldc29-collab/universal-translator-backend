@@ -309,6 +309,7 @@ function App() {
   const audioSendQueueRef = useRef([]);
   const wakeLockRef = useRef(null);
   const audioContextRef = useRef(null);
+  const persistentAudioRef = useRef(null);
   const streamSafetyTimeoutRef = useRef(null);
 
   function haptic(pattern = 12) {
@@ -478,7 +479,7 @@ function App() {
     const context = await ensureAudioContext();
     if (context) {
       if (context.state === 'suspended') {
-        await context.resume();
+        await context.resume().catch(() => {});
       }
       const buffer = context.createBuffer(1, 1, 22050);
       const source = context.createBufferSource();
@@ -486,9 +487,34 @@ function App() {
       source.connect(context.destination);
       source.start(0);
     }
-    const audio = new Audio();
-    audio.muted = true;
-    audio.play().catch(() => {});
+
+    /*
+      iOS Safari requires the SAME audio element that was played during a user
+      gesture to be reused for all subsequent autoplay attempts. Creating a
+      new Audio() object from a WebSocket callback will always fail.
+      We create one persistent <audio> element in the DOM, play a silent
+      sound through it during the mic-button press, then reuse it for TTS.
+    */
+    if (!persistentAudioRef.current) {
+      const audio = document.createElement('audio');
+      audio.setAttribute('playsinline', '');
+      audio.setAttribute('webkit-playsinline', '');
+      audio.setAttribute('preload', 'auto');
+      audio.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
+      document.body.appendChild(audio);
+      persistentAudioRef.current = audio;
+    }
+
+    const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAAAAAA==';
+    persistentAudioRef.current.src = silentWav;
+    persistentAudioRef.current.muted = false;
+    persistentAudioRef.current.volume = 0.001;
+    try {
+      await persistentAudioRef.current.play();
+    } catch {
+      // Some browsers still block; we will retry when TTS arrives
+    }
+
     setMobileAudioUnlocked(true);
   }
 
@@ -1369,6 +1395,7 @@ function App() {
         }
         setPipelineStage(`Streaming voice: ${data.index}/${data.total}`);
         console.log(`Received TTS chunk ${data.index}/${data.total}, text: "${data.text}", audio size: ${data.audio_base64?.length || 0} chars`);
+        ensureAudioUnlocked().catch(() => {});
         enqueueTtsChunk(data.audio_base64, data.mime_type);
       }
       if (data.type === 'tts_end') {
@@ -1401,13 +1428,9 @@ function App() {
               playNextChunk();
             }});
           };
-          setUserRequestedPlayback((requested) => {
-            if (requested) {
-              console.log('User requested playback, starting sequential playback');
-              playNextChunk();
-            }
-            return false;
-          });
+          ensureAudioUnlocked().catch(() => {});
+          console.log('Starting sequential TTS playback');
+          playNextChunk();
           return [];
         });
         setTtsQueueLength(0);
@@ -1538,20 +1561,53 @@ function App() {
       playNextTtsChunk();
     };
     const playWithHtmlAudio = () => {
-      const audio = new Audio(item.url);
-      audio.preload = 'auto';
-      audio.playsInline = true;
-      audio.muted = false;
-      audio.volume = 1;
-      audio.crossOrigin = 'anonymous';
-      audio.onended = finish;
-      audio.onerror = (error) => {
+      /*
+        On iOS Safari, new Audio().play() from a WebSocket callback is blocked.
+        We reuse the SAME <audio> element that was primed during the mic-button
+        user gesture. This is the only reliable way to autoplay on mobile.
+      */
+      const audio = persistentAudioRef.current;
+      if (audio) {
+        audio.src = item.url;
+        audio.preload = 'auto';
+        audio.muted = false;
+        audio.volume = 1;
+        audio.onended = finish;
+        audio.onerror = (error) => {
+          console.error('HTML audio error:', error);
+          setLastAudioError({ type: 'tts_playback', message: `HTML audio error: ${error}` });
+          finish();
+        };
+        audio.play().then(() => {
+          console.log('HTML audio playing successfully (persistent element)');
+          setLastAudioError(null);
+        }).catch((error) => {
+          console.error('HTML audio play failed:', error);
+          ttsPlayingRef.current = false;
+          setPlaying(false);
+          setAudioReplayAvailable(true);
+          setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
+          setStatus('Tap Play Voice to hear translation');
+          setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
+        });
+        return;
+      }
+
+      // Fallback for browsers that don't need the persistent element trick
+      const fallbackAudio = new Audio(item.url);
+      fallbackAudio.preload = 'auto';
+      fallbackAudio.playsInline = true;
+      fallbackAudio.muted = false;
+      fallbackAudio.volume = 1;
+      fallbackAudio.crossOrigin = 'anonymous';
+      fallbackAudio.onended = finish;
+      fallbackAudio.onerror = (error) => {
         console.error('HTML audio error:', error);
         setLastAudioError({ type: 'tts_playback', message: `HTML audio error: ${error}` });
         finish();
       };
-      audio.play().then(() => {
-        console.log('HTML audio playing successfully');
+      fallbackAudio.play().then(() => {
+        console.log('HTML audio playing successfully (fallback)');
         setLastAudioError(null);
       }).catch((error) => {
         console.error('HTML audio play failed:', error);
@@ -1744,7 +1800,10 @@ function App() {
         rememberSpeaker(data);
         updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Live translation' });
       }
-      if (data.type === 'tts_audio_chunk') enqueueTtsChunk(data.audio_base64, data.mime_type);
+      if (data.type === 'tts_audio_chunk') {
+        ensureAudioUnlocked().catch(() => {});
+        enqueueTtsChunk(data.audio_base64, data.mime_type);
+      }
       if (data.type === 'error') {
         refs.manualClose = true;
         refs.shouldReconnect = false;
