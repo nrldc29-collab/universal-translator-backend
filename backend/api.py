@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 from uuid import uuid4
 
@@ -460,7 +461,17 @@ async def translate_audio(
         observability.observe_latency("audio_translation", time() - started_at)
         observability.record_event("audio_translation", identity=identity, latency_seconds=time() - started_at)
         usage_limiter.track_audio(identity, estimated_seconds, "audio_translations")
-        return result.__dict__
+        response_dict = result.__dict__
+        # Include audio as base64 so mobile clients can play without fetching a separate file
+        if result.audio_output_path:
+            try:
+                audio_bytes = Path(result.audio_output_path).read_bytes()
+                if len(audio_bytes) >= 100:
+                    response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
+                    response_dict["mime_type"] = "audio/wav"
+            except Exception as exc:
+                logger.warning("failed_to_embed_audio identity=%s error=%s", identity, exc)
+        return response_dict
     except Exception:
         usage_limiter.track(identity, "errors")
         observability.increment("translation_failures_total")

@@ -1241,13 +1241,23 @@ function App() {
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Audio translation failed'));
       const data = await response.json();
       setResult(data);
-      setStatus(data.translated_text ? (data.audio_output_path ? 'Playing...' : 'Audio translated') : 'No clear speech recognized');
-      if (data.audio_output_path) {
+      setStatus(data.translated_text ? (data.audio_base64 ? 'Playing...' : 'Audio translated') : 'No clear speech recognized');
+      if (data.audio_base64) {
+        ensureAudioUnlocked().catch((e) => console.warn('uploadRecording audio unlock failed:', e));
+        const binary = atob(data.audio_base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        const url = URL.createObjectURL(new Blob([buffer], { type: data.mime_type || 'audio/wav' }));
+        const item = { url, buffer, mimeType: data.mime_type || 'audio/wav' };
+        if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+        lastTtsItemRef.current = item;
+        setAudioReplayAvailable(true);
         setPlaying(true);
-        window.setTimeout(() => {
+        playTtsItem(item, { revokeOnFinish: true, manual: true, onEnd: () => {
           setPlaying(false);
           setStatus('Audio translated');
-        }, 900);
+        }});
       }
     } catch (error) {
       setStatus(error.message || 'Audio translation failed');
