@@ -322,7 +322,13 @@ function App() {
     if (!audioContextRef.current) audioContextRef.current = new AudioContextCtor();
     const state = audioContextRef.current.state;
     setAudioContextState(state);
-    if (state === 'suspended') await audioContextRef.current.resume?.();
+    if (state === 'suspended') {
+      try {
+        await audioContextRef.current.resume?.();
+      } catch (e) {
+        console.warn('AudioContext resume failed (no user gesture):', e);
+      }
+    }
     return audioContextRef.current;
   }
 
@@ -1623,7 +1629,6 @@ function App() {
       const audio = persistentAudioRef.current;
       if (audio) {
         audio.src = item.url;
-        audio.load();
         audio.preload = 'auto';
         audio.muted = false;
         audio.volume = 1;
@@ -1637,30 +1642,19 @@ function App() {
           console.log('HTML audio playing successfully (persistent element)');
           setLastAudioError(null);
         }).catch((error) => {
-          console.error('HTML audio play failed (will retry after unlock):', error);
-          // Mobile browsers may have suspended the audio context.
-          // Re-unlock and retry once.
-          unlockMobileAudio().then(() => {
-            audio.play().then(() => {
-              console.log('HTML audio retry succeeded after unlock');
-              setLastAudioError(null);
-            }).catch((err2) => {
-              console.error('HTML audio retry also failed:', err2);
-              ttsPlayingRef.current = false;
-              setPlaying(false);
-              setAudioReplayAvailable(true);
-              setPipelineStage(`Audio playback blocked: ${err2?.name || 'tap play voice'}`);
-              setStatus('Tap Play Voice to hear translation');
-              setLastAudioError({ type: 'tts_playback_blocked', name: err2?.name, message: err2?.message });
-            });
-          });
+          console.error('HTML audio play failed:', error);
+          ttsPlayingRef.current = false;
+          setPlaying(false);
+          setAudioReplayAvailable(true);
+          setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
+          setStatus('Tap Play Voice to hear translation');
+          setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
         });
         return;
       }
 
       // Fallback for browsers that don't need the persistent element trick
       const fallbackAudio = new Audio(item.url);
-      fallbackAudio.load();
       fallbackAudio.preload = 'auto';
       fallbackAudio.playsInline = true;
       fallbackAudio.muted = false;
