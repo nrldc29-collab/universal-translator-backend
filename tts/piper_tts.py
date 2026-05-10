@@ -10,8 +10,18 @@ from threading import Lock
 # requested but no voice is configured, we fall back to the default English voice.
 DEFAULT_VOICES = {
     "en": "models/tts/en_US-lessac-medium.onnx",
-    "es": "models/tts/es_ES-davefx-medium.onnx",
+    # Upgraded from es_ES-davefx-medium (sounded robotic/muffled) to the only
+    # -high quality Spanish voice in piper-voices: es_MX-claude-high.
+    # Note: this is a Mexican Spanish accent. To revert to Castilian Spanish,
+    # swap to es_ES-sharvard-medium (also good quality, but still -medium tier).
+    "es": "models/tts/es_MX-claude-high.onnx",
 }
+
+# Languages with no Piper voice — synthesized via eSpeak NG fallback. eSpeak NG
+# 1.50+ (which Debian's espeak-ng package ships) supports Haitian Creole as `ht`.
+# It sounds robotic compared to Piper, but no major TTS provider has an HT voice
+# in 2026, so this is the best available option.
+ESPEAK_LANGUAGES = {"ht"}
 
 
 def _normalize_language(code):
@@ -63,11 +73,48 @@ class PiperTextToSpeech:
         self._loaded[lang] = voice
         return voice
 
+    def _synthesize_espeak(self, text, out_path, lang):
+        """Render audio via eSpeak NG for languages with no Piper voice.
+
+        Produces a 22050 Hz mono 16-bit PCM WAV — same format Piper outputs,
+        so the rest of the pipeline doesn't need to know which engine ran.
+        """
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        # Speed (-s): 160 wpm is roughly natural. Pitch (-p): 50 = neutral.
+        # -a 100 = max amplitude. -w writes WAV. -v ht selects Haitian Creole.
+        cmd = [
+            "espeak-ng",
+            "-v", lang,
+            "-s", "160",
+            "-p", "50",
+            "-a", "100",
+            "-w", str(out_path),
+            text,
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=15)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "espeak-ng is not installed; cannot synthesize %s audio" % lang
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            stderr = exc.stderr.decode("utf-8", errors="ignore") if exc.stderr else ""
+            raise RuntimeError(
+                "espeak-ng failed for %s: %s" % (lang, stderr.strip() or exc)
+            ) from exc
+        return str(out_path)
+
     def synthesize(self, text, output_path="models/tts/output.wav", language=None):
         if not text or not text.strip():
             raise ValueError("Cannot synthesize empty text.")
 
         lang = _normalize_language(language)
+
+        # Languages with no Piper voice → eSpeak NG fallback (currently: ht).
+        if lang in ESPEAK_LANGUAGES:
+            out_path = Path(output_path)
+            return self._synthesize_espeak(text, out_path, lang)
+
         model_path = Path(self._voice_path(lang))
         if not model_path.exists():
             # Fall back to English if requested language voice is missing

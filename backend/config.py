@@ -4,6 +4,7 @@ import os
 LANGUAGES = {
     "en": "English",
     "es": "Spanish",
+    "ht": "Haitian Creole",
     "fr": "French",
     "de": "German",
     "it": "Italian",
@@ -229,6 +230,7 @@ def get_stt_queue_max_depth() -> int:
 
 def get_max_active_streams_per_user() -> int:
     return int(os.getenv("MAX_ACTIVE_STREAMS_PER_USER", "2"))
+
 
 
 def get_pipeline_step_timeout_seconds() -> float:

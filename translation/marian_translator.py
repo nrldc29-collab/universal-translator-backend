@@ -16,6 +16,7 @@ class MarianTranslator:
         codes = {
             "en": "eng_Latn",
             "es": "spa_Latn",
+            "ht": "hat_Latn",   # Haitian Creole — NLLB-200 supports this
             "fr": "fra_Latn",
             "de": "deu_Latn",
             "it": "ita_Latn",

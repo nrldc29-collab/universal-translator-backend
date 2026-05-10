@@ -60,8 +60,8 @@ const MAX_AUDIO_SEND_QUEUE = 10;
 const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
-const EXPECTED_BACKEND_RELEASE = '2026-05-10-mic-meter-v5';
-const FRONTEND_BUILD_ID = 'mic-meter-v5';
+const EXPECTED_BACKEND_RELEASE = '2026-05-10-haitian-creole-v10';
+const FRONTEND_BUILD_ID = 'haitian-creole-v10';
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
 registerServiceWorker();
@@ -163,10 +163,30 @@ function mediaErrorMessage(error) {
   return 'Could not start microphone';
 }
 
+// Target languages exposed in the picker. Keep tight — every entry needs both
+// translation support (NLLB-200 covers all of these) AND some form of TTS,
+// either Piper (es) or eSpeak NG fallback (ht).
+const TARGET_LANGUAGE_OPTIONS = [
+  { code: 'es', label: 'Spanish' },
+  { code: 'ht', label: 'Haitian Creole' },
+];
+
+function readPersistedTargetLanguage() {
+  try {
+    const stored = localStorage.getItem('targetLanguage');
+    if (stored && TARGET_LANGUAGE_OPTIONS.some((o) => o.code === stored)) return stored;
+  } catch {}
+  return 'es';
+}
+
 function App() {
-  const [languages, setLanguages] = useState({ en: 'English', es: 'Spanish' });
+  const [languages, setLanguages] = useState({ en: 'English', es: 'Spanish', ht: 'Haitian Creole' });
   const [sourceLanguage, setSourceLanguage] = useState('en');
-  const [targetLanguage, setTargetLanguage] = useState('es');
+  const [targetLanguage, setTargetLanguageState] = useState(readPersistedTargetLanguage);
+  const setTargetLanguage = (next) => {
+    setTargetLanguageState(next);
+    try { localStorage.setItem('targetLanguage', next); } catch {}
+  };
   const [text, setText] = useState('Hello, how are you?');
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState('Ready');
@@ -1052,18 +1072,33 @@ function App() {
       const ctx = micMeterRef.current.ctx || new Ctx();
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      analyser.smoothingTimeConstant = 0.6;
+      // Smaller FFT + low smoothing = real-time response.
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.15;
       source.connect(analyser);
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      micMeterRef.current = { ctx, analyser, source, data, raf: 0, stopped: false };
+      // Use time-domain (waveform) data — reacts instantly, unlike FFT bins
+      // which need a few frames to settle and feel laggy.
+      const data = new Uint8Array(analyser.fftSize);
+      micMeterRef.current = { ctx, analyser, source, data, raf: 0, stopped: false, smoothed: 0 };
       const tick = () => {
         if (micMeterRef.current.stopped) return;
-        analyser.getByteFrequencyData(data);
-        let sum = 0;
-        for (let i = 0; i < data.length; i += 1) sum += data[i] * data[i];
-        const rms = Math.sqrt(sum / data.length) / 255;
-        setMicLevel(Math.min(1, rms * 1.6));
+        analyser.getByteTimeDomainData(data);
+        let peak = 0;
+        let sumSq = 0;
+        for (let i = 0; i < data.length; i += 1) {
+          const v = (data[i] - 128) / 128; // -1..1
+          const a = Math.abs(v);
+          if (a > peak) peak = a;
+          sumSq += v * v;
+        }
+        const rms = Math.sqrt(sumSq / data.length);
+        // Blend RMS (loudness) with peak (transients) so taps & consonants pop.
+        const raw = Math.min(1, rms * 2.4 + peak * 0.6);
+        // Asymmetric smoothing: snap up fast, decay slowly. Feels live.
+        const prev = micMeterRef.current.smoothed || 0;
+        const smoothed = raw > prev ? raw : prev * 0.78 + raw * 0.22;
+        micMeterRef.current.smoothed = smoothed;
+        setMicLevel(smoothed);
         micMeterRef.current.raf = requestAnimationFrame(tick);
       };
       tick();
@@ -1849,28 +1884,66 @@ function App() {
           {processing && !streaming && !playing && <p className="thinking">Translating...</p>}
         </section>
 
+        <section style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, margin: '8px 0 12px', flexWrap: 'wrap' }} aria-label="Target language">
+          <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase' }}>
+            Translate to
+          </span>
+          <div role="radiogroup" aria-label="Target language" style={{ display: 'inline-flex', borderRadius: 999, padding: 3, background: 'rgba(15,23,42,.55)', border: '1px solid rgba(148,163,184,.3)' }}>
+            {TARGET_LANGUAGE_OPTIONS.map((opt) => {
+              const active = targetLanguage === opt.code;
+              return (
+                <button
+                  key={opt.code}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setTargetLanguage(opt.code)}
+                  disabled={recording || processing}
+                  style={{
+                    minHeight: 32,
+                    padding: '6px 14px',
+                    borderRadius: 999,
+                    border: 'none',
+                    cursor: (recording || processing) ? 'not-allowed' : 'pointer',
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: active ? '#0b1220' : '#cbd5e1',
+                    background: active ? 'linear-gradient(180deg,#a5f3fc,#67e8f9)' : 'transparent',
+                    transition: 'background .15s ease, color .15s ease',
+                  }}
+                >
+                  {opt.label}
+                  {opt.code === 'ht' && (
+                    <span style={{ marginLeft: 4, fontSize: 10, opacity: .7 }} title="Audio uses eSpeak NG fallback (sounds robotic)">*</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
         <section className="translation-stack">
-          <article className="transcript-card" style={{ position: 'relative' }}>
+          <article className="transcript-card" style={{ position: 'relative', paddingBottom: sourceText ? 52 : undefined }}>
             <p className="transcript-text fade-in" key={sourceText}>{sourceText}</p>
             {sourceText && (
               <button
                 type="button"
                 onClick={() => copyToClipboard(sourceText, 'src')}
                 aria-label="Copy transcript"
-                style={{ position: 'absolute', top: 8, right: 8, padding: '4px 10px', borderRadius: 999, border: '1px solid rgba(148,163,184,.4)', background: copiedKey === 'src' ? '#10b981' : 'rgba(15,23,42,.55)', color: '#e5ecff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                style={{ position: 'absolute', bottom: 10, right: 10, minHeight: 36, padding: '8px 16px', borderRadius: 999, border: '1px solid rgba(148,163,184,.45)', background: copiedKey === 'src' ? '#10b981' : 'rgba(15,23,42,.65)', color: '#e5ecff', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background .15s ease' }}
               >
                 {copiedKey === 'src' ? 'Copied' : 'Copy'}
               </button>
             )}
           </article>
-          <article className="translation-card" style={{ position: 'relative' }}>
+          <article className="translation-card" style={{ position: 'relative', paddingBottom: translatedText ? 52 : undefined }}>
             <p className="translation-text fade-in" key={translatedText}>{translatedText}</p>
             {translatedText && (
               <button
                 type="button"
                 onClick={() => copyToClipboard(translatedText, 'tr')}
                 aria-label="Copy translation"
-                style={{ position: 'absolute', top: 8, right: 8, padding: '4px 10px', borderRadius: 999, border: '1px solid rgba(148,163,184,.4)', background: copiedKey === 'tr' ? '#10b981' : 'rgba(15,23,42,.55)', color: '#e5ecff', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                style={{ position: 'absolute', bottom: 10, right: 10, minHeight: 36, padding: '8px 16px', borderRadius: 999, border: '1px solid rgba(148,163,184,.45)', background: copiedKey === 'tr' ? '#10b981' : 'rgba(15,23,42,.65)', color: '#e5ecff', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background .15s ease' }}
               >
                 {copiedKey === 'tr' ? 'Copied' : 'Copy'}
               </button>
