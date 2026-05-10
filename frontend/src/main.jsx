@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeftRight, Download, Mic, Square } from 'lucide-react';
+import { ArrowLeftRight, Download } from 'lucide-react';
 import './styles.css';
 import { registerServiceWorker } from './pwa';
 
@@ -1843,7 +1843,20 @@ function App() {
             <span className="orb-ring" />
             <span className="orb-spin" />
             <span className="sr-only">{micLabel}</span>
-            {streaming ? <Square size={46} /> : <Mic size={58} />}
+            {streaming ? (
+              <svg width="28" height="28" viewBox="0 0 28 28" style={{ position: 'relative', zIndex: 3 }}>
+                <circle cx="14" cy="14" r="12" fill="#ef4444" filter="drop-shadow(0 0 6px rgba(239,68,68,.7))" />
+                <circle cx="14" cy="14" r="5" fill="#ffffff" opacity="0.9" />
+              </svg>
+            ) : (
+              <svg width="52" height="52" viewBox="0 0 52 52" fill="none" style={{ position: 'relative', zIndex: 3, opacity: 0.45 }}>
+                {/* Stylized broadcast microphone silhouette */}
+                <rect x="19" y="8" width="14" height="22" rx="7" stroke="currentColor" strokeWidth="2.2" fill="none" />
+                <path d="M14 22c0 6.6 5.4 12 12 12s12-5.4 12-12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" fill="none" />
+                <line x1="26" y1="34" x2="26" y2="42" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+                <line x1="20" y1="42" x2="32" y2="42" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+              </svg>
+            )}
           </button>
           <p className="mic-label">{micLabel}</p>
           {(streaming || recording) && (
