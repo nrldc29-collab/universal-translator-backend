@@ -311,6 +311,8 @@ function App() {
   const audioContextRef = useRef(null);
   const persistentAudioRef = useRef(null);
   const mobileAudioUnlockedRef = useRef(false);
+  const warmupOscRef = useRef(null);
+  const warmupGainRef = useRef(null);
   const streamSafetyTimeoutRef = useRef(null);
 
   function haptic(pattern = 12) {
@@ -520,8 +522,29 @@ function App() {
       audioContextRef.current = new AudioContextCtor();
     }
     const context = audioContextRef.current;
-    if (context && context.state === 'suspended') {
-      context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
+    if (context) {
+      if (context.state === 'suspended') {
+        context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
+      }
+      // Start a silent oscillator to keep the AudioContext warm on iOS.
+      // iOS Safari auto-suspends the context after a few seconds of inactivity.
+      // A 40 Hz sine at gain 0.0001 is inaudible but keeps the context running.
+      if (!warmupOscRef.current) {
+        try {
+          const osc = context.createOscillator();
+          osc.frequency.value = 40;
+          const gain = context.createGain();
+          gain.gain.value = 0.0001;
+          osc.connect(gain);
+          gain.connect(context.destination);
+          osc.start();
+          warmupOscRef.current = osc;
+          warmupGainRef.current = gain;
+          console.log('AudioContext warmup oscillator started');
+        } catch (e) {
+          console.warn('Failed to start warmup oscillator:', e);
+        }
+      }
     }
 
     const audio = createPersistentAudio();
@@ -588,6 +611,17 @@ function App() {
       if (context && context.state === 'suspended') {
         await context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
       }
+    }
+  }
+
+  function stopAudioWarmup() {
+    if (warmupOscRef.current) {
+      try { warmupOscRef.current.stop(); } catch (e) {}
+      warmupOscRef.current = null;
+    }
+    if (warmupGainRef.current) {
+      try { warmupGainRef.current.disconnect(); } catch (e) {}
+      warmupGainRef.current = null;
     }
   }
 
