@@ -475,6 +475,39 @@ function App() {
     }
   }
 
+  function createPersistentAudio() {
+    if (persistentAudioRef.current) return persistentAudioRef.current;
+    const audio = document.createElement('audio');
+    audio.setAttribute('playsinline', '');
+    audio.setAttribute('webkit-playsinline', '');
+    audio.setAttribute('preload', 'auto');
+    audio.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
+    document.body.appendChild(audio);
+    persistentAudioRef.current = audio;
+    return audio;
+  }
+
+  /*
+    iOS Safari requires audio.play() to be called SYNCHRONOUSLY inside a user
+    gesture handler. An async handler that awaits something before calling
+    play() will fail because the gesture context expires.
+    This function must be called DIRECTLY from onPointerDown / onClick with
+    NO await before it.
+  */
+  function synchronousAudioUnlock() {
+    const audio = createPersistentAudio();
+    const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAAAAAA==';
+    audio.src = silentWav;
+    audio.muted = false;
+    audio.volume = 0.001;
+    try {
+      audio.play().catch(() => {});
+    } catch {
+      // Ignore — we will retry via ensureAudioUnlocked later
+    }
+    setMobileAudioUnlocked(true);
+  }
+
   async function unlockMobileAudio() {
     const context = await ensureAudioContext();
     if (context) {
@@ -487,35 +520,7 @@ function App() {
       source.connect(context.destination);
       source.start(0);
     }
-
-    /*
-      iOS Safari requires the SAME audio element that was played during a user
-      gesture to be reused for all subsequent autoplay attempts. Creating a
-      new Audio() object from a WebSocket callback will always fail.
-      We create one persistent <audio> element in the DOM, play a silent
-      sound through it during the mic-button press, then reuse it for TTS.
-    */
-    if (!persistentAudioRef.current) {
-      const audio = document.createElement('audio');
-      audio.setAttribute('playsinline', '');
-      audio.setAttribute('webkit-playsinline', '');
-      audio.setAttribute('preload', 'auto');
-      audio.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
-      document.body.appendChild(audio);
-      persistentAudioRef.current = audio;
-    }
-
-    const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAAAAAA==';
-    persistentAudioRef.current.src = silentWav;
-    persistentAudioRef.current.muted = false;
-    persistentAudioRef.current.volume = 0.001;
-    try {
-      await persistentAudioRef.current.play();
-    } catch {
-      // Some browsers still block; we will retry when TTS arrives
-    }
-
-    setMobileAudioUnlocked(true);
+    synchronousAudioUnlock();
   }
 
   async function ensureAudioUnlocked() {
@@ -1002,7 +1007,7 @@ function App() {
       ignoreNextMicClickRef.current = false;
       return;
     }
-    await ensureAudioUnlocked();
+    synchronousAudioUnlock();
     if (isIosOrSafariRecorder()) {
       haptic(recording ? 8 : 14);
       if (recording) stopRecording();
@@ -1016,7 +1021,7 @@ function App() {
 
   async function handleMicPointerDown(event) {
     console.log('MIC BUTTON CLICKED');
-    await ensureAudioUnlocked();
+    synchronousAudioUnlock();
     if (isIosOrSafariRecorder()) return;
     if (socketRef.current || processing || playing) return;
     haptic(8);
@@ -1418,7 +1423,7 @@ function App() {
             }
             const chunk = chunks[index];
             const url = URL.createObjectURL(new Blob([chunk], { type: 'audio/wav' }));
-            const item = { url, buffer: chunk, mimeType: 'audio/wav', forceHtmlAudio: true };
+            const item = { url, buffer: chunk, mimeType: 'audio/wav' };
             if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
             lastTtsItemRef.current = item;
             setAudioReplayAvailable(true);
@@ -1582,13 +1587,23 @@ function App() {
           console.log('HTML audio playing successfully (persistent element)');
           setLastAudioError(null);
         }).catch((error) => {
-          console.error('HTML audio play failed:', error);
-          ttsPlayingRef.current = false;
-          setPlaying(false);
-          setAudioReplayAvailable(true);
-          setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
-          setStatus('Tap Play Voice to hear translation');
-          setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
+          console.error('HTML audio play failed (will retry after unlock):', error);
+          // Mobile browsers may have suspended the audio context.
+          // Re-unlock and retry once.
+          unlockMobileAudio().then(() => {
+            audio.play().then(() => {
+              console.log('HTML audio retry succeeded after unlock');
+              setLastAudioError(null);
+            }).catch((err2) => {
+              console.error('HTML audio retry also failed:', err2);
+              ttsPlayingRef.current = false;
+              setPlaying(false);
+              setAudioReplayAvailable(true);
+              setPipelineStage(`Audio playback blocked: ${err2?.name || 'tap play voice'}`);
+              setStatus('Tap Play Voice to hear translation');
+              setLastAudioError({ type: 'tts_playback_blocked', name: err2?.name, message: err2?.message });
+            });
+          });
         });
         return;
       }
