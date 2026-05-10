@@ -11,3 +11,4 @@ soundfile>=0.12.1
 sentencepiece>=0.2.0
 python-multipart>=0.0.9
 piper-tts>=1.2.0
+requests>=2.31.0

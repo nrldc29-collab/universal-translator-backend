@@ -1,8 +1,12 @@
+import base64
+import os
 import subprocess
 import sys
 import wave
 from pathlib import Path
 from threading import Lock
+
+import requests
 
 
 # Map language codes to Piper voice file names. The Dockerfile downloads the
@@ -17,10 +21,10 @@ DEFAULT_VOICES = {
     "es": "models/tts/es_MX-claude-high.onnx",
 }
 
-# Languages with no Piper voice — synthesized via eSpeak NG fallback. eSpeak NG
-# 1.50+ (which Debian's espeak-ng package ships) supports Haitian Creole as `ht`.
-# It sounds robotic compared to Piper, but no major TTS provider has an HT voice
-# in 2026, so this is the best available option.
+# Languages with no Piper voice — synthesized via eSpeak NG fallback by default.
+# eSpeak NG 1.50+ supports Haitian Creole (`ht`) but sounds robotic.
+# If GOOGLE_TTS_API_KEY is set, Haitian Creole uses Google Cloud neural TTS
+# (language code ht-HT) instead of eSpeak for natural-sounding audio.
 ESPEAK_LANGUAGES = {"ht"}
 
 
@@ -73,6 +77,44 @@ class PiperTextToSpeech:
         self._loaded[lang] = voice
         return voice
 
+    def _synthesize_google(self, text, out_path, lang):
+        """Render audio via Google Cloud Text-to-Speech neural voice.
+
+        Produces a 22050 Hz mono 16-bit PCM WAV — same format Piper outputs.
+        Requires GOOGLE_TTS_API_KEY environment variable.
+        """
+        api_key = os.getenv("GOOGLE_TTS_API_KEY")
+        if not api_key:
+            raise RuntimeError("GOOGLE_TTS_API_KEY is not set")
+
+        url = (
+            "https://texttospeech.googleapis.com/v1/text:synthesize"
+            f"?key={api_key}"
+        )
+        payload = {
+            "input": {"text": text},
+            "voice": {"languageCode": "ht-HT"},
+            "audioConfig": {
+                "audioEncoding": "LINEAR16",
+                "sampleRateHertz": 22050,
+            },
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=30)
+            resp.raise_for_status()
+        except requests.RequestException as exc:
+            raise RuntimeError("Google Cloud TTS request failed: %s" % exc) from exc
+
+        data = resp.json()
+        audio_b64 = data.get("audioContent")
+        if not audio_b64:
+            raise RuntimeError("Google Cloud TTS returned no audioContent")
+
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "wb") as f:
+            f.write(base64.b64decode(audio_b64))
+        return str(out_path)
+
     def _synthesize_espeak(self, text, out_path, lang):
         """Render audio via eSpeak NG for languages with no Piper voice.
 
@@ -110,9 +152,16 @@ class PiperTextToSpeech:
 
         lang = _normalize_language(language)
 
-        # Languages with no Piper voice → eSpeak NG fallback (currently: ht).
+        # Languages with no Piper voice → try Google Cloud TTS first if key is set,
+        # otherwise fall back to eSpeak NG (currently: ht).
         if lang in ESPEAK_LANGUAGES:
             out_path = Path(output_path)
+            if os.getenv("GOOGLE_TTS_API_KEY"):
+                try:
+                    return self._synthesize_google(text, out_path, lang)
+                except Exception:
+                    # If Google TTS fails for any reason, silently fall back to eSpeak
+                    pass
             return self._synthesize_espeak(text, out_path, lang)
 
         model_path = Path(self._voice_path(lang))
