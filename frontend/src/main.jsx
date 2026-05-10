@@ -1279,7 +1279,7 @@ function App() {
         setAudioReplayAvailable(true);
         setPlaying(true);
         console.log('UPLOAD: calling playTtsItem');
-        playTtsItem(item, { revokeOnFinish: true, manual: true, onEnd: () => {
+        playTtsItem(item, { revokeOnFinish: false, manual: true, onEnd: () => {
           console.log('UPLOAD: playTtsItem finished');
           setPlaying(false);
           setStatus('Audio translated');
@@ -1716,7 +1716,13 @@ function App() {
 
   async function playTranslationAudio() {
     await ensureAudioUnlocked();
-    playTtsItem(lastTtsItemRef.current, { revokeOnFinish: false, manual: true });
+    const item = lastTtsItemRef.current;
+    if (!item) return;
+    if (item.buffer) {
+      if (item.url) URL.revokeObjectURL(item.url);
+      item.url = URL.createObjectURL(new Blob([item.buffer], { type: item.mimeType || 'audio/wav' }));
+    }
+    playTtsItem(item, { revokeOnFinish: false, manual: true });
   }
 
   function playNextTtsChunk() {
