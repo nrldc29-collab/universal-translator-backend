@@ -492,6 +492,7 @@ function App() {
     audio.setAttribute('preload', 'auto');
     audio.setAttribute('disableRemotePlayback', '');
     audio.setAttribute('x-webkit-airplay', 'deny');
+    audio.crossOrigin = 'anonymous';
     audio.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
     document.body.appendChild(audio);
     persistentAudioRef.current = audio;
@@ -1712,6 +1713,9 @@ function App() {
         // Clean slate: clear old handlers, pause, reset time
         audio.onended = null;
         audio.onerror = null;
+        audio.oncanplay = null;
+        audio.oncanplaythrough = null;
+        audio.onloadedmetadata = null;
         audio.pause();
         audio.currentTime = 0;
         audio.src = item.url;
@@ -1721,21 +1725,47 @@ function App() {
         audio.onended = finish;
         audio.onerror = (error) => {
           console.error('HTML audio error:', error);
+          console.error('Audio error code:', audio?.error?.code, 'message:', audio?.error?.message);
           setLastAudioError({ type: 'tts_playback', message: `HTML audio error: ${error}` });
           finish();
         };
-        audio.play().then(() => {
-          console.log('HTML audio playing successfully (persistent element)');
-          setLastAudioError(null);
-        }).catch((error) => {
-          console.error('HTML audio play failed:', error);
-          ttsPlayingRef.current = false;
-          setPlaying(false);
-          setAudioReplayAvailable(true);
-          setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
-          setStatus('Tap Play Voice to hear translation');
-          setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
-        });
+
+        const doPlay = () => {
+          console.log('Audio readyState:', audio.readyState, 'paused:', audio.paused, 'muted:', audio.muted, 'volume:', audio.volume, 'duration:', audio.duration);
+          audio.play().then(() => {
+            console.log('HTML audio playing successfully (persistent element)');
+            setLastAudioError(null);
+          }).catch((error) => {
+            console.error('HTML audio play failed:', error);
+            ttsPlayingRef.current = false;
+            setPlaying(false);
+            setAudioReplayAvailable(true);
+            setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
+            setStatus('Tap Play Voice to hear translation');
+            setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
+          });
+        };
+
+        // On iOS, wait for canplay to ensure the audio session is ready
+        if (audio.readyState >= 2) {
+          console.log('Audio already ready (readyState >= 2), playing immediately');
+          doPlay();
+        } else {
+          console.log('Audio not ready yet (readyState:', audio.readyState, '), waiting for canplay');
+          audio.oncanplay = () => {
+            console.log('Audio canplay event fired, readyState:', audio.readyState);
+            audio.oncanplay = null;
+            doPlay();
+          };
+          // Timeout fallback in case canplay never fires
+          window.setTimeout(() => {
+            if (audio.readyState < 2) {
+              console.warn('Audio canplay timeout, readyState:', audio.readyState, 'error:', audio.error?.code);
+              // Try playing anyway as a last resort
+              doPlay();
+            }
+          }, 500);
+        }
         return;
       }
 
