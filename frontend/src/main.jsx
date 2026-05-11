@@ -1344,6 +1344,15 @@ function App() {
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
         console.log('UPLOAD: decoded audio buffer size', buffer.byteLength);
+        // Validate WAV header
+        if (buffer.byteLength >= 12) {
+          const header = new Uint8Array(buffer, 0, 12);
+          const riff = String.fromCharCode(...header.slice(0, 4));
+          const wave = String.fromCharCode(...header.slice(8, 12));
+          console.log('UPLOAD: WAV header', riff, wave, 'valid:', riff === 'RIFF' && wave === 'WAVE');
+        } else {
+          console.warn('UPLOAD: audio buffer too small for WAV header');
+        }
         const url = URL.createObjectURL(new Blob([buffer], { type: data.mime_type || 'audio/wav' }));
         const item = { url, buffer, mimeType: data.mime_type || 'audio/wav' };
         if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
@@ -1736,13 +1745,37 @@ function App() {
             console.log('HTML audio playing successfully (persistent element)');
             setLastAudioError(null);
           }).catch((error) => {
-            console.error('HTML audio play failed:', error);
-            ttsPlayingRef.current = false;
-            setPlaying(false);
-            setAudioReplayAvailable(true);
-            setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
-            setStatus('Tap Play Voice to hear translation');
-            setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
+            console.error('HTML audio play failed on persistent element:', error);
+            // Nuclear fallback: try a completely fresh audio element
+            console.log('Trying nuclear fallback with fresh audio element');
+            const fresh = new Audio(item.url);
+            fresh.preload = 'auto';
+            fresh.playsInline = true;
+            fresh.muted = false;
+            fresh.volume = 1;
+            fresh.crossOrigin = 'anonymous';
+            fresh.onended = finish;
+            fresh.onerror = (err2) => {
+              console.error('Fresh audio element also failed:', err2);
+              ttsPlayingRef.current = false;
+              setPlaying(false);
+              setAudioReplayAvailable(true);
+              setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
+              setStatus('Tap Play Voice to hear translation');
+              setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
+            };
+            fresh.play().then(() => {
+              console.log('Fresh audio element playing successfully');
+              setLastAudioError(null);
+            }).catch((err2) => {
+              console.error('Fresh audio element play failed:', err2);
+              ttsPlayingRef.current = false;
+              setPlaying(false);
+              setAudioReplayAvailable(true);
+              setPipelineStage(`Audio playback blocked: ${err2?.name || 'tap play voice'}`);
+              setStatus('Tap Play Voice to hear translation');
+              setLastAudioError({ type: 'tts_playback_blocked', name: err2?.name, message: err2?.message });
+            });
           });
         };
 
