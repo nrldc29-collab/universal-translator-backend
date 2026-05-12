@@ -71,8 +71,8 @@ const MAX_AUDIO_SEND_QUEUE = 10;
 const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
-const EXPECTED_BACKEND_RELEASE = '2026-05-12-fast-speech-v12';
-const FRONTEND_BUILD_ID = 'fast-speech-v12';
+const EXPECTED_BACKEND_RELEASE = '2026-05-12-room-fast-path-v13';
+const FRONTEND_BUILD_ID = 'room-fast-path-v13';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -834,18 +834,31 @@ function App() {
       const response = await fetch(`${API_URL}/translate/text`, {
         method: 'POST',
         headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ text, source_language: sourceLanguage, target_language: targetLanguage, synthesize_audio: false }),
+        body: JSON.stringify({
+          text,
+          source_language: sourceLanguage,
+          target_language: targetLanguage,
+          synthesize_audio: false,
+          session_id: sessionId,
+          device_id: INITIAL_DEVICE_ID,
+          speaker_name: INITIAL_SPEAKER_NAME,
+          speaker_mode: speakerMode,
+        }),
       });
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Text translation failed'));
       const data = await response.json();
       setResult(data);
+      setLiveTranslation(data.translated_text || '');
+      rememberSpeaker(data);
+      if (data.session) applySharedSession(data.session);
+      else appendConversationTurn(data);
       if (data.clarify) {
         setStatus(data.clarify_message || 'Clarification requested');
         setLiveTranslation(data.translated_text || '');
         setClarifyMessage(data.clarify_message || 'Clarification requested');
         setClarifyVisible(true);
       } else {
-      setStatus('Text translated');
+        setStatus('Text translated');
       }
     } catch (error) {
       setStatus(error.message || 'Text translation failed');
@@ -911,12 +924,19 @@ function App() {
           source_language: sourceLanguage,
           target_language: targetLanguage,
           synthesize_audio: true,
+          session_id: sessionId,
+          device_id: INITIAL_DEVICE_ID,
+          speaker_name: INITIAL_SPEAKER_NAME,
+          speaker_mode: speakerMode,
         }),
       });
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Speech translation failed'));
       const data = await response.json();
       setResult(data);
       setLiveTranslation(data.translated_text || '');
+      rememberSpeaker(data);
+      if (data.session) applySharedSession(data.session);
+      else appendConversationTurn(data);
       if (data.clarify) {
         setClarifyMessage(data.clarify_message || 'Clarification requested');
         setClarifyVisible(true);
@@ -2606,6 +2626,8 @@ function App() {
   const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
   const statusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
   const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
+  const activeSpeakerLabel = detectedSpeaker && detectedSpeaker !== '-' && detectedSpeaker !== 'Person' ? detectedSpeaker : '';
+  const recentConversationTurns = conversationTurns.slice(-4);
 
   return (
     <main className="app-shell">
@@ -2698,6 +2720,7 @@ function App() {
             </div>
           )}
           <p className="status-line">{statusText}</p>
+          {activeSpeakerLabel && <p className="speaker-line">{activeSpeakerLabel}</p>}
           {audioReplayAvailable && autoPlayFailed && (
             <button className="play-voice-button compact-voice-action" type="button" onClick={playTranslationAudio} disabled={playing}>
               Play Voice
@@ -2777,6 +2800,17 @@ function App() {
               </button>
             )}
           </article>
+          {recentConversationTurns.length > 0 && (
+            <section className="conversation-timeline" aria-label="Recent conversation">
+              {recentConversationTurns.map((turn) => (
+                <article className="conversation-turn" key={turn.id}>
+                  <strong>{turn.speaker_label}</strong>
+                  <span>{turn.source_text}</span>
+                  <em>{turn.translated_text}</em>
+                </article>
+              ))}
+            </section>
+          )}
           {(clarifyVisible || result?.clarify || (result?.cip_decision?.type === 'clarification')) && (
             <div className="clarify-pill" role="status" aria-live="polite" style={{ marginTop: 10, padding: '10px 12px', border: '1px solid #facc15', background: '#fff3cd', color: '#92400e', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>{clarifyMessage || result?.clarify_message || 'Clarification requested'}</span>

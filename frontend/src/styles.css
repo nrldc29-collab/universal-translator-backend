@@ -479,6 +479,17 @@ p { margin: 0; overflow-wrap: anywhere; }
   line-height: 1.25;
 }
 
+.speaker-line {
+  margin-top: -4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, .1);
+  color: #86efac;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
 .sound-actions {
   display: flex;
   flex-wrap: wrap;
@@ -560,6 +571,48 @@ p { margin: 0; overflow-wrap: anywhere; }
   text-align: center;
 }
 
+.conversation-timeline {
+  display: grid;
+  gap: 8px;
+}
+
+.conversation-turn {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid rgba(125, 211, 252, .16);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, .45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+
+.conversation-turn strong {
+  color: #86efac;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.conversation-turn span,
+.conversation-turn em {
+  display: block;
+  overflow-wrap: anywhere;
+  font-style: normal;
+  line-height: 1.25;
+}
+
+.conversation-turn span {
+  color: rgba(255, 255, 255, .72);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.conversation-turn em {
+  color: #bae6fd;
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .fade-in {
   animation: fadeInUp .25s ease-out;
 }
@@ -638,6 +691,7 @@ p { margin: 0; overflow-wrap: anywhere; }
   .translation-stack { gap: 14px; }
   .transcript-card,
   .translation-card { min-height: 86px; padding: 18px 20px; }
+  .conversation-turn { padding: 9px 11px; }
   .install-action,
   .room-share-action {
     top: 2px;

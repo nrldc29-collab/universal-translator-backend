@@ -57,7 +57,7 @@ metrics = {
     "websocket_connections": 0,
     "websocket_errors": 0,
 }
-RELEASE_ID = "2026-05-12-fast-speech-v12"
+RELEASE_ID = "2026-05-12-room-fast-path-v13"
 logger = logging.getLogger("universal_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 HOP_BY_HOP_HEADERS = {
@@ -79,6 +79,10 @@ class TextTranslationRequest(BaseModel):
     target_language: str = "es"
     tone: str | None = None
     synthesize_audio: bool = False
+    session_id: str | None = None
+    device_id: str | None = None
+    speaker_name: str | None = None
+    speaker_mode: str = "auto"
 
 
 class LoginRequest(BaseModel):
@@ -418,6 +422,35 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                     response_dict["mime_type"] = "audio/wav"
             except Exception as exc:
                 logger.warning("failed_to_embed_text_audio identity=%s error=%s", identity, exc)
+        if request.session_id:
+            semantic_context = {"last_intent": "statement", "conversation_mood": "neutral", "topics": []}
+            speaker_profile = session_registry.resolve_auto_speaker(
+                request.session_id,
+                identity,
+                request.device_id,
+                request.source_language,
+                request.target_language,
+                request.speaker_name,
+            )
+            shared_session = session_registry.record_turn(
+                request.session_id,
+                identity,
+                speaker_profile["speaker"],
+                result.source_text,
+                result.translated_text,
+                semantic_context,
+                device_id=speaker_profile["device_id"],
+                speaker_label=speaker_profile["speaker_label"],
+            )
+            response_dict.update({
+                "speaker": speaker_profile["speaker"],
+                "speaker_label": speaker_profile["speaker_label"],
+                "speaker_index": speaker_profile["speaker_index"],
+                "device_id": speaker_profile["device_id"],
+                "detection": speaker_profile["detection"],
+                "semantic_context": semantic_context,
+                "session": shared_session,
+            })
         return response_dict
     except Exception:
         usage_limiter.track(identity, "errors")
