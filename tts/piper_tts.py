@@ -27,6 +27,26 @@ DEFAULT_VOICES = {
 # (language code ht-HT) instead of eSpeak for natural-sounding audio.
 ESPEAK_LANGUAGES = {"ht"}
 
+# Google Cloud Text-to-Speech is faster than local Piper on the Railway CPU
+# instance. Production uses it by default when GOOGLE_TTS_API_KEY is configured,
+# and falls back to Piper/eSpeak if the request fails.
+GOOGLE_TTS_LANGUAGE_CODES = {
+    "en": "en-US",
+    "es": "es-MX",
+    "ht": "ht-HT",
+    "fr": "fr-FR",
+    "de": "de-DE",
+    "it": "it-IT",
+    "pt": "pt-BR",
+    "nl": "nl-NL",
+    "ru": "ru-RU",
+    "zh": "cmn-CN",
+    "ja": "ja-JP",
+    "ko": "ko-KR",
+    "ar": "ar-XA",
+    "hi": "hi-IN",
+}
+
 
 def _normalize_language(code):
     if not code:
@@ -77,6 +97,19 @@ class PiperTextToSpeech:
         self._loaded[lang] = voice
         return voice
 
+    def _use_cloud_tts(self, lang):
+        normalized = _normalize_language(lang)
+        if not os.getenv("GOOGLE_TTS_API_KEY"):
+            return False
+        if normalized not in GOOGLE_TTS_LANGUAGE_CODES:
+            return False
+        return os.getenv("PREFER_CLOUD_TTS", "1").strip().lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
+
     def _synthesize_google(self, text, out_path, lang):
         """Render audio via Google Cloud Text-to-Speech neural voice.
 
@@ -91,9 +124,13 @@ class PiperTextToSpeech:
             "https://texttospeech.googleapis.com/v1/text:synthesize"
             f"?key={api_key}"
         )
+        language_code = GOOGLE_TTS_LANGUAGE_CODES.get(_normalize_language(lang))
+        if not language_code:
+            raise RuntimeError("Google Cloud TTS language is not configured: %s" % lang)
+
         payload = {
             "input": {"text": text},
-            "voice": {"languageCode": "ht-HT"},
+            "voice": {"languageCode": language_code},
             "audioConfig": {
                 "audioEncoding": "LINEAR16",
                 "sampleRateHertz": 22050,
@@ -151,18 +188,26 @@ class PiperTextToSpeech:
             raise ValueError("Cannot synthesize empty text.")
 
         lang = _normalize_language(language)
+        out_path = Path(output_path)
 
         # Languages with no Piper voice → try Google Cloud TTS first if key is set,
         # otherwise fall back to eSpeak NG (currently: ht).
         if lang in ESPEAK_LANGUAGES:
-            out_path = Path(output_path)
-            if os.getenv("GOOGLE_TTS_API_KEY"):
+            if self._use_cloud_tts(lang):
                 try:
                     return self._synthesize_google(text, out_path, lang)
                 except Exception:
                     # If Google TTS fails for any reason, silently fall back to eSpeak
                     pass
             return self._synthesize_espeak(text, out_path, lang)
+
+        if self._use_cloud_tts(lang):
+            try:
+                return self._synthesize_google(text, out_path, lang)
+            except Exception:
+                # Keep speech reliable if the cloud provider is unavailable or a
+                # language is rejected; local Piper remains the durable fallback.
+                pass
 
         model_path = Path(self._voice_path(lang))
         if not model_path.exists():
@@ -176,7 +221,6 @@ class PiperTextToSpeech:
             model_path = fallback
             lang = "en"
 
-        out_path = Path(output_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         voice = self._load_voice(lang)
