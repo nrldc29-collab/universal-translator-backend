@@ -73,11 +73,21 @@ const FAST_SPEECH_TIMEOUT_MS = Number(import.meta.env.VITE_FAST_SPEECH_TIMEOUT_M
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
 const EXPECTED_BACKEND_RELEASE = '2026-05-12-room-fast-path-v13';
-const FRONTEND_BUILD_ID = 'fast-timeout-v15';
+const FRONTEND_BUILD_ID = 'visible-latency-v16';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
 registerServiceWorker();
+
+function blankLatencyStats() {
+  return { mic_to_backend: '-', backend_response: '-', first_audio: '-', end_to_end: '-' };
+}
+
+function formatLatencyValue(value) {
+  if (value === null || value === undefined || value === '' || value === '-') return '-';
+  if (typeof value === 'number' && Number.isFinite(value)) return `${Math.max(0, Math.round(value))}ms`;
+  return String(value);
+}
 
 function fallbackSpeakerLabel(speaker) {
   const value = String(speaker || '').trim();
@@ -253,7 +263,7 @@ function App() {
   const [interpreterMode, setInterpreterMode] = useState(false);
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
-  const [latencyStats, setLatencyStats] = useState({ mic_to_backend: '-', backend_response: '-', first_audio: '-' });
+  const [latencyStats, setLatencyStats] = useState(() => blankLatencyStats());
   const [authToken, setAuthToken] = useState(INITIAL_TOKEN);
   const [username, setUsername] = useState('demo');
   const [password, setPassword] = useState('demo');
@@ -947,6 +957,7 @@ function App() {
       updateLatency('backend_response', Math.round(performance.now() - requestStartedAt));
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Speech translation failed'));
       const data = await response.json();
+      updateLatency('end_to_end', Math.round(performance.now() - capturedAt));
       if (data.audio_base64) updateLatency('first_audio', Math.round(performance.now() - capturedAt));
       setResult(data);
       setLiveTranslation(data.translated_text || '');
@@ -968,7 +979,11 @@ function App() {
       window.clearTimeout(timeoutId);
       const timedOut = error?.name === 'AbortError';
       if (timedOut) {
-        setLatencyStats((current) => ({ ...current, backend_response: `${FAST_SPEECH_TIMEOUT_MS}ms+` }));
+        setLatencyStats((current) => ({
+          ...current,
+          backend_response: `${FAST_SPEECH_TIMEOUT_MS}ms+`,
+          end_to_end: `${FAST_SPEECH_TIMEOUT_MS}ms+`,
+        }));
         setPipelineStage('Translation timed out');
         setStatus('Network slow. Ready to try again.');
         resumeInterpreterAfterPlayback('Ready to listen');
@@ -1224,7 +1239,7 @@ function App() {
   }
 
   function updateLatency(metric, ms) {
-    setLatencyStats((current) => ({ ...current, [metric]: `${ms}ms` }));
+    setLatencyStats((current) => ({ ...current, [metric]: formatLatencyValue(ms) }));
   }
 
   function resetStreamState() {
@@ -1433,7 +1448,7 @@ function App() {
     setMicPermission('available');
     setInterpreterMode(true);
     setDetectedSpeaker('Phone speaker');
-    setLatencyStats({ mic_to_backend: '-', backend_response: '-', first_audio: '-' });
+    setLatencyStats(blankLatencyStats());
     setResult(null);
     setPartialTranscript('');
     setLiveTranslation('');
@@ -1901,7 +1916,7 @@ function App() {
     requestWakeLock();
     setInterpreterMode(Boolean(cleanOptions.interpreter || selectedSpeakerMode === 'auto'));
     setDetectedSpeaker('-');
-    setLatencyStats({ mic_to_backend: '-', backend_response: '-', first_audio: '-' });
+    setLatencyStats(blankLatencyStats());
     firstAudioSeenRef.current = false;
     streamStartedAtRef.current = performance.now();
     streamReconnectRef.current = {
@@ -2674,6 +2689,13 @@ function App() {
   const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
   const activeSpeakerLabel = detectedSpeaker && detectedSpeaker !== '-' && detectedSpeaker !== 'Person' ? detectedSpeaker : '';
   const recentConversationTurns = conversationTurns.slice(-4);
+  const latencyItems = [
+    { label: 'Total', value: latencyStats.end_to_end },
+    { label: 'Backend', value: latencyStats.backend_response },
+    { label: 'Audio', value: latencyStats.first_audio },
+  ].filter((item) => item.value && item.value !== '-');
+  const latencyTotalMs = Number.parseInt(String(latencyStats.end_to_end || ''), 10);
+  const latencyTone = Number.isFinite(latencyTotalMs) && latencyTotalMs <= 1000 ? 'fast' : Number.isFinite(latencyTotalMs) ? 'slow' : 'pending';
 
   return (
     <main className="app-shell">
@@ -2767,6 +2789,16 @@ function App() {
           )}
           <p className="status-line">{statusText}</p>
           {activeSpeakerLabel && <p className="speaker-line">{activeSpeakerLabel}</p>}
+          {latencyItems.length > 0 && (
+            <div className="latency-strip" data-speed={latencyTone} aria-label="Translation timing">
+              {latencyItems.map((item) => (
+                <span className="latency-chip" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </span>
+              ))}
+            </div>
+          )}
           {audioReplayAvailable && autoPlayFailed && (
             <button className="play-voice-button compact-voice-action" type="button" onClick={playTranslationAudio} disabled={playing}>
               Play Voice

@@ -1,4 +1,4 @@
-const SW_VERSION = 'v17-fast-timeout';
+const SW_VERSION = 'v18-visible-latency';
 const SW_RELOAD_KEY = `translator_sw_reloaded_${SW_VERSION}`;
 
 function reloadForUpdatedServiceWorker() {

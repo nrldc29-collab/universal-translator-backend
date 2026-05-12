@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v17-fast-timeout';
+const CACHE_VERSION = 'v18-visible-latency';
 const CACHE_NAME = `universal-translator-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `universal-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
