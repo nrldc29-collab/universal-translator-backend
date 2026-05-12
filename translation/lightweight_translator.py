@@ -1,4 +1,13 @@
 import string
+import unicodedata
+
+
+def _normalize_text(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", text.lower())
+    ascii_text = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    stripped = ascii_text.translate(str.maketrans("", "", string.punctuation))
+    stripped = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in stripped)
+    return " ".join(stripped.strip().split())
 
 
 class LightweightTranslator:
@@ -7,24 +16,24 @@ class LightweightTranslator:
             ("en", "es"): {
                 "hello": "hola",
                 "hello world": "hola mundo",
-                "good morning": "buenos días",
+                "good morning": "buenos d\u00edas",
                 "good night": "buenas noches",
                 "thank you": "gracias",
-                "how are you": "cómo estás",
-                "hello how are you": "hola, ¿cómo estás?",
+                "how are you": "c\u00f3mo est\u00e1s",
+                "hello how are you": "Hola, \u00bfc\u00f3mo est\u00e1s?",
                 "i need help": "necesito ayuda",
-                "where is the bathroom": "dónde está el baño",
+                "where is the bathroom": "d\u00f3nde est\u00e1 el ba\u00f1o",
             },
             ("es", "en"): {
                 "hola": "hello",
                 "hola mundo": "hello world",
-                "buenos días": "good morning",
+                "buenos dias": "good morning",
                 "buenas noches": "good night",
                 "gracias": "thank you",
-                "cómo estás": "how are you",
-                "hola cómo estás": "hello, how are you?",
+                "como estas": "how are you",
+                "hola como estas": "hello, how are you?",
                 "necesito ayuda": "i need help",
-                "dónde está el baño": "where is the bathroom",
+                "donde esta el bano": "where is the bathroom",
             },
         }
 
@@ -33,8 +42,7 @@ class LightweightTranslator:
             return ""
         source = source_language or "en"
         target = target_language or "es"
-        normalized = " ".join(text.lower().translate(str.maketrans("", "", string.punctuation)).strip().split())
-        phrase = self._phrases.get((source, target), {}).get(normalized)
+        phrase = self._phrases.get((source, target), {}).get(_normalize_text(text))
         if phrase:
             return phrase
         if source == target:
