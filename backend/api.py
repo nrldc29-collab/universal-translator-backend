@@ -409,7 +409,16 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         )
         observability.observe_latency("text_translation", time() - started_at)
         observability.record_event("text_translation", identity=identity, latency_seconds=time() - started_at)
-        return result.__dict__
+        response_dict = result.__dict__
+        if result.audio_output_path:
+            try:
+                audio_bytes = Path(result.audio_output_path).read_bytes()
+                if len(audio_bytes) >= 100:
+                    response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
+                    response_dict["mime_type"] = "audio/wav"
+            except Exception as exc:
+                logger.warning("failed_to_embed_text_audio identity=%s error=%s", identity, exc)
+        return response_dict
     except Exception:
         usage_limiter.track(identity, "errors")
         observability.increment("translation_failures_total")
