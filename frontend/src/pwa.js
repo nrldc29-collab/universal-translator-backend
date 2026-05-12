@@ -1,10 +1,23 @@
+const SW_VERSION = 'v11-mobile-clean';
+const SW_RELOAD_KEY = `translator_sw_reloaded_${SW_VERSION}`;
+
+function reloadForUpdatedServiceWorker() {
+  if (sessionStorage.getItem(SW_RELOAD_KEY) === '1') return;
+  sessionStorage.setItem(SW_RELOAD_KEY, '1');
+  window.location.reload();
+}
+
+function activateWaitingWorker(registration) {
+  if (registration.waiting) {
+    registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+  }
+}
+
 export function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (sessionStorage.getItem('translator_sw_reloaded') === '1') return;
-    sessionStorage.setItem('translator_sw_reloaded', '1');
-    window.location.reload();
+    reloadForUpdatedServiceWorker();
   });
 
   window.addEventListener('load', () => {
@@ -12,14 +25,12 @@ export function registerServiceWorker() {
       .register('/sw.js')
       .then((registration) => {
         registration.update().catch(() => {});
-        if (registration.waiting) {
-          registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-        }
+        activateWaitingWorker(registration);
         registration.addEventListener('updatefound', () => {
           const worker = registration.installing;
           worker?.addEventListener('statechange', () => {
             if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-              worker.postMessage({ type: 'SKIP_WAITING' });
+              activateWaitingWorker(registration);
             }
           });
         });

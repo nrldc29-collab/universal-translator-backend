@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeftRight, Download } from 'lucide-react';
+import { ArrowLeftRight, Download, Mic } from 'lucide-react';
 import './styles.css';
 import { registerServiceWorker } from './pwa';
 
@@ -62,6 +62,7 @@ const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
 const EXPECTED_BACKEND_RELEASE = '2026-05-10-haitian-creole-v10';
 const FRONTEND_BUILD_ID = 'haitian-creole-v10';
+const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
 registerServiceWorker();
@@ -187,7 +188,7 @@ function App() {
     setTargetLanguageState(next);
     try { localStorage.setItem('targetLanguage', next); } catch {}
   };
-  const [text, setText] = useState('Hello, how are you?');
+  const [text, setText] = useState('');
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState('Ready');
   const [connectionStatus, setConnectionStatus] = useState('checking');
@@ -254,6 +255,11 @@ function App() {
   const [updateAvailable, setUpdateAvailable] = useState(null);
   const [micLevel, setMicLevel] = useState(0);
   const [copiedKey, setCopiedKey] = useState(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [ocrText, setOcrText] = useState('');
+  const [clarifyVisible, setClarifyVisible] = useState(false);
+  const [clarifyMessage, setClarifyMessage] = useState('');
+  const [reconnectToastVisible, setReconnectToastVisible] = useState(false);
 
   useEffect(() => {
     try {
@@ -314,6 +320,14 @@ function App() {
   const warmupOscRef = useRef(null);
   const warmupGainRef = useRef(null);
   const streamSafetyTimeoutRef = useRef(null);
+  const currentTtsFinishRef = useRef(null);
+  const canplayTimeoutRef = useRef(null);
+  const silenceDetectRafRef = useRef(0);
+  const silenceSeenSpeechRef = useRef(false);
+  const silenceStartRef = useRef(0);
+  const resumeAfterTtsRef = useRef(false);
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
 
   function haptic(pattern = 12) {
     window.navigator?.vibrate?.(pattern);
@@ -322,7 +336,9 @@ function App() {
   async function ensureAudioContext() {
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextCtor) return null;
-    if (!audioContextRef.current) audioContextRef.current = new AudioContextCtor();
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+      audioContextRef.current = new AudioContextCtor();
+    }
     const state = audioContextRef.current.state;
     setAudioContextState(state);
     if (state === 'suspended') {
@@ -374,6 +390,24 @@ function App() {
     checkRelease();
     const interval = window.setInterval(checkRelease, 60000);
     return () => { cancelled = true; window.clearInterval(interval); };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopAudioWarmup();
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        try { audioContextRef.current.close(); } catch (e) {}
+      }
+      if (persistentAudioRef.current) {
+        try { document.body.removeChild(persistentAudioRef.current); } catch (e) {}
+        persistentAudioRef.current = null;
+        mobileAudioUnlockedRef.current = false;
+      }
+      if (canplayTimeoutRef.current) {
+        window.clearTimeout(canplayTimeoutRef.current);
+        canplayTimeoutRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -579,35 +613,42 @@ function App() {
     // After priming, we can play unmuted audio from the same element.
     audio.muted = true;
     audio.volume = 1;
+    let unlockPromise;
     try {
-      const p = audio.play();
-      if (p && p.then) {
-        p.then(() => {
-          console.log('Audio unlocked successfully (muted priming)');
-        }).catch((e) => {
-          console.warn('Audio unlock play failed:', e);
-        });
-      }
+      unlockPromise = audio.play();
     } catch (e) {
       console.warn('Audio unlock play threw:', e);
+      try { URL.revokeObjectURL(silentUrl); } catch (e) {}
+      return;
     }
-    mobileAudioUnlockedRef.current = true;
-    setMobileAudioUnlocked(true);
+    if (unlockPromise && unlockPromise.then) {
+      unlockPromise.then(() => {
+        console.log('Audio unlocked successfully (muted priming)');
+        mobileAudioUnlockedRef.current = true;
+        setMobileAudioUnlocked(true);
+      }).catch((e) => {
+        console.warn('Audio unlock play failed:', e);
+        // Do NOT mark as unlocked — allow retry on next user gesture
+      }).finally(() => {
+        try { URL.revokeObjectURL(silentUrl); } catch (e) {}
+      });
+    } else {
+      // Old browsers without promise-based play()
+      mobileAudioUnlockedRef.current = true;
+      setMobileAudioUnlocked(true);
+      try { URL.revokeObjectURL(silentUrl); } catch (e) {}
+    }
   }
 
   async function unlockMobileAudio() {
-    const context = await ensureAudioContext();
-    if (context) {
-      if (context.state === 'suspended') {
-        await context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
-      }
-      const buffer = context.createBuffer(1, 1, 22050);
-      const source = context.createBufferSource();
-      source.buffer = buffer;
-      source.connect(context.destination);
-      source.start(0);
-    }
+    // CRITICAL: synchronousAudioUnlock must be called SYNCHRONOUSLY before any
+    // await to preserve the iOS user gesture context. An await before play()
+    // causes the gesture to expire and autoplay permission to be denied.
     synchronousAudioUnlock();
+    const context = await ensureAudioContext();
+    if (context && context.state === 'suspended') {
+      await context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
+    }
   }
 
   async function ensureAudioUnlocked() {
@@ -689,29 +730,40 @@ function App() {
       await ensureAudioUnlocked();
       setPipelineStage('Testing microphone');
       setStatus('Tap to record, then playback...');
-      
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const mediaRecorder = createAudioRecorder(stream);
       const chunks = [];
-      
+
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunks.push(event.data);
       };
-      
+
       mediaRecorder.onstop = () => {
         stream.getTracks().forEach((track) => track.stop());
-        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType || 'audio/webm' });
         const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
+        const audio = document.createElement('audio');
+        audio.setAttribute('playsinline', '');
+        audio.setAttribute('webkit-playsinline', '');
         audio.preload = 'auto';
         audio.playsInline = true;
         audio.muted = false;
         audio.volume = 1;
-        audio.onended = () => {
+        audio.crossOrigin = 'anonymous';
+        audio.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
+        document.body.appendChild(audio);
+        audio.src = url;
+        const cleanup = () => {
+          try { document.body.removeChild(audio); } catch (e) {}
           URL.revokeObjectURL(url);
+        };
+        audio.onended = () => {
+          cleanup();
           setLastAudioError(null);
         };
         audio.onerror = () => {
+          cleanup();
           setPipelineStage('Mic playback failed');
           setStatus('Mic playback failed');
           setLastAudioError({ type: 'mic_playback', message: 'Audio element error' });
@@ -720,16 +772,17 @@ function App() {
           setPipelineStage('Mic test played');
           setStatus('Mic test: recording played back');
         }).catch((error) => {
+          cleanup();
           setPipelineStage('Mic playback blocked');
           setStatus('Mic playback blocked: ' + (error?.name || 'unknown'));
           setLastAudioError({ type: 'mic_playback_blocked', name: error?.name, message: error?.message });
         });
       };
-      
+
       mediaRecorder.start();
       setPipelineStage('Recording...');
       setStatus('Recording 1 second...');
-      
+
       setTimeout(() => {
         mediaRecorder.stop();
       }, 1000);
@@ -753,11 +806,70 @@ function App() {
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Text translation failed'));
       const data = await response.json();
       setResult(data);
+      if (data.clarify) {
+        setStatus(data.clarify_message || 'Clarification requested');
+        setLiveTranslation(data.translated_text || '');
+        setClarifyMessage(data.clarify_message || 'Clarification requested');
+        setClarifyVisible(true);
+      } else {
       setStatus('Text translated');
+      }
     } catch (error) {
       setStatus(error.message || 'Text translation failed');
     } finally {
       setProcessing(false);
+    }
+  }
+
+  async function startCamera() {
+    try {
+      if (streamRef.current) return;
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      streamRef.current = stream;
+      const el = videoRef.current || document.createElement('video');
+      el.setAttribute('playsinline', '');
+      el.muted = true;
+      el.srcObject = stream;
+      await el.play();
+      videoRef.current = el;
+      setCameraActive(true);
+      setStatus('Camera ready');
+    } catch (e) {
+      setStatus('Camera permission denied');
+    }
+  }
+
+  async function stopCamera() {
+    try { streamRef.current?.getTracks()?.forEach((t) => t.stop()); } catch {}
+    streamRef.current = null;
+    setCameraActive(false);
+  }
+
+  async function captureAndTranslateFrame() {
+    if (!videoRef.current) { setStatus('Open camera first'); return; }
+    try {
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 360;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      const form = new FormData();
+      form.append('image', blob, 'frame.png');
+      form.append('source_language', 'auto');
+      form.append('target_language', targetLanguage);
+      form.append('synthesize_audio', 'false');
+      setStatus('OCR translating...');
+      const resp = await fetch(`${API_URL}/translate/image`, { method: 'POST', headers: authHeaders(authToken), body: form });
+      if (!resp.ok) throw new Error(await responseErrorMessage(resp, 'OCR failed'));
+      const data = await resp.json();
+      setOcrText(data.ocr_text || '');
+      setResult({ source_text: data.ocr_text || '', translated_text: data.translated_text || '' });
+      setLiveTranslation(data.translated_text || '');
+      setStatus('Image translated');
+    } catch (e) {
+      setStatus(e.message || 'OCR failed');
     }
   }
 
@@ -961,11 +1073,24 @@ function App() {
     streamFinalizePendingRef.current = false;
     streamRecordingStartedAtRef.current = 0;
     holdToTalkReleasePendingRef.current = false;
+    audioSendQueueRef.current = [];
+    ttsQueueRef.current = [];
+    setTtsQueueLength(0);
+    setTtsChunksBuffer([]);
+    if (currentTtsFinishRef.current) {
+      const fn = currentTtsFinishRef.current;
+      currentTtsFinishRef.current = null;
+      fn();
+    }
+    if (canplayTimeoutRef.current) {
+      window.clearTimeout(canplayTimeoutRef.current);
+      canplayTimeoutRef.current = null;
+    }
   }
 
   function activePacketMs() {
     if (lowBandwidthMode) return 500;
-    if (isIosOrSafariRecorder()) return Math.max(STREAM_PACKET_MS, 400);
+    if (isIosOrSafariRecorder()) return EXPERIMENTAL_IOS_STREAMING ? 140 : Math.max(STREAM_PACKET_MS, 400);
     return Math.min(STREAM_PACKET_MS, 100);
   }
 
@@ -1107,7 +1232,7 @@ function App() {
       return;
     }
     synchronousAudioUnlock();
-    if (isIosOrSafariRecorder()) {
+    if (isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING) {
       haptic(recording ? 8 : 14);
       if (recording) stopRecording();
       else startRecording();
@@ -1121,7 +1246,7 @@ function App() {
   async function handleMicPointerDown(event) {
     console.log('MIC BUTTON CLICKED');
     synchronousAudioUnlock();
-    if (isIosOrSafariRecorder()) return;
+    if (isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING) return;
     if (socketRef.current || processing || playing) return;
     haptic(8);
     setInstantListening(true);
@@ -1251,6 +1376,42 @@ function App() {
     setMicLevel(0);
   }
 
+  function stopSilenceDetector() {
+    if (silenceDetectRafRef.current) {
+      cancelAnimationFrame(silenceDetectRafRef.current);
+      silenceDetectRafRef.current = 0;
+    }
+    silenceSeenSpeechRef.current = false;
+    silenceStartRef.current = 0;
+  }
+
+  function startSilenceDetector() {
+    stopSilenceDetector();
+    const tick = () => {
+      if (recordingStoppedRef.current || mediaRecorderRef.current?.state !== 'recording') {
+        stopSilenceDetector();
+        return;
+      }
+      const level = micMeterRef.current?.smoothed || 0;
+      if (!silenceSeenSpeechRef.current && level > 0.12) {
+        silenceSeenSpeechRef.current = true;
+        silenceStartRef.current = 0;
+      } else if (silenceSeenSpeechRef.current && level < 0.045) {
+        if (!silenceStartRef.current) {
+          silenceStartRef.current = performance.now();
+        } else if (performance.now() - silenceStartRef.current > 260) {
+          stopSilenceDetector();
+          try { stopRecording(); } catch (e) {}
+          return;
+        }
+      } else if (level >= 0.045) {
+        silenceStartRef.current = 0;
+      }
+      silenceDetectRafRef.current = requestAnimationFrame(tick);
+    };
+    silenceDetectRafRef.current = requestAnimationFrame(tick);
+  }
+
   async function startRecording() {
     console.log('startRecording: called');
     if (recording || processing) {
@@ -1283,15 +1444,32 @@ function App() {
       console.log('MOBILE AUDIO SIZE:', event.data.size);
       if (event.data.size > 0) chunksRef.current.push(event.data);
     };
-    recorder.onstop = () => { stopMicMeter(); uploadRecording(); };
+    recorder.onstop = () => {
+      stopMicMeter();
+      uploadRecording().catch((err) => {
+        console.error('uploadRecording error:', err);
+        setProcessing(false);
+        setStatus('Upload failed');
+      });
+    };
     startMicMeter(stream);
-    if (isIosOrSafariRecorder()) {
-      recorder.start();
-    } else {
-      recorder.start(250);
+    try {
+      if (isIosOrSafariRecorder()) {
+        recorder.start();
+      } else {
+        recorder.start(250);
+      }
+    } catch (startErr) {
+      console.error('Recorder start failed in startRecording:', startErr);
+      stopTracks(stream);
+      mediaRecorderRef.current = null;
+      setStatus('Recording not supported on this device');
+      setPipelineStage('Recording unsupported');
+      return;
     }
     setRecording(true);
     setStatus('Listening...');
+    startSilenceDetector();
   }
 
   function stopRecording() {
@@ -1300,9 +1478,10 @@ function App() {
       console.log('stopRecording: already stopped, skipping');
       return;
     }
+    stopSilenceDetector();
     recordingStoppedRef.current = true;
-    mediaRecorderRef.current?.stop();
-    mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+    mediaRecorderRef.current?.stream?.getTracks().forEach((track) => track.stop());
     setRecording(false);
     setProcessing(true);
     setStatus('Processing...');
@@ -1335,10 +1514,18 @@ function App() {
       console.log('UPLOAD: response data keys', Object.keys(data));
       console.log('UPLOAD: translated_text', data.translated_text ? 'yes' : 'no');
       console.log('UPLOAD: audio_base64 length', data.audio_base64?.length || 0);
+      if (data.clarify) {
+        setResult(data);
+        setStatus(data.clarify_message || 'Clarification requested');
+        setLiveTranslation(data.translated_text || '');
+        setClarifyMessage(data.clarify_message || 'Clarification requested');
+        setClarifyVisible(true);
+        return;
+      }
       setResult(data);
       setStatus(data.translated_text ? (data.audio_base64 ? 'Playing...' : 'Audio translated') : 'No clear speech recognized');
       if (data.audio_base64) {
-        ensureAudioUnlocked().catch((e) => console.warn('uploadRecording audio unlock failed:', e));
+        await ensureAudioUnlocked().catch((e) => console.warn('uploadRecording audio unlock failed:', e));
         const binary = atob(data.audio_base64);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
@@ -1360,8 +1547,9 @@ function App() {
         setAudioReplayAvailable(true);
         setPlaying(true);
         console.log('UPLOAD: calling playTtsItem');
-        // iOS needs a small delay after mic release before playback works
-        const playDelay = isIosOrSafariRecorder() ? 150 : 0;
+        // iOS needs a delay after mic release for the audio session to transition
+        // from playAndRecord back to playback; 150ms is often too short.
+        const playDelay = isIosOrSafariRecorder() ? 400 : 0;
         window.setTimeout(() => {
           console.log('UPLOAD: starting playback after', playDelay, 'ms delay');
           playTtsItem(item, { revokeOnFinish: false, manual: true, onEnd: () => {
@@ -1433,8 +1621,10 @@ function App() {
     const socket = new WebSocket(socketUrl);
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
-    recorder.ondataavailable = async (event) => {
-      await sendRecorderChunk(socket, event, recorder);
+    recorder.ondataavailable = (event) => {
+      sendRecorderChunk(socket, event, recorder).catch((err) => {
+        console.error('sendRecorderChunk error:', err);
+      });
     };
     recorder.onstop = () => {
       if (streamFinalizePendingRef.current && socket.readyState === WebSocket.OPEN) {
@@ -1481,7 +1671,17 @@ function App() {
       startStreamHeartbeat(socket);
       streamRecorderRef.current = recorder;
       console.log('STEP 9: starting recorder');
-      recorder.start(activePacketMs());
+      try {
+        recorder.start(activePacketMs());
+      } catch (startErr) {
+        console.error('Recorder start failed:', startErr);
+        stopTracks(stream);
+        socket.close();
+        socketRef.current = null;
+        setStatus('Recording not supported on this device');
+        setPipelineStage('Recording unsupported');
+        return;
+      }
       startMicMeter(stream);
       streamRecordingStartedAtRef.current = performance.now();
       console.log('STEP 10: recorder started, state=', recorder.state);
@@ -1504,6 +1704,12 @@ function App() {
       }
       if (data.type === 'latency') {
         updateLatency(data.metric, data.ms);
+      }
+      if (data.type === 'clarify') {
+        setPipelineStage('Clarification needed');
+        setStatus(data.message || 'Clarification requested');
+        setClarifyMessage(data.message || 'Clarification requested');
+        setClarifyVisible(true);
       }
       if (data.type === 'stage') {
         setPipelineStage(data.message);
@@ -1536,6 +1742,11 @@ function App() {
       if (data.type === 'tts_start') {
         setPlaying(true);
         setPipelineStage(`Streaming voice: 0/${data.chunks}`);
+        if (isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING) {
+          // Pause mic capture to route audio to speaker reliably on iOS
+          resumeAfterTtsRef.current = true;
+          finalizeCurrentStream('Playing voice...', { delay: false });
+        }
       }
       if (data.type === 'tts_audio_chunk') {
         if (!firstAudioSeenRef.current) {
@@ -1583,6 +1794,14 @@ function App() {
           return [];
         });
         setTtsQueueLength(0);
+        if (resumeAfterTtsRef.current && (isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING)) {
+          resumeAfterTtsRef.current = false;
+          window.setTimeout(() => {
+            if (!socketRef.current) {
+              toggleStreaming({ interpreter: true, speakerMode: 'auto' });
+            }
+          }, 250);
+        }
       }
       if (data.type === 'error') {
         console.log('WS ERROR MESSAGE:', data);
@@ -1627,7 +1846,10 @@ function App() {
       setWsDebug((current) => ({ ...current, error: 'socket error' }));
       setStatus('Stream connection error');
       setPipelineStage('Connection error');
+      releaseWakeLock();
       resetStreamState();
+      if (streamRecorderRef.current?.state === 'recording') streamRecorderRef.current.stop();
+      else stopTracks(stream);
     };
     socket.onclose = (event) => {
       setWsDebug((current) => ({
@@ -1635,6 +1857,7 @@ function App() {
         close: `${event.code || 'no-code'} ${event.reason || 'no-reason'} clean:${event.wasClean ? 1 : 0}`,
       }));
       clearStreamHeartbeat();
+      releaseWakeLock();
       resetStreamState();
       streamFinalizePendingRef.current = false;
       holdToTalkReleasePendingRef.current = false;
@@ -1690,6 +1913,11 @@ function App() {
 
   function playTtsItem(item, { revokeOnFinish = true, manual = false, onEnd } = {}) {
     if (!item) return;
+    if (currentTtsFinishRef.current) {
+      const prevFinish = currentTtsFinishRef.current;
+      currentTtsFinishRef.current = null;
+      prevFinish();
+    }
     console.log('playTtsItem: starting playback, manual=', manual, 'mimeType=', item.mimeType, 'buffer size=', item.buffer?.byteLength || 0);
     ttsPlayingRef.current = true;
     setTtsPlaying(true);
@@ -1697,7 +1925,11 @@ function App() {
     setPipelineStage(manual ? 'Playing translation voice' : 'Playing voice');
     setStatus(manual ? 'Playing translation voice...' : 'Playing voice...');
     haptic(6);
+    let finished = false;
     const finish = () => {
+      if (finished) return;
+      finished = true;
+      currentTtsFinishRef.current = null;
       if (revokeOnFinish) URL.revokeObjectURL(item.url);
       ttsPlayingRef.current = false;
       setTtsPlaying(false);
@@ -1705,11 +1937,12 @@ function App() {
       if (manual) {
         setPlaying(false);
         setPipelineStage('Voice played');
-        setStatus('Voice played');
+        if (!onEnd) setStatus('Voice played');
         return;
       }
       playNextTtsChunk();
     };
+    currentTtsFinishRef.current = finish;
     const playWithHtmlAudio = () => {
       console.log('playWithHtmlAudio: using persistent audio element');
       if (!item?.url) {
@@ -1725,10 +1958,16 @@ function App() {
         audio.oncanplay = null;
         audio.oncanplaythrough = null;
         audio.onloadedmetadata = null;
+        if (canplayTimeoutRef.current) {
+          window.clearTimeout(canplayTimeoutRef.current);
+          canplayTimeoutRef.current = null;
+        }
+        audio.src = '';
         audio.pause();
         audio.currentTime = 0;
         audio.src = item.url;
         audio.preload = 'auto';
+        try { audio.load(); } catch (e) {}
         audio.muted = false;
         audio.volume = 1;
         audio.onended = finish;
@@ -1739,7 +1978,10 @@ function App() {
           finish();
         };
 
+        let doPlayCalled = false;
         const doPlay = () => {
+          if (doPlayCalled) return;
+          doPlayCalled = true;
           console.log('Audio readyState:', audio.readyState, 'paused:', audio.paused, 'muted:', audio.muted, 'volume:', audio.volume, 'duration:', audio.duration);
           audio.play().then(() => {
             console.log('HTML audio playing successfully (persistent element)');
@@ -1749,13 +1991,22 @@ function App() {
             // Nuclear fallback: try a completely fresh audio element
             console.log('Trying nuclear fallback with fresh audio element');
             const fresh = new Audio(item.url);
+            fresh.setAttribute('playsinline', '');
+            fresh.setAttribute('webkit-playsinline', '');
             fresh.preload = 'auto';
             fresh.playsInline = true;
             fresh.muted = false;
             fresh.volume = 1;
             fresh.crossOrigin = 'anonymous';
-            fresh.onended = finish;
+            fresh.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
+            document.body.appendChild(fresh);
+            fresh.onended = () => {
+              finish();
+              try { document.body.removeChild(fresh); } catch (e) {}
+            };
             fresh.onerror = (err2) => {
+              try { document.body.removeChild(fresh); } catch (e) {}
+              finish();
               console.error('Fresh audio element also failed:', err2);
               ttsPlayingRef.current = false;
               setPlaying(false);
@@ -1769,6 +2020,8 @@ function App() {
               setLastAudioError(null);
             }).catch((err2) => {
               console.error('Fresh audio element play failed:', err2);
+              try { document.body.removeChild(fresh); } catch (e) {}
+              finish();
               ttsPlayingRef.current = false;
               setPlaying(false);
               setAudioReplayAvailable(true);
@@ -1788,12 +2041,17 @@ function App() {
           audio.oncanplay = () => {
             console.log('Audio canplay event fired, readyState:', audio.readyState);
             audio.oncanplay = null;
+            if (canplayTimeoutRef.current) {
+              window.clearTimeout(canplayTimeoutRef.current);
+              canplayTimeoutRef.current = null;
+            }
             doPlay();
           };
           // Timeout fallback in case canplay never fires
-          window.setTimeout(() => {
+          canplayTimeoutRef.current = window.setTimeout(() => {
             if (audio.readyState < 2) {
               console.warn('Audio canplay timeout, readyState:', audio.readyState, 'error:', audio.error?.code);
+              audio.oncanplay = null;
               // Try playing anyway as a last resort
               doPlay();
             }
@@ -1804,13 +2062,21 @@ function App() {
 
       // Fallback for browsers that don't need the persistent element trick
       const fallbackAudio = new Audio(item.url);
+      fallbackAudio.setAttribute('playsinline', '');
+      fallbackAudio.setAttribute('webkit-playsinline', '');
       fallbackAudio.preload = 'auto';
       fallbackAudio.playsInline = true;
       fallbackAudio.muted = false;
       fallbackAudio.volume = 1;
       fallbackAudio.crossOrigin = 'anonymous';
-      fallbackAudio.onended = finish;
+      fallbackAudio.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
+      document.body.appendChild(fallbackAudio);
+      fallbackAudio.onended = () => {
+        finish();
+        try { document.body.removeChild(fallbackAudio); } catch (e) {}
+      };
       fallbackAudio.onerror = (error) => {
+        try { document.body.removeChild(fallbackAudio); } catch (e) {}
         console.error('HTML audio error:', error);
         setLastAudioError({ type: 'tts_playback', message: `HTML audio error: ${error}` });
         finish();
@@ -1820,6 +2086,8 @@ function App() {
         setLastAudioError(null);
       }).catch((error) => {
         console.error('HTML audio play failed:', error);
+        try { document.body.removeChild(fallbackAudio); } catch (e) {}
+        finish();
         ttsPlayingRef.current = false;
         setPlaying(false);
         setAudioReplayAvailable(true);
@@ -1852,10 +2120,15 @@ function App() {
             source.buffer = audioBuffer;
             source.connect(context.destination);
             source.onended = () => {
+              window.clearTimeout(sourceSafetyTimeout);
               setLastAudioError(null);
               finish();
             };
             source.start(0);
+            const sourceSafetyTimeout = window.setTimeout(() => {
+              console.warn('AudioBufferSource safety timeout fired, forcing finish');
+              finish();
+            }, Math.ceil(audioBuffer.duration * 1000) + 1000);
             console.log('playTtsItem: AudioBufferSource started');
           })
           .catch((error) => {
@@ -1884,7 +2157,7 @@ function App() {
 
   function playNextTtsChunk() {
     if (ttsPlayingRef.current || ttsQueueRef.current.length === 0) {
-      if (ttsQueueRef.current.length === 0) {
+      if (!ttsPlayingRef.current && ttsQueueRef.current.length === 0 && playing) {
         setPlaying(false);
         setTtsQueueLength(0);
         setPipelineStage('Ready to listen');
@@ -1951,9 +2224,11 @@ function App() {
       return;
     }
     refs.recorder = recorder;
-    recorder.ondataavailable = async (event) => {
+    recorder.ondataavailable = (event) => {
       console.log('MOBILE AUDIO SIZE:', event.data.size);
-      await sendRecorderChunk(socket, event, recorder);
+      sendRecorderChunk(socket, event, recorder).catch((err) => {
+        console.error('Duplex sendRecorderChunk error:', err);
+      });
     };
     recorder.onstop = () => {
       if (refs.finalizePending && socket.readyState === WebSocket.OPEN) {
@@ -2061,6 +2336,7 @@ function App() {
       updateDuplexSpeaker(speaker, { active: false, stage: 'Connection error' });
       setConversationBrain('WebSocket connection error');
       resetStreamState();
+      setReconnectToastVisible(true);
     };
     socket.onclose = () => {
       updateDuplexSpeaker(speaker, { active: false });
@@ -2071,6 +2347,8 @@ function App() {
       if (refs.shouldReconnect && !refs.manualClose) {
         updateDuplexSpeaker(speaker, { stage: 'Reconnecting...' });
         window.setTimeout(() => toggleDuplexSpeaker(speaker), 1500);
+      } else {
+        setReconnectToastVisible(true);
       }
     };
   }
@@ -2078,6 +2356,8 @@ function App() {
 
   const sourceText = partialTranscript || result?.source_text || 'Ready to listen';
   const translatedText = liveTranslation || result?.translated_text || 'Translation appears here';
+  const hasSourceText = Boolean(partialTranscript || result?.source_text);
+  const hasTranslatedText = Boolean(liveTranslation || result?.translated_text);
   const perceivedListening = streaming || instantListening;
   const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
   const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
@@ -2097,6 +2377,16 @@ function App() {
             } catch (err) { console.warn('cache clear failed', err); }
             window.location.reload();
           }} style={{ background: '#ffffff', color: '#1d4ed8', border: 'none', padding: '6px 14px', borderRadius: 999, fontWeight: 700, cursor: 'pointer' }}>Reload</button>
+        </div>
+      )}
+      {reconnectToastVisible && (
+        <div role="alert" style={{ background: '#dc2626', color: '#ffffff', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', fontSize: '14px', fontWeight: 600, position: 'sticky', top: updateAvailable ? 48 : 0, zIndex: 49 }}>
+          <span>Connection lost. Retry?</span>
+          <button type="button" onClick={() => {
+            setReconnectToastVisible(false);
+            haptic(30);
+            try { handleMicClick(); } catch {}
+          }} style={{ background: '#ffffff', color: '#dc2626', border: 'none', padding: '6px 14px', borderRadius: 999, fontWeight: 700, cursor: 'pointer' }}>Retry</button>
         </div>
       )}
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
@@ -2125,6 +2415,7 @@ function App() {
           >
             <span className="orb-ring" />
             <span className="orb-spin" />
+            <Mic className="mic-icon" size={62} strokeWidth={2.3} aria-hidden="true" />
             <span className="sr-only">{micLabel}</span>
             <span className="rec-led">
               <svg width="28" height="28" viewBox="0 0 28 28">
@@ -2153,22 +2444,11 @@ function App() {
             </div>
           )}
           <p className="status-line">{statusText}</p>
-          <div className="sound-actions">
-            <button className="play-voice-button" type="button" onClick={playSpeakerTestSound} disabled={playing}>
-              Test Sound
+          {audioReplayAvailable && autoPlayFailed && (
+            <button className="play-voice-button compact-voice-action" type="button" onClick={playTranslationAudio} disabled={playing}>
+              Play Voice
             </button>
-            <button className="play-voice-button" type="button" onClick={playServerVoiceTest} disabled={playing}>
-              Test Voice
-            </button>
-            <button className="play-voice-button" type="button" onClick={testMicrophoneAndPlayback} disabled={playing}>
-              Test Mic
-            </button>
-            {audioReplayAvailable && (
-              <button className="play-voice-button" type="button" onClick={playTranslationAudio} disabled={playing}>
-                Play Voice
-              </button>
-            )}
-          </div>
+          )}
           {processing && !streaming && !playing && <p className="thinking">Translating...</p>}
         </section>
 
@@ -2211,9 +2491,9 @@ function App() {
         </section>
 
         <section className="translation-stack">
-          <article className="transcript-card" style={{ position: 'relative', paddingBottom: sourceText ? 52 : undefined }}>
+          <article className="transcript-card" style={{ position: 'relative', paddingBottom: hasSourceText ? 52 : undefined }}>
             <p className="transcript-text fade-in" key={sourceText}>{sourceText}</p>
-            {sourceText && (
+            {hasSourceText && (
               <button
                 type="button"
                 onClick={() => copyToClipboard(sourceText, 'src')}
@@ -2224,9 +2504,15 @@ function App() {
               </button>
             )}
           </article>
-          <article className="translation-card" style={{ position: 'relative', paddingBottom: translatedText ? 52 : undefined }}>
+          <article className="translation-card" style={{ position: 'relative', paddingBottom: hasTranslatedText ? 52 : undefined }}>
             <p className="translation-text fade-in" key={translatedText}>{translatedText}</p>
-            {translatedText && (
+            {cameraActive && (
+              <div style={{ position: 'relative', marginTop: 10, display: 'grid', placeItems: 'center' }}>
+                <video ref={videoRef} style={{ maxWidth: '100%', borderRadius: 12, border: '1px solid rgba(255,255,255,.15)' }} muted playsInline />
+                {ocrText && <p className="transcript-text" style={{ marginTop: 8, opacity: .9 }}>OCR: {ocrText}</p>}
+              </div>
+            )}
+            {hasTranslatedText && (
               <button
                 type="button"
                 onClick={() => copyToClipboard(translatedText, 'tr')}
@@ -2237,13 +2523,31 @@ function App() {
               </button>
             )}
           </article>
+          {(clarifyVisible || result?.clarify || (result?.cip_decision?.type === 'clarification')) && (
+            <div className="clarify-pill" role="status" aria-live="polite" style={{ marginTop: 10, padding: '10px 12px', border: '1px solid #facc15', background: '#fff3cd', color: '#92400e', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>{clarifyMessage || result?.clarify_message || 'Clarification requested'}</span>
+              <button type="button" onClick={() => {
+                setClarifyVisible(false);
+                haptic(20);
+                setPipelineStage('Refine requested');
+                setStatus('Please rephrase your request');
+                if (!streaming && !processing) {
+                  // Prompt new input via mic if idle
+                  try { handleMicClick(); } catch {}
+                }
+              }} style={{ minHeight: 32, padding: '6px 12px', borderRadius: 999, border: '1px solid rgba(148,163,184,.45)', background: '#f59e0b', color: '#1f2937', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Refine phrase</button>
+            </div>
+          )}
         </section>
 
-        {showDebugPanel && (
+        {false && showDebugPanel && (
           <section className="debug-panel">
             <div className="debug-header">
               <h3>Debug Panel</h3>
-              <button type="button" onClick={() => setShowDebugPanel(false)}>×</button>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button type="button" onClick={loadDiagnostics}>Refresh</button>
+                <button type="button" onClick={() => setShowDebugPanel(false)}>×</button>
+              </div>
             </div>
             <div className="debug-grid">
               <div className="debug-item">
@@ -2282,6 +2586,60 @@ function App() {
                 <span className="debug-label">Status:</span>
                 <span className="debug-value">{status}</span>
               </div>
+              <div className="debug-item">
+                <span className="debug-label">Backend Diagnostics:</span>
+                <span className="debug-value">{diagnosticsStatus}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">CIP Mode:</span>
+                <span className="debug-value">{diagnostics?.cip?.mode || '-'}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">CIP Reachable:</span>
+                <span className="debug-value" style={{ color: diagnostics?.cip?.reachable ? '#86efac' : '#fca5a5' }}>
+                  {diagnostics?.cip ? (diagnostics.cip.reachable ? 'Yes' : 'No') : '-'}
+                </span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">CIP Latency:</span>
+                <span className="debug-value">{diagnostics?.cip?.latency_ms ?? '-'}{diagnostics?.cip?.latency_ms != null ? ' ms' : ''}</span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">CIP OpenAI:</span>
+                <span className="debug-value" style={{ color: diagnostics?.cip?.openai?.translator?.configured ? '#86efac' : '#fca5a5' }}>
+                  {diagnostics?.cip?.openai?.translator ? (diagnostics.cip.openai.translator.configured ? 'Configured' : 'Not configured') : '-'}
+                </span>
+              </div>
+              <div className="debug-item">
+                <span className="debug-label">CIP Translator:</span>
+                <span className="debug-value">{diagnostics?.cip?.openai?.translator?.last || diagnostics?.cip?.openai?.error || '-'}</span>
+              </div>
+              <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
+                <span className="debug-label">CIP URL:</span>
+                <span className="debug-value" style={{ color: diagnostics?.cip?.process_url ? '#93c5fd' : undefined }}>
+                  {diagnostics?.cip?.process_url || '-'}
+                </span>
+              </div>
+              {diagnostics?.cip?.error && (
+                <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
+                  <span className="debug-label">CIP Error:</span>
+                  <span className="debug-value" style={{ color: '#fca5a5' }}>{diagnostics.cip.error}</span>
+                </div>
+              )}
+              {result?.translated_by && (
+                <div className="debug-item">
+                  <span className="debug-label">Translated by:</span>
+                  <span className="debug-value">{result.translated_by}</span>
+                </div>
+              )}
+              {result?.cip_decision && (
+                <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
+                  <span className="debug-label">CIP Decision:</span>
+                  <span className="debug-value" style={{ color: '#93c5fd' }}>
+                    {JSON.stringify(result.cip_decision)}
+                  </span>
+                </div>
+              )}
               {lastAudioError && (
                 <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
                   <span className="debug-label">Last Error:</span>
@@ -2297,18 +2655,13 @@ function App() {
               <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
                 <span className="debug-label">iOS path:</span>
                 <span className="debug-value">
-                  {isIosOrSafariRecorder() ? 'HTTP record-and-upload (no chunked WS)' : 'WebSocket streaming'}
+                  {isIosOrSafariRecorder() ? (EXPERIMENTAL_IOS_STREAMING ? 'WebSocket streaming (experimental)' : 'HTTP record-and-upload (no chunked WS)') : 'WebSocket streaming'}
                 </span>
               </div>
             </div>
           </section>
         )}
 
-        {!showDebugPanel && (
-          <button className="debug-toggle" type="button" onClick={() => setShowDebugPanel(true)}>
-            Debug
-          </button>
-        )}
       </section>
     </main>
   );
