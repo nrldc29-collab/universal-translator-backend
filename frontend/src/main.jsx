@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeftRight, Download, Mic } from 'lucide-react';
+import { ArrowLeftRight, Download, Mic, Share2 } from 'lucide-react';
 import './styles.css';
 import { registerServiceWorker } from './pwa';
 
@@ -46,7 +46,18 @@ const API_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? defaultApiUrl() : (confi
 const WS_BASE_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? API_URL : (configuredUrl(import.meta.env.VITE_WS_URL) || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'))).replace(/\/+$/, '');
 const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
-const INITIAL_SESSION_ID = localStorage.getItem('translator_session_id') || crypto.randomUUID();
+
+function normalizeSessionId(value) {
+  return String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
+}
+
+function readInitialSessionId() {
+  const params = new URLSearchParams(window.location.search);
+  const linkedSession = normalizeSessionId(params.get('session') || params.get('room'));
+  return linkedSession || normalizeSessionId(localStorage.getItem('translator_session_id')) || crypto.randomUUID();
+}
+
+const INITIAL_SESSION_ID = readInitialSessionId();
 const INITIAL_DEVICE_ID = localStorage.getItem('translator_device_id') || crypto.randomUUID();
 const INITIAL_SPEAKER_NAME = localStorage.getItem('translator_speaker_name') || '';
 const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 80);
@@ -1101,8 +1112,34 @@ function App() {
   }
 
   function updateSessionId(value) {
-    setSessionId(value);
-    localStorage.setItem('translator_session_id', value);
+    const normalized = normalizeSessionId(value) || crypto.randomUUID();
+    setSessionId(normalized);
+    localStorage.setItem('translator_session_id', normalized);
+  }
+
+  async function shareConversationRoom() {
+    const shareUrl = new URL(window.location.origin);
+    shareUrl.searchParams.set('session', sessionId);
+    const url = shareUrl.toString();
+    const payload = {
+      title: 'Universal Translator',
+      text: 'Join my live translator room.',
+      url,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(payload);
+        setStatus('Room link shared');
+      } else {
+        await copyToClipboard(url, 'room');
+        setStatus('Room link copied');
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        await copyToClipboard(url, 'room');
+        setStatus('Room link copied');
+      }
+    }
   }
 
   function rememberSpeaker(data = {}) {
@@ -2598,6 +2635,10 @@ function App() {
       )}
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
         <header className="clean-header">
+          <button className="room-share-action" type="button" onClick={shareConversationRoom} aria-label="Share speaker room" title="Share speaker room">
+            <Share2 size={14} strokeWidth={2.4} aria-hidden="true" />
+            <span className="sr-only">{copiedKey === 'room' ? 'Room link copied' : 'Share speaker room'}</span>
+          </button>
           {showInstallAction && (
             <button className="install-action" type="button" onClick={installApp} aria-label="Install App" title="Install App">
               <Download size={14} strokeWidth={2.4} aria-hidden="true" />

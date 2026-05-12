@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v13-install-entry';
+const CACHE_VERSION = 'v14-speaker-room';
 const CACHE_NAME = `universal-translator-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `universal-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
