@@ -1,4 +1,4 @@
-const SW_VERSION = 'v11-mobile-clean';
+const SW_VERSION = 'v12-fast-speech';
 const SW_RELOAD_KEY = `translator_sw_reloaded_${SW_VERSION}`;
 
 function reloadForUpdatedServiceWorker() {

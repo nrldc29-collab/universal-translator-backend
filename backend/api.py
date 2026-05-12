@@ -57,7 +57,7 @@ metrics = {
     "websocket_connections": 0,
     "websocket_errors": 0,
 }
-RELEASE_ID = "2026-05-10-haitian-creole-v10"
+RELEASE_ID = "2026-05-12-fast-speech-v12"
 logger = logging.getLogger("universal_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 HOP_BY_HOP_HEADERS = {

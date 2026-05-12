@@ -60,8 +60,8 @@ const MAX_AUDIO_SEND_QUEUE = 10;
 const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
-const EXPECTED_BACKEND_RELEASE = '2026-05-10-haitian-creole-v10';
-const FRONTEND_BUILD_ID = 'haitian-creole-v10';
+const EXPECTED_BACKEND_RELEASE = '2026-05-12-fast-speech-v12';
+const FRONTEND_BUILD_ID = 'fast-speech-v12';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -130,6 +130,23 @@ function audioFileExtension(mimeType) {
   if (mimeType.includes('mp4') || mimeType.includes('aac')) return '.m4a';
   if (mimeType.includes('ogg')) return '.ogg';
   return '.webm';
+}
+
+function speechRecognitionConstructor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function speechRecognitionLanguage(code) {
+  const normalized = String(code || 'en').toLowerCase().split(/[-_]/)[0];
+  return {
+    en: 'en-US',
+    es: 'es-ES',
+    ht: 'ht-HT',
+    fr: 'fr-FR',
+    de: 'de-DE',
+    it: 'it-IT',
+    pt: 'pt-BR',
+  }[normalized] || normalized;
 }
 
 function withAuthToken(url, token) {
@@ -328,6 +345,10 @@ function App() {
   const resumeAfterTtsRef = useRef(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const speechRecognitionRef = useRef(null);
+  const speechFastPathActiveRef = useRef(false);
+  const speechFinalTextRef = useRef('');
+  const speechInterimTextRef = useRef('');
 
   function haptic(pattern = 12) {
     window.navigator?.vibrate?.(pattern);
@@ -407,6 +428,7 @@ function App() {
         window.clearTimeout(canplayTimeoutRef.current);
         canplayTimeoutRef.current = null;
       }
+      try { speechRecognitionRef.current?.abort?.(); } catch (e) {}
     };
   }, []);
 
@@ -821,6 +843,87 @@ function App() {
     }
   }
 
+  async function playEmbeddedTranslationAudio(data, endStatus = 'Voice played') {
+    if (!data?.audio_base64) return false;
+    await ensureAudioUnlocked().catch((e) => console.warn('embedded audio unlock failed:', e));
+    const binary = atob(data.audio_base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    if (buffer.byteLength < 100) return false;
+    const mimeType = data.mime_type || 'audio/wav';
+    const url = URL.createObjectURL(new Blob([buffer], { type: mimeType }));
+    const item = { url, buffer, mimeType };
+    if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+    lastTtsItemRef.current = item;
+    setAudioReplayAvailable(true);
+    setPlaying(true);
+    const playDelay = isIosOrSafariRecorder() ? 300 : 0;
+    window.setTimeout(() => {
+      playTtsItem(item, {
+        revokeOnFinish: false,
+        manual: true,
+        onEnd: () => {
+          setPlaying(false);
+          setStatus(endStatus);
+          setPipelineStage('Ready');
+        },
+      });
+    }, playDelay);
+    return true;
+  }
+
+  async function submitRecognizedSpeech(recognizedText) {
+    const spokenText = String(recognizedText || '').trim();
+    speechFastPathActiveRef.current = false;
+    speechRecognitionRef.current = null;
+    setStreaming(false);
+    setInstantListening(false);
+    if (!spokenText) {
+      setProcessing(false);
+      setPipelineStage('Ready');
+      setStatus('No speech heard');
+      return;
+    }
+
+    setPartialTranscript(spokenText);
+    setProcessing(true);
+    setPipelineStage('Translating');
+    setStatus('Translating speech...');
+    try {
+      const activeAuthToken = await ensureAuthToken();
+      const response = await fetch(`${API_URL}/translate/text`, {
+        method: 'POST',
+        headers: authHeaders(activeAuthToken, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          text: spokenText,
+          source_language: sourceLanguage,
+          target_language: targetLanguage,
+          synthesize_audio: true,
+        }),
+      });
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Speech translation failed'));
+      const data = await response.json();
+      setResult(data);
+      setLiveTranslation(data.translated_text || '');
+      if (data.clarify) {
+        setClarifyMessage(data.clarify_message || 'Clarification requested');
+        setClarifyVisible(true);
+        setPipelineStage('Clarification needed');
+        setStatus(data.clarify_message || 'Clarification requested');
+        return;
+      }
+      setPipelineStage(data.audio_base64 ? 'Playing voice' : 'Translation ready');
+      setStatus(data.audio_base64 ? 'Playing voice...' : 'Speech translated');
+      await playEmbeddedTranslationAudio(data, 'Ready');
+    } catch (error) {
+      setPipelineStage('Speech translation failed');
+      setStatus(error.message || 'Speech translation failed');
+    } finally {
+      setProcessing(false);
+    }
+  }
+
   async function startCamera() {
     try {
       if (streamRef.current) return;
@@ -1212,6 +1315,120 @@ function App() {
     return true;
   }
 
+  function stopBrowserSpeechFastPath() {
+    if (!speechFastPathActiveRef.current) return false;
+    try {
+      speechRecognitionRef.current?.stop?.();
+    } catch (error) {
+      console.warn('speech recognition stop failed:', error);
+    }
+    setStreaming(false);
+    setInstantListening(false);
+    setProcessing(true);
+    setPipelineStage('Processing');
+    setStatus('Processing speech...');
+    return true;
+  }
+
+  function startBrowserSpeechFastPath() {
+    const Recognition = speechRecognitionConstructor();
+    if (!Recognition || socketRef.current || recording || processing || playing) return false;
+
+    let recognition;
+    try {
+      recognition = new Recognition();
+    } catch (error) {
+      console.warn('speech recognition unavailable:', error);
+      return false;
+    }
+
+    speechRecognitionRef.current = recognition;
+    speechFastPathActiveRef.current = true;
+    speechFinalTextRef.current = '';
+    speechInterimTextRef.current = '';
+    setMicPermission('available');
+    setInterpreterMode(true);
+    setDetectedSpeaker('Phone speaker');
+    setLatencyStats({ mic_to_backend: '-', backend_response: '-', first_audio: '-' });
+    setResult(null);
+    setPartialTranscript('');
+    setLiveTranslation('');
+    setStreaming(true);
+    setInstantListening(false);
+    setProcessing(false);
+    setPipelineStage('Listening');
+    setStatus('Listening...');
+    streamStartedAtRef.current = performance.now();
+    requestWakeLock();
+
+    recognition.lang = speechRecognitionLanguage(sourceLanguage);
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      let finalText = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const transcript = event.results[i]?.[0]?.transcript || '';
+        if (event.results[i].isFinal) finalText += `${transcript} `;
+        else interim += `${transcript} `;
+      }
+      if (finalText.trim()) {
+        speechFinalTextRef.current = `${speechFinalTextRef.current} ${finalText}`.trim();
+      }
+      speechInterimTextRef.current = interim.trim();
+      const visibleText = `${speechFinalTextRef.current} ${interim}`.trim();
+      if (visibleText) setPartialTranscript(visibleText);
+    };
+
+    recognition.onerror = (event) => {
+      const message = event?.error || 'speech recognition error';
+      console.warn('speech recognition error:', message);
+      if (message === 'not-allowed' || message === 'service-not-allowed') {
+        speechFastPathActiveRef.current = false;
+        speechRecognitionRef.current = null;
+        releaseWakeLock();
+        setMicPermission('denied');
+        setStreaming(false);
+        setStatus('Microphone permission blocked');
+        setPipelineStage('Permission blocked');
+        return;
+      }
+      if (!speechFinalTextRef.current.trim()) {
+        speechFastPathActiveRef.current = false;
+        speechRecognitionRef.current = null;
+        releaseWakeLock();
+        setStreaming(false);
+        setStatus('Using audio fallback...');
+        setPipelineStage('Audio fallback');
+        window.setTimeout(() => toggleStreaming({ interpreter: true, speakerMode: 'auto' }), 80);
+      }
+    };
+
+    recognition.onend = () => {
+      if (!speechFastPathActiveRef.current) return;
+      const finalText = (speechFinalTextRef.current || speechInterimTextRef.current || '').trim();
+      releaseWakeLock();
+      submitRecognizedSpeech(finalText);
+    };
+
+    try {
+      recognition.start();
+      haptic(14);
+      return true;
+    } catch (error) {
+      console.warn('speech recognition start failed:', error);
+      speechFastPathActiveRef.current = false;
+      speechRecognitionRef.current = null;
+      releaseWakeLock();
+      setStreaming(false);
+      setPipelineStage('Audio fallback');
+      setStatus('Using audio fallback...');
+      return false;
+    }
+  }
+
   async function handleMicClick() {
     console.log('MIC BUTTON CLICKED');
     if (ignoreNextMicClickRef.current) {
@@ -1219,6 +1436,8 @@ function App() {
       return;
     }
     synchronousAudioUnlock();
+    if (stopBrowserSpeechFastPath()) return;
+    if (!socketRef.current && startBrowserSpeechFastPath()) return;
     if (isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING) {
       haptic(recording ? 8 : 14);
       if (recording) stopRecording();

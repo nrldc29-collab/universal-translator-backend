@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v11-mobile-clean';
+const CACHE_VERSION = 'v12-fast-speech';
 const CACHE_NAME = `universal-translator-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `universal-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
