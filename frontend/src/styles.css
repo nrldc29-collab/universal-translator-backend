@@ -83,6 +83,29 @@ p { margin: 0; overflow-wrap: anywhere; }
   text-transform: uppercase;
 }
 
+.install-action {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid rgba(125, 211, 252, .34);
+  border-radius: 999px;
+  background: rgba(15, 23, 42, .68);
+  color: #e0f2fe;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, .28);
+}
+
+.install-action:active {
+  transform: translateY(1px);
+}
+
 .connection-dot {
   width: 6px;
   height: 6px;
@@ -603,6 +626,13 @@ p { margin: 0; overflow-wrap: anywhere; }
   .translation-stack { gap: 14px; }
   .transcript-card,
   .translation-card { min-height: 86px; padding: 18px 20px; }
+  .install-action {
+    top: 2px;
+    right: 0;
+    min-height: 32px;
+    padding: 7px 9px;
+    font-size: 11px;
+  }
 }
 
 @media (max-height: 720px) {

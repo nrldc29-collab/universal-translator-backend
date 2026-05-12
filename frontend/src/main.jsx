@@ -2568,6 +2568,7 @@ function App() {
   const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
   const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
   const statusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
+  const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
 
   return (
     <main className="app-shell">
@@ -2597,6 +2598,12 @@ function App() {
       )}
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
         <header className="clean-header">
+          {showInstallAction && (
+            <button className="install-action" type="button" onClick={installApp} aria-label="Install App" title="Install App">
+              <Download size={14} strokeWidth={2.4} aria-hidden="true" />
+              <span>Install App</span>
+            </button>
+          )}
           <h1 className="app-title">
             <span className="brand-mark">Anai</span>
             <sub>nrldc</sub>
