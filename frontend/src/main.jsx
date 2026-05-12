@@ -69,10 +69,11 @@ const STREAM_RECONNECT_MS = 1000;
 const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
 const MAX_AUDIO_SEND_QUEUE = 10;
 const MAX_BUFFERED_AUDIO_CHUNKS = 30;
+const FAST_SPEECH_TIMEOUT_MS = Number(import.meta.env.VITE_FAST_SPEECH_TIMEOUT_MS || 10000);
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
 const EXPECTED_BACKEND_RELEASE = '2026-05-12-room-fast-path-v13';
-const FRONTEND_BUILD_ID = 'interpreter-loop-v14';
+const FRONTEND_BUILD_ID = 'fast-timeout-v15';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -918,11 +919,19 @@ function App() {
     setProcessing(true);
     setPipelineStage('Translating');
     setStatus('Translating speech...');
+    const capturedAt = streamStartedAtRef.current || performance.now();
+    const requestStartedAt = performance.now();
+    updateLatency('mic_to_backend', Math.round(requestStartedAt - capturedAt));
+    updateLatency('backend_response', '-');
+    updateLatency('first_audio', '-');
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), FAST_SPEECH_TIMEOUT_MS);
     try {
       const activeAuthToken = await ensureAuthToken();
       const response = await fetch(`${API_URL}/translate/text`, {
         method: 'POST',
         headers: authHeaders(activeAuthToken, { 'Content-Type': 'application/json' }),
+        signal: controller.signal,
         body: JSON.stringify({
           text: spokenText,
           source_language: sourceLanguage,
@@ -934,8 +943,11 @@ function App() {
           speaker_mode: speakerMode,
         }),
       });
+      window.clearTimeout(timeoutId);
+      updateLatency('backend_response', Math.round(performance.now() - requestStartedAt));
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Speech translation failed'));
       const data = await response.json();
+      if (data.audio_base64) updateLatency('first_audio', Math.round(performance.now() - capturedAt));
       setResult(data);
       setLiveTranslation(data.translated_text || '');
       rememberSpeaker(data);
@@ -953,8 +965,17 @@ function App() {
       const played = await playEmbeddedTranslationAudio(data, 'Ready');
       if (!played) resumeInterpreterAfterPlayback('Ready');
     } catch (error) {
-      setPipelineStage('Speech translation failed');
-      setStatus(error.message || 'Speech translation failed');
+      window.clearTimeout(timeoutId);
+      const timedOut = error?.name === 'AbortError';
+      if (timedOut) {
+        setLatencyStats((current) => ({ ...current, backend_response: `${FAST_SPEECH_TIMEOUT_MS}ms+` }));
+        setPipelineStage('Translation timed out');
+        setStatus('Network slow. Ready to try again.');
+        resumeInterpreterAfterPlayback('Ready to listen');
+      } else {
+        setPipelineStage('Speech translation failed');
+        setStatus(error.message || 'Speech translation failed');
+      }
     } finally {
       setProcessing(false);
     }
