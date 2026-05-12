@@ -72,7 +72,7 @@ const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
 const EXPECTED_BACKEND_RELEASE = '2026-05-12-room-fast-path-v13';
-const FRONTEND_BUILD_ID = 'room-fast-path-v13';
+const FRONTEND_BUILD_ID = 'interpreter-loop-v14';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -360,6 +360,11 @@ function App() {
   const speechFastPathActiveRef = useRef(false);
   const speechFinalTextRef = useRef('');
   const speechInterimTextRef = useRef('');
+  const appStateRef = useRef({});
+
+  useEffect(() => {
+    appStateRef.current = { interpreterMode, speakerMode, recording, processing, playing, streaming };
+  }, [interpreterMode, speakerMode, recording, processing, playing, streaming]);
 
   function haptic(pattern = 12) {
     window.navigator?.vibrate?.(pattern);
@@ -889,8 +894,7 @@ function App() {
         manual: true,
         onEnd: () => {
           setPlaying(false);
-          setStatus(endStatus);
-          setPipelineStage('Ready');
+          resumeInterpreterAfterPlayback(endStatus);
         },
       });
     }, playDelay);
@@ -946,7 +950,8 @@ function App() {
       }
       setPipelineStage(data.audio_base64 ? 'Playing voice' : 'Translation ready');
       setStatus(data.audio_base64 ? 'Playing voice...' : 'Speech translated');
-      await playEmbeddedTranslationAudio(data, 'Ready');
+      const played = await playEmbeddedTranslationAudio(data, 'Ready');
+      if (!played) resumeInterpreterAfterPlayback('Ready');
     } catch (error) {
       setPipelineStage('Speech translation failed');
       setStatus(error.message || 'Speech translation failed');
@@ -1389,7 +1394,8 @@ function App() {
 
   function startBrowserSpeechFastPath() {
     const Recognition = speechRecognitionConstructor();
-    if (!Recognition || socketRef.current || recording || processing || playing) return false;
+    const current = appStateRef.current;
+    if (!Recognition || socketRef.current || current.recording || current.processing || current.playing) return false;
 
     let recognition;
     try {
@@ -1484,6 +1490,25 @@ function App() {
       setStatus('Using audio fallback...');
       return false;
     }
+  }
+
+  function resumeInterpreterAfterPlayback(endStatus = 'Ready') {
+    const current = appStateRef.current;
+    if (!current.interpreterMode || current.speakerMode !== 'auto' || holdToTalkActiveRef.current) {
+      setStatus(endStatus);
+      setPipelineStage('Ready');
+      return;
+    }
+
+    setStatus('Ready to listen');
+    setPipelineStage('Ready to listen');
+    window.setTimeout(() => {
+      const latest = appStateRef.current;
+      if (!latest.interpreterMode || latest.speakerMode !== 'auto') return;
+      if (socketRef.current || speechFastPathActiveRef.current || latest.recording || latest.processing || latest.playing) return;
+      if (startBrowserSpeechFastPath()) return;
+      toggleStreaming({ interpreter: true, speakerMode: 'auto' });
+    }, 450);
   }
 
   async function handleMicClick() {

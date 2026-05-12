@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v15-room-fast-path';
+const CACHE_VERSION = 'v16-interpreter-loop';
 const CACHE_NAME = `universal-translator-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `universal-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
