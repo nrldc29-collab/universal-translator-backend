@@ -891,20 +891,7 @@ function App() {
 
   async function ensureAuthToken() {
     if (authToken) return authToken;
-    const response = await fetch(`${API_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: 'demo', password: 'demo' }),
-    });
-    if (!response.ok) {
-      const message = await responseErrorMessage(response, 'Auto-login failed');
-      console.log('AUTH: auto-login failed, continuing anonymously', message);
-      return '';
-    }
-    const data = await response.json();
-    localStorage.setItem('translator_token', data.access_token);
-    setAuthToken(data.access_token);
-    return data.access_token;
+    return '';
   }
 
   async function loadAnalytics() {
