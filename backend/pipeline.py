@@ -3,7 +3,7 @@ from typing import Optional
 
 from llm import PassthroughContextLayer
 from speech import WhisperSpeechToText
-from translation import LightweightTranslator, MarianTranslator
+from translation import HybridTranslator, LightweightTranslator, MarianTranslator
 from tts import PiperTextToSpeech
 from backend.config import get_translation_backend, get_whisper_compute_type, get_whisper_device, get_whisper_model_size
 
@@ -20,7 +20,7 @@ class UniversalTranslatorPipeline:
     def __init__(
         self,
         stt: WhisperSpeechToText | None = None,
-        translator: MarianTranslator | LightweightTranslator | None = None,
+        translator: HybridTranslator | MarianTranslator | LightweightTranslator | None = None,
         tts: PiperTextToSpeech | None = None,
         context_layer: PassthroughContextLayer | None = None,
     ):
@@ -29,7 +29,15 @@ class UniversalTranslatorPipeline:
             device=get_whisper_device(),
             compute_type=get_whisper_compute_type(),
         )
-        self.translator = translator or (LightweightTranslator() if get_translation_backend() == "lightweight" else MarianTranslator())
+        translation_backend = get_translation_backend()
+        if translator:
+            self.translator = translator
+        elif translation_backend == "lightweight":
+            self.translator = HybridTranslator()
+        elif translation_backend == "hybrid":
+            self.translator = HybridTranslator()
+        else:
+            self.translator = MarianTranslator()
         self.tts = tts or PiperTextToSpeech()
         self.context_layer = context_layer or PassthroughContextLayer()
 
