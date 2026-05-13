@@ -77,8 +77,8 @@ const LATENCY_TARGET_MS = 1000;
 const VOICE_WARMUP_COOLDOWN_MS = 5 * 60 * 1000;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
-const EXPECTED_BACKEND_RELEASE = '2026-05-13-tts-url-v16';
-const FRONTEND_BUILD_ID = 'tts-url-v21';
+const EXPECTED_BACKEND_RELEASE = '2026-05-13-one-call-voice-v17';
+const FRONTEND_BUILD_ID = 'one-call-voice-v22';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -1085,7 +1085,8 @@ function App() {
           text: spokenText,
           source_language: sourceLanguage,
           target_language: targetLanguage,
-          synthesize_audio: false,
+          synthesize_audio: true,
+          audio_response_format: 'url',
           session_id: sessionId,
           device_id: INITIAL_DEVICE_ID,
           speaker_name: INITIAL_SPEAKER_NAME,
@@ -1112,18 +1113,18 @@ function App() {
         recordLatencyTurn({ total: endToEndMs, backend: backendResponseMs, audio: null });
         return;
       }
-      setPipelineStage('Translation ready');
-      setStatus('Translation ready. Loading voice...');
-      const voiceData = await fetchTranslationVoice(data.translated_text, targetLanguage, activeAuthToken);
-      const firstAudioMs = hasPlayableAudioPayload(voiceData) ? Math.round(performance.now() - capturedAt) : null;
+      const firstAudioMs = hasPlayableAudioPayload(data) ? Math.round(performance.now() - capturedAt) : null;
       if (firstAudioMs) updateLatency('first_audio', firstAudioMs);
       recordLatencyTurn({ total: endToEndMs, backend: backendResponseMs, audio: firstAudioMs });
-      if (hasPlayableAudioPayload(voiceData)) {
+      if (hasPlayableAudioPayload(data)) {
         setPipelineStage('Playing voice');
         setStatus('Playing voice...');
+      } else {
+        setPipelineStage('Translation ready');
+        setStatus('Translation ready');
       }
       const played = await playEmbeddedTranslationAudio(
-        voiceData ? { ...data, ...voiceData, translated_text: data.translated_text } : data,
+        data,
         'Ready',
       );
       if (!played) resumeInterpreterAfterPlayback('Ready');

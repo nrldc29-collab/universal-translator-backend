@@ -58,7 +58,7 @@ metrics = {
     "websocket_connections": 0,
     "websocket_errors": 0,
 }
-RELEASE_ID = "2026-05-13-tts-url-v16"
+RELEASE_ID = "2026-05-13-one-call-voice-v17"
 logger = logging.getLogger("universal_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 HOP_BY_HOP_HEADERS = {
@@ -80,6 +80,7 @@ class TextTranslationRequest(BaseModel):
     target_language: str = "es"
     tone: str | None = None
     synthesize_audio: bool = False
+    audio_response_format: str = "base64"
     session_id: str | None = None
     device_id: str | None = None
     speaker_name: str | None = None
@@ -405,6 +406,53 @@ def _is_tts_cache_key(cache_key: str) -> bool:
     return len(cache_key) == 64 and all(character in "0123456789abcdef" for character in cache_key)
 
 
+def _normalize_audio_response_format(response_format: str | None) -> str:
+    normalized = (response_format or "base64").strip().lower()
+    if normalized not in {"base64", "url", "both"}:
+        raise HTTPException(status_code=400, detail="audio response format must be base64, url, or both.")
+    return normalized
+
+
+def _cached_tts_payload(text: str, language: str, response_format: str) -> dict:
+    cache_dir = Path("models/tts/cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_key = hashlib.sha256(f"{language}\0{text}".encode("utf-8")).hexdigest()
+    output_path = _tts_cache_path(cache_key)
+    cache_hit = output_path.is_file() and output_path.stat().st_size >= 100
+    audio_bytes = None
+    audio_size = output_path.stat().st_size if cache_hit else 0
+
+    if not cache_hit:
+        temp_path = Path("models/tts") / f"{uuid4()}.wav"
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        rendered_path = Path(pipeline.tts.synthesize(text, str(temp_path), language=language) or temp_path)
+        audio_bytes = rendered_path.read_bytes()
+        if len(audio_bytes) < 100:
+            raise RuntimeError("TTS returned empty audio.")
+        output_path.write_bytes(audio_bytes)
+        audio_size = len(audio_bytes)
+        if rendered_path != output_path:
+            try:
+                rendered_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    response_dict = {
+        "text": text,
+        "language": language,
+        "mime_type": "audio/wav",
+        "audio_output_path": str(output_path),
+        "audio_url": f"/tts/audio/{cache_key}.wav",
+        "audio_bytes": audio_size,
+        "cache_hit": cache_hit,
+    }
+    if response_format in {"base64", "both"}:
+        if audio_bytes is None:
+            audio_bytes = output_path.read_bytes()
+        response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
+    return response_dict
+
+
 @app.get("/tts/audio/{cache_key}.wav")
 async def cached_tts_audio(cache_key: str):
     if not _is_tts_cache_key(cache_key):
@@ -428,46 +476,11 @@ async def text_to_speech(request: TextToSpeechRequest, identity: str = Depends(a
     text = request.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text is required for voice output.")
-    response_format = (request.response_format or "base64").strip().lower()
-    if response_format not in {"base64", "url", "both"}:
-        raise HTTPException(status_code=400, detail="response_format must be base64, url, or both.")
-    cache_dir = Path("models/tts/cache")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_key = hashlib.sha256(f"{request.language}\0{text}".encode("utf-8")).hexdigest()
-    output_path = _tts_cache_path(cache_key)
-    cache_hit = output_path.is_file() and output_path.stat().st_size >= 100
+    response_format = _normalize_audio_response_format(request.response_format)
     try:
-        audio_bytes = None
-        audio_size = output_path.stat().st_size if cache_hit else 0
-        if not cache_hit:
-            temp_path = Path("models/tts") / f"{uuid4()}.wav"
-            temp_path.parent.mkdir(parents=True, exist_ok=True)
-            rendered_path = Path(await run_in_threadpool(lambda: pipeline.tts.synthesize(text, str(temp_path), language=request.language)) or temp_path)
-            audio_bytes = rendered_path.read_bytes()
-            if len(audio_bytes) < 100:
-                raise RuntimeError("TTS returned empty audio.")
-            output_path.write_bytes(audio_bytes)
-            audio_size = len(audio_bytes)
-            if rendered_path != output_path:
-                try:
-                    rendered_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
+        response_dict = await run_in_threadpool(lambda: _cached_tts_payload(text, request.language, response_format))
         observability.observe_latency("tts_request", time() - started_at)
-        observability.record_event("tts_request", identity=identity, latency_seconds=time() - started_at, cache_hit=cache_hit, response_format=response_format)
-        response_dict = {
-            "text": text,
-            "language": request.language,
-            "mime_type": "audio/wav",
-            "audio_output_path": str(output_path),
-            "audio_url": f"/tts/audio/{cache_key}.wav",
-            "audio_bytes": audio_size,
-            "cache_hit": cache_hit,
-        }
-        if response_format in {"base64", "both"}:
-            if audio_bytes is None:
-                audio_bytes = output_path.read_bytes()
-            response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
+        observability.record_event("tts_request", identity=identity, latency_seconds=time() - started_at, cache_hit=response_dict["cache_hit"], response_format=response_format)
         return response_dict
     except Exception as exc:
         usage_limiter.track(identity, "errors")
@@ -490,18 +503,24 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
     usage_limiter.track(identity, "http_requests")
     usage_limiter.track(identity, "text_translations")
     logger.info("text_translation identity=%s source=%s target=%s", identity, request.source_language, request.target_language)
+    audio_response_format = _normalize_audio_response_format(request.audio_response_format) if request.synthesize_audio else "base64"
     try:
         result = pipeline.translate_text(
             text=request.text,
             source_language=request.source_language,
             target_language=request.target_language,
             tone=request.tone,
-            synthesize_audio=request.synthesize_audio,
+            synthesize_audio=False,
         )
         observability.observe_latency("text_translation", time() - started_at)
         observability.record_event("text_translation", identity=identity, latency_seconds=time() - started_at)
         response_dict = result.__dict__
-        if result.audio_output_path:
+        if request.synthesize_audio and result.translated_text:
+            audio_payload = _cached_tts_payload(result.translated_text, request.target_language, audio_response_format)
+            response_dict.update(audio_payload)
+            response_dict["translated_text"] = result.translated_text
+            observability.record_event("text_translation_tts", identity=identity, cache_hit=audio_payload["cache_hit"], response_format=audio_response_format)
+        elif result.audio_output_path:
             try:
                 audio_bytes = Path(result.audio_output_path).read_bytes()
                 if len(audio_bytes) >= 100:

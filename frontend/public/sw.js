@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v23-tts-url';
+const CACHE_VERSION = 'v24-one-call-voice';
 const CACHE_NAME = `universal-translator-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `universal-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
