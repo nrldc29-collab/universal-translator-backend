@@ -1,4 +1,4 @@
-const SW_VERSION = 'v26-browser-audio-prefetch';
+const SW_VERSION = 'v27-futuristic-ui';
 const SW_RELOAD_KEY = `translator_sw_reloaded_${SW_VERSION}`;
 
 function reloadForUpdatedServiceWorker() {

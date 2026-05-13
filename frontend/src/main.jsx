@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeftRight, Download, Mic, Share2 } from 'lucide-react';
+import { ArrowLeftRight, Check, Copy, Download, Mic, Share2 } from 'lucide-react';
 import './styles.css';
 import { registerServiceWorker } from './pwa';
 
@@ -79,7 +79,7 @@ const VOICE_PREFETCH_TIMEOUT_MS = 4000;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
 const EXPECTED_BACKEND_RELEASE = '2026-05-13-voice-warmup-v18';
-const FRONTEND_BUILD_ID = 'browser-audio-prefetch-v24';
+const FRONTEND_BUILD_ID = 'futuristic-ui-v25';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -2928,12 +2928,15 @@ function App() {
     { label: 'Best', value: latencyBestMs ? `${latencyBestMs}ms` : '-' },
   ].filter((item) => item.value !== '-');
   const latencyTrendTone = latencyAverageMs && latencyAverageMs <= LATENCY_TARGET_MS ? 'fast' : latencyAverageMs ? 'slow' : 'pending';
+  const sourceLanguageLabel = languages[sourceLanguage] || sourceLanguage.toUpperCase();
+  const targetLanguageLabel = TARGET_LANGUAGE_OPTIONS.find((option) => option.code === targetLanguage)?.label || languages[targetLanguage] || targetLanguage.toUpperCase();
+  const micHint = perceivedListening ? 'Listening now' : processing ? 'Translation in motion' : playing ? 'Voice playing' : 'Ready for one tap';
 
   return (
     <main className="app-shell">
       {updateAvailable && (
-        <div role="alert" style={{ background: '#1d4ed8', color: '#ffffff', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', fontSize: '14px', fontWeight: 600, position: 'sticky', top: 0, zIndex: 50 }}>
-          <span>Update available. Backend: <code style={{ background: 'rgba(255,255,255,.18)', padding: '2px 6px', borderRadius: 4 }}>{updateAvailable.backend}</code> | App: <code style={{ background: 'rgba(255,255,255,.18)', padding: '2px 6px', borderRadius: 4 }}>{updateAvailable.frontend}</code></span>
+        <div className="system-banner" role="alert">
+          <span>Update available <code>{updateAvailable.backend}</code></span>
           <button type="button" onClick={async () => {
             try {
               const regs = await (navigator.serviceWorker && navigator.serviceWorker.getRegistrations && navigator.serviceWorker.getRegistrations());
@@ -2942,38 +2945,42 @@ function App() {
               await Promise.all(cacheNames.map((name) => caches.delete(name)));
             } catch (err) { console.warn('cache clear failed', err); }
             window.location.reload();
-          }} style={{ background: '#ffffff', color: '#1d4ed8', border: 'none', padding: '6px 14px', borderRadius: 999, fontWeight: 700, cursor: 'pointer' }}>Reload</button>
+          }}>Reload</button>
         </div>
       )}
       {reconnectToastVisible && (
-        <div role="alert" style={{ background: '#dc2626', color: '#ffffff', padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', fontSize: '14px', fontWeight: 600, position: 'sticky', top: updateAvailable ? 48 : 0, zIndex: 49 }}>
+        <div className="system-banner danger" role="alert">
           <span>Connection lost. Retry?</span>
           <button type="button" onClick={() => {
             setReconnectToastVisible(false);
             haptic(30);
             try { handleMicClick(); } catch {}
-          }} style={{ background: '#ffffff', color: '#dc2626', border: 'none', padding: '6px 14px', borderRadius: 999, fontWeight: 700, cursor: 'pointer' }}>Retry</button>
+          }}>Retry</button>
         </div>
       )}
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
         <header className="clean-header">
-          <button className="room-share-action" type="button" onClick={shareConversationRoom} aria-label="Share speaker room" title="Share speaker room">
-            <Share2 size={14} strokeWidth={2.4} aria-hidden="true" />
-            <span className="sr-only">{copiedKey === 'room' ? 'Room link copied' : 'Share speaker room'}</span>
-          </button>
-          {showInstallAction && (
-            <button className="install-action" type="button" onClick={installApp} aria-label="Install App" title="Install App">
-              <Download size={14} strokeWidth={2.4} aria-hidden="true" />
-              <span>Install App</span>
+          <div className="header-actions">
+            <button className="icon-action" type="button" onClick={shareConversationRoom} aria-label="Share speaker room" title="Share speaker room">
+              <Share2 size={17} strokeWidth={2.4} aria-hidden="true" />
+              <span className="sr-only">{copiedKey === 'room' ? 'Room link copied' : 'Share speaker room'}</span>
             </button>
-          )}
-          <h1 className="app-title">
-            <span className="brand-mark">Anai</span>
-            <sub>nrldc</sub>
-          </h1>
-          <div className="connection-indicator" data-status={connectionStatus}>
-            <span className="connection-dot" />
-            <span className="connection-label">{connectionStatus}</span>
+            {showInstallAction && (
+              <button className="icon-action install-action" type="button" onClick={installApp} aria-label="Install App" title="Install App">
+                <Download size={17} strokeWidth={2.4} aria-hidden="true" />
+                <span className="sr-only">Install App</span>
+              </button>
+            )}
+          </div>
+          <div className="brand-cluster">
+            <h1 className="app-title">
+              <span className="brand-mark">Anai</span>
+              <sub>nrldc</sub>
+            </h1>
+            <div className="connection-indicator" data-status={connectionStatus}>
+              <span className="connection-dot" />
+              <span className="connection-label">{connectionStatus}</span>
+            </div>
           </div>
         </header>
 
@@ -3000,21 +3007,16 @@ function App() {
               </svg>
             </span>
           </button>
+          <p className="mic-hint">{micHint}</p>
           <p className="mic-label">{micLabel}</p>
           {(streaming || recording) && (
-            <div aria-hidden="true" style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: 4, height: 28, marginTop: 8 }}>
+            <div className="voice-meter" aria-hidden="true">
               {[0, 1, 2, 3, 4, 5, 6].map((i) => {
                 const threshold = (i + 1) / 8;
                 const active = micLevel >= threshold * 0.6;
                 const heightPx = Math.max(6, Math.min(28, 6 + micLevel * 28 * (i === 3 ? 1 : 0.65 + Math.abs(3 - i) * 0.08)));
                 return (
-                  <span key={i} style={{
-                    width: 5,
-                    height: heightPx,
-                    borderRadius: 3,
-                    background: active ? 'linear-gradient(180deg,#34d399,#10b981)' : 'rgba(148,163,184,.35)',
-                    transition: 'height 80ms ease, background 120ms ease',
-                  }} />
+                  <span key={i} className={active ? 'active' : ''} style={{ height: heightPx }} />
                 );
               })}
             </div>
@@ -3049,11 +3051,13 @@ function App() {
           {processing && !streaming && !playing && <p className="thinking">Translating...</p>}
         </section>
 
-        <section style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8, margin: '8px 0 12px', flexWrap: 'wrap' }} aria-label="Target language">
-          <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 600, letterSpacing: '.04em', textTransform: 'uppercase' }}>
-            Translate to
-          </span>
-          <div role="radiogroup" aria-label="Target language" style={{ display: 'inline-flex', borderRadius: 999, padding: 3, background: 'rgba(15,23,42,.55)', border: '1px solid rgba(148,163,184,.3)' }}>
+        <section className="language-dock" aria-label="Target language">
+          <div className="language-direction" aria-hidden="true">
+            <span>{sourceLanguageLabel}</span>
+            <ArrowLeftRight size={15} strokeWidth={2.4} />
+            <strong>{targetLanguageLabel}</strong>
+          </div>
+          <div className="language-options" role="radiogroup" aria-label="Target language">
             {TARGET_LANGUAGE_OPTIONS.map((opt) => {
               const active = targetLanguage === opt.code;
               return (
@@ -3064,23 +3068,9 @@ function App() {
                   aria-checked={active}
                   onClick={() => setTargetLanguage(opt.code)}
                   disabled={recording || processing}
-                  style={{
-                    minHeight: 32,
-                    padding: '6px 14px',
-                    borderRadius: 999,
-                    border: 'none',
-                    cursor: (recording || processing) ? 'not-allowed' : 'pointer',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: active ? '#0b1220' : '#cbd5e1',
-                    background: active ? 'linear-gradient(180deg,#a5f3fc,#67e8f9)' : 'transparent',
-                    transition: 'background .15s ease, color .15s ease',
-                  }}
+                  className={active ? 'active' : ''}
                 >
                   {opt.label}
-                  {opt.code === 'ht' && (
-                    <span style={{ marginLeft: 4, fontSize: 10, opacity: .7 }} title="Audio uses eSpeak NG fallback (sounds robotic)">*</span>
-                  )}
                 </button>
               );
             })}
@@ -3088,25 +3078,28 @@ function App() {
         </section>
 
         <section className="translation-stack">
-          <article className="transcript-card" style={{ position: 'relative', paddingBottom: hasSourceText ? 52 : undefined }}>
+          <article className={`transcript-card ${hasSourceText ? 'has-text' : ''}`}>
+            <span className="card-kicker">Heard</span>
             <p className="transcript-text fade-in" key={sourceText}>{sourceText}</p>
             {hasSourceText && (
               <button
                 type="button"
                 onClick={() => copyToClipboard(sourceText, 'src')}
                 aria-label="Copy transcript"
-                style={{ position: 'absolute', bottom: 10, right: 10, minHeight: 36, padding: '8px 16px', borderRadius: 999, border: '1px solid rgba(148,163,184,.45)', background: copiedKey === 'src' ? '#10b981' : 'rgba(15,23,42,.65)', color: '#e5ecff', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background .15s ease' }}
+                className={`copy-action ${copiedKey === 'src' ? 'copied' : ''}`}
               >
-                {copiedKey === 'src' ? 'Copied' : 'Copy'}
+                {copiedKey === 'src' ? <Check size={15} strokeWidth={2.6} /> : <Copy size={15} strokeWidth={2.4} />}
+                <span className="sr-only">{copiedKey === 'src' ? 'Copied transcript' : 'Copy transcript'}</span>
               </button>
             )}
           </article>
-          <article className="translation-card" style={{ position: 'relative', paddingBottom: hasTranslatedText ? 52 : undefined }}>
+          <article className={`translation-card ${hasTranslatedText ? 'has-text' : ''}`}>
+            <span className="card-kicker">Translation</span>
             <p className="translation-text fade-in" key={translatedText}>{translatedText}</p>
             {cameraActive && (
-              <div style={{ position: 'relative', marginTop: 10, display: 'grid', placeItems: 'center' }}>
-                <video ref={videoRef} style={{ maxWidth: '100%', borderRadius: 12, border: '1px solid rgba(255,255,255,.15)' }} muted playsInline />
-                {ocrText && <p className="transcript-text" style={{ marginTop: 8, opacity: .9 }}>OCR: {ocrText}</p>}
+              <div className="camera-preview">
+                <video ref={videoRef} muted playsInline />
+                {ocrText && <p className="transcript-text ocr-text">OCR: {ocrText}</p>}
               </div>
             )}
             {hasTranslatedText && (
@@ -3114,9 +3107,10 @@ function App() {
                 type="button"
                 onClick={() => copyToClipboard(translatedText, 'tr')}
                 aria-label="Copy translation"
-                style={{ position: 'absolute', bottom: 10, right: 10, minHeight: 36, padding: '8px 16px', borderRadius: 999, border: '1px solid rgba(148,163,184,.45)', background: copiedKey === 'tr' ? '#10b981' : 'rgba(15,23,42,.65)', color: '#e5ecff', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background .15s ease' }}
+                className={`copy-action ${copiedKey === 'tr' ? 'copied' : ''}`}
               >
-                {copiedKey === 'tr' ? 'Copied' : 'Copy'}
+                {copiedKey === 'tr' ? <Check size={15} strokeWidth={2.6} /> : <Copy size={15} strokeWidth={2.4} />}
+                <span className="sr-only">{copiedKey === 'tr' ? 'Copied translation' : 'Copy translation'}</span>
               </button>
             )}
           </article>
@@ -3132,8 +3126,8 @@ function App() {
             </section>
           )}
           {(clarifyVisible || result?.clarify || (result?.cip_decision?.type === 'clarification')) && (
-            <div className="clarify-pill" role="status" aria-live="polite" style={{ marginTop: 10, padding: '10px 12px', border: '1px solid #facc15', background: '#fff3cd', color: '#92400e', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>{clarifyMessage || result?.clarify_message || 'Clarification requested'}</span>
+            <div className="clarify-pill" role="status" aria-live="polite">
+              <span>{clarifyMessage || result?.clarify_message || 'Clarification requested'}</span>
               <button type="button" onClick={() => {
                 setClarifyVisible(false);
                 haptic(20);
@@ -3143,7 +3137,7 @@ function App() {
                   // Prompt new input via mic if idle
                   try { handleMicClick(); } catch {}
                 }
-              }} style={{ minHeight: 32, padding: '6px 12px', borderRadius: 999, border: '1px solid rgba(148,163,184,.45)', background: '#f59e0b', color: '#1f2937', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Refine phrase</button>
+              }}>Refine phrase</button>
             </div>
           )}
         </section>
