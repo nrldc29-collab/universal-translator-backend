@@ -70,10 +70,13 @@ const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
 const MAX_AUDIO_SEND_QUEUE = 10;
 const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const FAST_SPEECH_TIMEOUT_MS = Number(import.meta.env.VITE_FAST_SPEECH_TIMEOUT_MS || 10000);
+const LATENCY_HISTORY_KEY = 'translator_latency_history';
+const LATENCY_HISTORY_LIMIT = 12;
+const LATENCY_TARGET_MS = 1000;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
 const EXPECTED_BACKEND_RELEASE = '2026-05-12-room-fast-path-v13';
-const FRONTEND_BUILD_ID = 'visible-latency-v16';
+const FRONTEND_BUILD_ID = 'latency-trend-v17';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -87,6 +90,26 @@ function formatLatencyValue(value) {
   if (value === null || value === undefined || value === '' || value === '-') return '-';
   if (typeof value === 'number' && Number.isFinite(value)) return `${Math.max(0, Math.round(value))}ms`;
   return String(value);
+}
+
+function readLatencyHistory() {
+  try {
+    const raw = localStorage.getItem(LATENCY_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => ({
+        total: Number(item.total),
+        backend: Number(item.backend),
+        audio: Number(item.audio),
+        created_at: Number(item.created_at) || Date.now(),
+      }))
+      .filter((item) => Number.isFinite(item.total) && item.total > 0)
+      .slice(-LATENCY_HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
 }
 
 function fallbackSpeakerLabel(speaker) {
@@ -264,6 +287,7 @@ function App() {
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
   const [latencyStats, setLatencyStats] = useState(() => blankLatencyStats());
+  const [latencyHistory, setLatencyHistory] = useState(() => readLatencyHistory());
   const [authToken, setAuthToken] = useState(INITIAL_TOKEN);
   const [username, setUsername] = useState('demo');
   const [password, setPassword] = useState('demo');
@@ -307,6 +331,14 @@ function App() {
       /* ignore quota errors */
     }
   }, [conversationTurns]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LATENCY_HISTORY_KEY, JSON.stringify(latencyHistory.slice(-LATENCY_HISTORY_LIMIT)));
+    } catch {
+      /* ignore quota errors */
+    }
+  }, [latencyHistory]);
 
   async function copyToClipboard(text, key) {
     if (!text) return;
@@ -954,11 +986,15 @@ function App() {
         }),
       });
       window.clearTimeout(timeoutId);
-      updateLatency('backend_response', Math.round(performance.now() - requestStartedAt));
+      const backendResponseMs = Math.round(performance.now() - requestStartedAt);
+      updateLatency('backend_response', backendResponseMs);
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Speech translation failed'));
       const data = await response.json();
-      updateLatency('end_to_end', Math.round(performance.now() - capturedAt));
-      if (data.audio_base64) updateLatency('first_audio', Math.round(performance.now() - capturedAt));
+      const endToEndMs = Math.round(performance.now() - capturedAt);
+      const firstAudioMs = data.audio_base64 ? endToEndMs : null;
+      updateLatency('end_to_end', endToEndMs);
+      if (firstAudioMs) updateLatency('first_audio', firstAudioMs);
+      recordLatencyTurn({ total: endToEndMs, backend: backendResponseMs, audio: firstAudioMs });
       setResult(data);
       setLiveTranslation(data.translated_text || '');
       rememberSpeaker(data);
@@ -1240,6 +1276,19 @@ function App() {
 
   function updateLatency(metric, ms) {
     setLatencyStats((current) => ({ ...current, [metric]: formatLatencyValue(ms) }));
+  }
+
+  function recordLatencyTurn(entry) {
+    if (!Number.isFinite(entry.total) || entry.total <= 0) return;
+    setLatencyHistory((current) => [
+      ...current,
+      {
+        total: Math.round(entry.total),
+        backend: Number.isFinite(entry.backend) ? Math.round(entry.backend) : null,
+        audio: Number.isFinite(entry.audio) ? Math.round(entry.audio) : null,
+        created_at: Date.now(),
+      },
+    ].slice(-LATENCY_HISTORY_LIMIT));
   }
 
   function resetStreamState() {
@@ -2695,7 +2744,16 @@ function App() {
     { label: 'Audio', value: latencyStats.first_audio },
   ].filter((item) => item.value && item.value !== '-');
   const latencyTotalMs = Number.parseInt(String(latencyStats.end_to_end || ''), 10);
-  const latencyTone = Number.isFinite(latencyTotalMs) && latencyTotalMs <= 1000 ? 'fast' : Number.isFinite(latencyTotalMs) ? 'slow' : 'pending';
+  const latencyTone = Number.isFinite(latencyTotalMs) && latencyTotalMs <= LATENCY_TARGET_MS ? 'fast' : Number.isFinite(latencyTotalMs) ? 'slow' : 'pending';
+  const latencyAverageMs = latencyHistory.length
+    ? Math.round(latencyHistory.reduce((sum, item) => sum + item.total, 0) / latencyHistory.length)
+    : null;
+  const latencyBestMs = latencyHistory.length ? Math.min(...latencyHistory.map((item) => item.total)) : null;
+  const latencyTrendItems = [
+    { label: 'Avg', value: latencyAverageMs ? `${latencyAverageMs}ms` : '-' },
+    { label: 'Best', value: latencyBestMs ? `${latencyBestMs}ms` : '-' },
+  ].filter((item) => item.value !== '-');
+  const latencyTrendTone = latencyAverageMs && latencyAverageMs <= LATENCY_TARGET_MS ? 'fast' : latencyAverageMs ? 'slow' : 'pending';
 
   return (
     <main className="app-shell">
@@ -2792,6 +2850,16 @@ function App() {
           {latencyItems.length > 0 && (
             <div className="latency-strip" data-speed={latencyTone} aria-label="Translation timing">
               {latencyItems.map((item) => (
+                <span className="latency-chip" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </span>
+              ))}
+            </div>
+          )}
+          {latencyTrendItems.length > 0 && (
+            <div className="latency-strip latency-trend" data-speed={latencyTrendTone} aria-label="Recent timing trend">
+              {latencyTrendItems.map((item) => (
                 <span className="latency-chip" key={item.label}>
                   <span>{item.label}</span>
                   <strong>{item.value}</strong>
