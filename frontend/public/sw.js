@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v21-split-tts';
+const CACHE_VERSION = 'v22-tts-cache';
 const CACHE_NAME = `universal-translator-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `universal-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
