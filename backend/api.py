@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import asyncio
 from pathlib import Path
 from uuid import uuid4
 
@@ -58,7 +59,11 @@ metrics = {
     "websocket_connections": 0,
     "websocket_errors": 0,
 }
-RELEASE_ID = "2026-05-13-one-call-voice-v17"
+RELEASE_ID = "2026-05-13-voice-warmup-v18"
+VOICE_WARMUP_TEXTS = {
+    "es": ["Hola, ¿cómo estás?"],
+    "ht": ["Bonjou, kijan ou ye?"],
+}
 logger = logging.getLogger("universal_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 HOP_BY_HOP_HEADERS = {
@@ -231,6 +236,7 @@ def _proxy_frontend(request: Request, full_path: str = "") -> Response:
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
+    voice_warmup_task = None
     runtime_state["models"] = {
         "whisper_device": get_whisper_device(),
         "whisper_compute_type": get_whisper_compute_type(),
@@ -243,8 +249,14 @@ async def lifespan(app_instance: FastAPI):
         runtime_state["models"]["preloaded"] = await run_in_threadpool(pipeline.preload)
     runtime_state["warming"] = False
     runtime_state["ready"] = True
-    yield
-    runtime_state["ready"] = False
+    runtime_state["voice_warmup"] = {"status": "queued", "started_at": time()}
+    voice_warmup_task = asyncio.create_task(_warm_voice_cache("startup"))
+    try:
+        yield
+    finally:
+        if voice_warmup_task:
+            voice_warmup_task.cancel()
+        runtime_state["ready"] = False
 
 
 app = FastAPI(title="Universal Translator", lifespan=lifespan)
@@ -297,6 +309,7 @@ def ready():
         "ready": runtime_state["ready"],
         "uptime_seconds": round(time() - runtime_state["started_at"], 2),
         "models": runtime_state["models"],
+        "voice_warmup": runtime_state.get("voice_warmup"),
     }
 
 
@@ -333,6 +346,7 @@ def diagnostics(request: Request):
         "served_from": str(request.base_url).rstrip("/"),
         "frontend": frontend,
         "models": runtime_state["models"],
+        "voice_warmup": runtime_state.get("voice_warmup"),
         "streaming": {
             "websocket_path": "/ws/audio",
             "vad_silent_checks": get_vad_silent_checks(),
@@ -451,6 +465,32 @@ def _cached_tts_payload(text: str, language: str, response_format: str) -> dict:
             audio_bytes = output_path.read_bytes()
         response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
     return response_dict
+
+
+async def _warm_voice_cache(reason: str) -> None:
+    started_at = time()
+    warmed = []
+    runtime_state["voice_warmup"] = {"status": "running", "started_at": started_at, "reason": reason}
+    for language, texts in VOICE_WARMUP_TEXTS.items():
+        for text in texts:
+            try:
+                payload = await run_in_threadpool(lambda text=text, language=language: _cached_tts_payload(text, language, "url"))
+                warmed.append({
+                    "language": language,
+                    "text": text,
+                    "cache_hit": payload["cache_hit"],
+                    "audio_bytes": payload["audio_bytes"],
+                })
+                observability.record_event("voice_warmup", language=language, cache_hit=payload["cache_hit"], reason=reason)
+            except Exception as exc:
+                logger.warning("voice_warmup_failed language=%s reason=%s error=%s", language, reason, exc)
+                observability.record_event("voice_warmup_failed", language=language, reason=reason, error=exc.__class__.__name__)
+    runtime_state["voice_warmup"] = {
+        "status": "complete",
+        "reason": reason,
+        "latency_seconds": round(time() - started_at, 3),
+        "items": warmed,
+    }
 
 
 @app.get("/tts/audio/{cache_key}.wav")

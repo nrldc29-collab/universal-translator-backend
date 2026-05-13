@@ -77,8 +77,8 @@ const LATENCY_TARGET_MS = 1000;
 const VOICE_WARMUP_COOLDOWN_MS = 5 * 60 * 1000;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
-const EXPECTED_BACKEND_RELEASE = '2026-05-13-one-call-voice-v17';
-const FRONTEND_BUILD_ID = 'one-call-voice-v22';
+const EXPECTED_BACKEND_RELEASE = '2026-05-13-voice-warmup-v18';
+const FRONTEND_BUILD_ID = 'voice-warmup-v23';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -246,6 +246,11 @@ const TARGET_LANGUAGE_OPTIONS = [
   { code: 'ht', label: 'Haitian Creole' },
 ];
 
+const VOICE_WARMUP_PHRASES = {
+  es: 'Hola, ¿cómo estás?',
+  ht: 'Bonjou, kijan ou ye?',
+};
+
 function readPersistedTargetLanguage() {
   try {
     const stored = localStorage.getItem('targetLanguage');
@@ -359,6 +364,14 @@ function App() {
     warmVoiceCache('slow_latency');
   }, [connectionStatus, latencyHistory, playing, processing, streaming]);
 
+  useEffect(() => {
+    if (connectionStatus !== 'online' || processing || playing || streaming) return undefined;
+    const timer = window.setTimeout(() => {
+      warmVoiceCache('language_ready');
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [connectionStatus, playing, processing, streaming, targetLanguage]);
+
   async function copyToClipboard(text, key) {
     if (!text) return;
     try {
@@ -422,7 +435,7 @@ function App() {
   const speechFastPathActiveRef = useRef(false);
   const speechFinalTextRef = useRef('');
   const speechInterimTextRef = useRef('');
-  const voiceWarmupRef = useRef({ inFlight: false, lastAt: 0 });
+  const voiceWarmupRef = useRef({ inFlight: false, lastAtByLanguage: {} });
   const appStateRef = useRef({});
 
   useEffect(() => {
@@ -851,11 +864,24 @@ function App() {
   async function warmVoiceCache(reason = 'idle') {
     const current = voiceWarmupRef.current;
     const now = Date.now();
-    if (current.inFlight || now - current.lastAt < VOICE_WARMUP_COOLDOWN_MS) return false;
+    const language = targetLanguage || 'es';
+    const textToWarm = VOICE_WARMUP_PHRASES[language] || VOICE_WARMUP_PHRASES.es;
+    const lastAt = current.lastAtByLanguage?.[language] || 0;
+    if (current.inFlight || now - lastAt < VOICE_WARMUP_COOLDOWN_MS) return false;
     current.inFlight = true;
-    current.lastAt = now;
+    current.lastAtByLanguage = { ...(current.lastAtByLanguage || {}), [language]: now };
     try {
-      const response = await fetch(`${API_URL}/debug/tts-sample.wav?warm=${encodeURIComponent(reason)}&ts=${now}`, { cache: 'no-store' });
+      const response = await fetch(`${API_URL}/tts`, {
+        method: 'POST',
+        headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
+        cache: 'no-store',
+        body: JSON.stringify({
+          text: textToWarm,
+          language,
+          response_format: 'url',
+          warmup_reason: reason,
+        }),
+      });
       return response.ok;
     } catch (error) {
       console.warn('voice warmup failed:', error);

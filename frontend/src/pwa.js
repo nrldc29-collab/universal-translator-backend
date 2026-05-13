@@ -1,4 +1,4 @@
-const SW_VERSION = 'v24-one-call-voice';
+const SW_VERSION = 'v25-voice-warmup';
 const SW_RELOAD_KEY = `translator_sw_reloaded_${SW_VERSION}`;
 
 function reloadForUpdatedServiceWorker() {
