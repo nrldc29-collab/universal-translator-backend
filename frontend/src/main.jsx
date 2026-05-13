@@ -75,10 +75,11 @@ const LATENCY_HISTORY_KEY = 'translator_latency_history';
 const LATENCY_HISTORY_LIMIT = 12;
 const LATENCY_TARGET_MS = 1000;
 const VOICE_WARMUP_COOLDOWN_MS = 5 * 60 * 1000;
+const VOICE_PREFETCH_TIMEOUT_MS = 4000;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
 const EXPECTED_BACKEND_RELEASE = '2026-05-13-voice-warmup-v18';
-const FRONTEND_BUILD_ID = 'voice-warmup-v23';
+const FRONTEND_BUILD_ID = 'browser-audio-prefetch-v24';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -861,6 +862,27 @@ function App() {
     return Boolean(data?.audio_url || data?.audio_base64);
   }
 
+  async function prefetchAudioUrl(audioUrl, reason = 'warmup') {
+    const directAudioUrl = resolveAudioUrl(audioUrl);
+    if (!directAudioUrl) return false;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), VOICE_PREFETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(directAudioUrl, {
+        cache: 'force-cache',
+        signal: controller.signal,
+      });
+      window.clearTimeout(timeoutId);
+      return response.ok;
+    } catch (error) {
+      window.clearTimeout(timeoutId);
+      if (error?.name !== 'AbortError') {
+        console.warn('voice audio prefetch failed:', reason, error);
+      }
+      return false;
+    }
+  }
+
   async function warmVoiceCache(reason = 'idle') {
     const current = voiceWarmupRef.current;
     const now = Date.now();
@@ -882,7 +904,12 @@ function App() {
           warmup_reason: reason,
         }),
       });
-      return response.ok;
+      if (!response.ok) return false;
+      const data = await response.json().catch(() => null);
+      if (data?.audio_url) {
+        await prefetchAudioUrl(data.audio_url, reason);
+      }
+      return true;
     } catch (error) {
       console.warn('voice warmup failed:', error);
       return false;
