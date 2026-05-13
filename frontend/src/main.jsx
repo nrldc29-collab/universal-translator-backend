@@ -70,14 +70,15 @@ const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
 const MAX_AUDIO_SEND_QUEUE = 10;
 const MAX_BUFFERED_AUDIO_CHUNKS = 30;
 const FAST_SPEECH_TIMEOUT_MS = Number(import.meta.env.VITE_FAST_SPEECH_TIMEOUT_MS || 10000);
+const FAST_TTS_TIMEOUT_MS = Number(import.meta.env.VITE_FAST_TTS_TIMEOUT_MS || 10000);
 const LATENCY_HISTORY_KEY = 'translator_latency_history';
 const LATENCY_HISTORY_LIMIT = 12;
 const LATENCY_TARGET_MS = 1000;
 const VOICE_WARMUP_COOLDOWN_MS = 5 * 60 * 1000;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
-const EXPECTED_BACKEND_RELEASE = '2026-05-12-room-fast-path-v13';
-const FRONTEND_BUILD_ID = 'adaptive-warmup-v18';
+const EXPECTED_BACKEND_RELEASE = '2026-05-13-split-tts-v14';
+const FRONTEND_BUILD_ID = 'split-tts-v19';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -980,6 +981,34 @@ function App() {
     return true;
   }
 
+  async function fetchTranslationVoice(textToSpeak, language, activeAuthToken) {
+    const spokenText = String(textToSpeak || '').trim();
+    if (!spokenText) return null;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), FAST_TTS_TIMEOUT_MS);
+    try {
+      const response = await fetch(`${API_URL}/tts`, {
+        method: 'POST',
+        headers: authHeaders(activeAuthToken, { 'Content-Type': 'application/json' }),
+        signal: controller.signal,
+        body: JSON.stringify({ text: spokenText, language }),
+      });
+      window.clearTimeout(timeoutId);
+      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Voice unavailable'));
+      return await response.json();
+    } catch (error) {
+      window.clearTimeout(timeoutId);
+      if (error?.name === 'AbortError') {
+        setStatus('Voice is slow. Translation is ready.');
+        setPipelineStage('Voice timed out');
+      } else {
+        setStatus(error.message || 'Voice unavailable');
+        setPipelineStage('Voice unavailable');
+      }
+      return null;
+    }
+  }
+
   async function submitRecognizedSpeech(recognizedText) {
     const spokenText = String(recognizedText || '').trim();
     speechFastPathActiveRef.current = false;
@@ -1014,7 +1043,7 @@ function App() {
           text: spokenText,
           source_language: sourceLanguage,
           target_language: targetLanguage,
-          synthesize_audio: true,
+          synthesize_audio: false,
           session_id: sessionId,
           device_id: INITIAL_DEVICE_ID,
           speaker_name: INITIAL_SPEAKER_NAME,
@@ -1027,10 +1056,7 @@ function App() {
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Speech translation failed'));
       const data = await response.json();
       const endToEndMs = Math.round(performance.now() - capturedAt);
-      const firstAudioMs = data.audio_base64 ? endToEndMs : null;
       updateLatency('end_to_end', endToEndMs);
-      if (firstAudioMs) updateLatency('first_audio', firstAudioMs);
-      recordLatencyTurn({ total: endToEndMs, backend: backendResponseMs, audio: firstAudioMs });
       setResult(data);
       setLiveTranslation(data.translated_text || '');
       rememberSpeaker(data);
@@ -1041,11 +1067,23 @@ function App() {
         setClarifyVisible(true);
         setPipelineStage('Clarification needed');
         setStatus(data.clarify_message || 'Clarification requested');
+        recordLatencyTurn({ total: endToEndMs, backend: backendResponseMs, audio: null });
         return;
       }
-      setPipelineStage(data.audio_base64 ? 'Playing voice' : 'Translation ready');
-      setStatus(data.audio_base64 ? 'Playing voice...' : 'Speech translated');
-      const played = await playEmbeddedTranslationAudio(data, 'Ready');
+      setPipelineStage('Translation ready');
+      setStatus('Translation ready. Loading voice...');
+      const voiceData = await fetchTranslationVoice(data.translated_text, targetLanguage, activeAuthToken);
+      const firstAudioMs = voiceData?.audio_base64 ? Math.round(performance.now() - capturedAt) : null;
+      if (firstAudioMs) updateLatency('first_audio', firstAudioMs);
+      recordLatencyTurn({ total: endToEndMs, backend: backendResponseMs, audio: firstAudioMs });
+      if (voiceData?.audio_base64) {
+        setPipelineStage('Playing voice');
+        setStatus('Playing voice...');
+      }
+      const played = await playEmbeddedTranslationAudio(
+        voiceData ? { ...data, ...voiceData, translated_text: data.translated_text } : data,
+        'Ready',
+      );
       if (!played) resumeInterpreterAfterPlayback('Ready');
     } catch (error) {
       window.clearTimeout(timeoutId);
@@ -2775,7 +2813,7 @@ function App() {
   const activeSpeakerLabel = detectedSpeaker && detectedSpeaker !== '-' && detectedSpeaker !== 'Person' ? detectedSpeaker : '';
   const recentConversationTurns = conversationTurns.slice(-4);
   const latencyItems = [
-    { label: 'Total', value: latencyStats.end_to_end },
+    { label: 'Text', value: latencyStats.end_to_end },
     { label: 'Backend', value: latencyStats.backend_response },
     { label: 'Audio', value: latencyStats.first_audio },
   ].filter((item) => item.value && item.value !== '-');

@@ -1,4 +1,4 @@
-const SW_VERSION = 'v20-adaptive-warmup';
+const SW_VERSION = 'v21-split-tts';
 const SW_RELOAD_KEY = `translator_sw_reloaded_${SW_VERSION}`;
 
 function reloadForUpdatedServiceWorker() {

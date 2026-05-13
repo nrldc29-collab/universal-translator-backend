@@ -57,7 +57,7 @@ metrics = {
     "websocket_connections": 0,
     "websocket_errors": 0,
 }
-RELEASE_ID = "2026-05-12-room-fast-path-v13"
+RELEASE_ID = "2026-05-13-split-tts-v14"
 logger = logging.getLogger("universal_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 HOP_BY_HOP_HEADERS = {
@@ -83,6 +83,11 @@ class TextTranslationRequest(BaseModel):
     device_id: str | None = None
     speaker_name: str | None = None
     speaker_mode: str = "auto"
+
+
+class TextToSpeechRequest(BaseModel):
+    text: str
+    language: str = "es"
 
 
 class LoginRequest(BaseModel):
@@ -388,6 +393,39 @@ async def tts_sample():
         logger.exception("tts_sample_failed")
         raise HTTPException(status_code=503, detail=f"TTS sample unavailable: {exc}") from exc
     return FileResponse(str(output_path), media_type="audio/wav", filename="tts-sample.wav", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/tts")
+async def text_to_speech(request: TextToSpeechRequest, identity: str = Depends(authenticate_http)):
+    started_at = time()
+    metrics["http_requests"] += 1
+    usage_limiter.track(identity, "http_requests")
+    usage_limiter.track(identity, "tts_requests")
+    text = request.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required for voice output.")
+    output_path = Path("models/tts") / f"{uuid4()}.wav"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        audio_path = await run_in_threadpool(lambda: pipeline.tts.synthesize(text, str(output_path), language=request.language))
+        audio_bytes = Path(audio_path or output_path).read_bytes()
+        if len(audio_bytes) < 100:
+            raise RuntimeError("TTS returned empty audio.")
+        observability.observe_latency("tts_request", time() - started_at)
+        observability.record_event("tts_request", identity=identity, latency_seconds=time() - started_at)
+        return {
+            "text": text,
+            "language": request.language,
+            "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+            "mime_type": "audio/wav",
+            "audio_output_path": str(audio_path or output_path),
+        }
+    except Exception as exc:
+        usage_limiter.track(identity, "errors")
+        observability.increment("tts_failures_total")
+        observability.record_event("tts_failure", identity=identity)
+        logger.exception("tts_request_failed identity=%s", identity)
+        raise HTTPException(status_code=503, detail=f"Voice unavailable: {exc}") from exc
 
 
 @app.post("/auth/login")
