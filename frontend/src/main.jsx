@@ -73,10 +73,11 @@ const FAST_SPEECH_TIMEOUT_MS = Number(import.meta.env.VITE_FAST_SPEECH_TIMEOUT_M
 const LATENCY_HISTORY_KEY = 'translator_latency_history';
 const LATENCY_HISTORY_LIMIT = 12;
 const LATENCY_TARGET_MS = 1000;
+const VOICE_WARMUP_COOLDOWN_MS = 5 * 60 * 1000;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
 const EXPECTED_BACKEND_RELEASE = '2026-05-12-room-fast-path-v13';
-const FRONTEND_BUILD_ID = 'latency-trend-v17';
+const FRONTEND_BUILD_ID = 'adaptive-warmup-v18';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -110,6 +111,16 @@ function readLatencyHistory() {
   } catch {
     return [];
   }
+}
+
+function summarizeLatencyHistory(history) {
+  if (!history.length) return { average: null, best: null };
+  const totals = history.map((item) => item.total).filter((value) => Number.isFinite(value) && value > 0);
+  if (!totals.length) return { average: null, best: null };
+  return {
+    average: Math.round(totals.reduce((sum, value) => sum + value, 0) / totals.length),
+    best: Math.min(...totals),
+  };
 }
 
 function fallbackSpeakerLabel(speaker) {
@@ -340,6 +351,13 @@ function App() {
     }
   }, [latencyHistory]);
 
+  useEffect(() => {
+    const { average } = summarizeLatencyHistory(latencyHistory);
+    if (!average || average <= LATENCY_TARGET_MS) return;
+    if (connectionStatus !== 'online' || processing || playing || streaming) return;
+    warmVoiceCache('slow_latency');
+  }, [connectionStatus, latencyHistory, playing, processing, streaming]);
+
   async function copyToClipboard(text, key) {
     if (!text) return;
     try {
@@ -403,6 +421,7 @@ function App() {
   const speechFastPathActiveRef = useRef(false);
   const speechFinalTextRef = useRef('');
   const speechInterimTextRef = useRef('');
+  const voiceWarmupRef = useRef({ inFlight: false, lastAt: 0 });
   const appStateRef = useRef({});
 
   useEffect(() => {
@@ -803,6 +822,23 @@ function App() {
       setPipelineStage('Voice test failed');
       setStatus(error.message || 'Voice test failed');
       setLastAudioError({ type: 'voice_test', name: error?.name, message: error?.message });
+    }
+  }
+
+  async function warmVoiceCache(reason = 'idle') {
+    const current = voiceWarmupRef.current;
+    const now = Date.now();
+    if (current.inFlight || now - current.lastAt < VOICE_WARMUP_COOLDOWN_MS) return false;
+    current.inFlight = true;
+    current.lastAt = now;
+    try {
+      const response = await fetch(`${API_URL}/debug/tts-sample.wav?warm=${encodeURIComponent(reason)}&ts=${now}`, { cache: 'no-store' });
+      return response.ok;
+    } catch (error) {
+      console.warn('voice warmup failed:', error);
+      return false;
+    } finally {
+      current.inFlight = false;
     }
   }
 
@@ -2745,10 +2781,7 @@ function App() {
   ].filter((item) => item.value && item.value !== '-');
   const latencyTotalMs = Number.parseInt(String(latencyStats.end_to_end || ''), 10);
   const latencyTone = Number.isFinite(latencyTotalMs) && latencyTotalMs <= LATENCY_TARGET_MS ? 'fast' : Number.isFinite(latencyTotalMs) ? 'slow' : 'pending';
-  const latencyAverageMs = latencyHistory.length
-    ? Math.round(latencyHistory.reduce((sum, item) => sum + item.total, 0) / latencyHistory.length)
-    : null;
-  const latencyBestMs = latencyHistory.length ? Math.min(...latencyHistory.map((item) => item.total)) : null;
+  const { average: latencyAverageMs, best: latencyBestMs } = summarizeLatencyHistory(latencyHistory);
   const latencyTrendItems = [
     { label: 'Avg', value: latencyAverageMs ? `${latencyAverageMs}ms` : '-' },
     { label: 'Best', value: latencyBestMs ? `${latencyBestMs}ms` : '-' },

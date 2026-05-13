@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v19-latency-trend';
+const CACHE_VERSION = 'v20-adaptive-warmup';
 const CACHE_NAME = `universal-translator-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `universal-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
