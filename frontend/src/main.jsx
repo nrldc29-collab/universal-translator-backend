@@ -77,8 +77,8 @@ const LATENCY_TARGET_MS = 1000;
 const VOICE_WARMUP_COOLDOWN_MS = 5 * 60 * 1000;
 const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
-const EXPECTED_BACKEND_RELEASE = '2026-05-13-tts-cache-v15';
-const FRONTEND_BUILD_ID = 'tts-cache-v20';
+const EXPECTED_BACKEND_RELEASE = '2026-05-13-tts-url-v16';
+const FRONTEND_BUILD_ID = 'tts-url-v21';
 const EXPERIMENTAL_IOS_STREAMING = true;
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
@@ -813,8 +813,8 @@ function App() {
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Voice test unavailable'));
       const buffer = await response.arrayBuffer();
       const url = URL.createObjectURL(new Blob([buffer], { type: response.headers.get('content-type') || 'audio/wav' }));
-      const item = { url, buffer, mimeType: 'audio/wav' };
-      if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+      const item = { url, buffer, mimeType: 'audio/wav', objectUrl: true };
+      revokeTtsItemUrl(lastTtsItemRef.current);
       lastTtsItemRef.current = item;
       setAudioReplayAvailable(true);
       playTtsItem(item, { revokeOnFinish: false, manual: true });
@@ -824,6 +824,28 @@ function App() {
       setStatus(error.message || 'Voice test failed');
       setLastAudioError({ type: 'voice_test', name: error?.name, message: error?.message });
     }
+  }
+
+  function resolveAudioUrl(audioUrl) {
+    const rawUrl = String(audioUrl || '').trim();
+    if (!rawUrl) return '';
+    try {
+      const baseUrl = API_URL || window.location.origin;
+      return new URL(rawUrl, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
+    } catch (error) {
+      console.warn('Unable to resolve audio URL:', error);
+      return rawUrl;
+    }
+  }
+
+  function revokeTtsItemUrl(item) {
+    if (item?.url && item.objectUrl) {
+      URL.revokeObjectURL(item.url);
+    }
+  }
+
+  function hasPlayableAudioPayload(data) {
+    return Boolean(data?.audio_url || data?.audio_base64);
   }
 
   async function warmVoiceCache(reason = 'idle') {
@@ -953,17 +975,37 @@ function App() {
   }
 
   async function playEmbeddedTranslationAudio(data, endStatus = 'Voice played') {
-    if (!data?.audio_base64) return false;
+    if (!hasPlayableAudioPayload(data)) return false;
     await ensureAudioUnlocked().catch((e) => console.warn('embedded audio unlock failed:', e));
+    const mimeType = data.mime_type || 'audio/wav';
+    const directAudioUrl = resolveAudioUrl(data.audio_url);
+    if (directAudioUrl) {
+      const item = { url: directAudioUrl, buffer: null, mimeType, objectUrl: false };
+      revokeTtsItemUrl(lastTtsItemRef.current);
+      lastTtsItemRef.current = item;
+      setAudioReplayAvailable(true);
+      setPlaying(true);
+      const playDelay = isIosOrSafariRecorder() ? 300 : 0;
+      window.setTimeout(() => {
+        playTtsItem(item, {
+          revokeOnFinish: false,
+          manual: true,
+          onEnd: () => {
+            setPlaying(false);
+            resumeInterpreterAfterPlayback(endStatus);
+          },
+        });
+      }, playDelay);
+      return true;
+    }
     const binary = atob(data.audio_base64);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
     if (buffer.byteLength < 100) return false;
-    const mimeType = data.mime_type || 'audio/wav';
     const url = URL.createObjectURL(new Blob([buffer], { type: mimeType }));
-    const item = { url, buffer, mimeType };
-    if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+    const item = { url, buffer, mimeType, objectUrl: true };
+    revokeTtsItemUrl(lastTtsItemRef.current);
     lastTtsItemRef.current = item;
     setAudioReplayAvailable(true);
     setPlaying(true);
@@ -991,7 +1033,7 @@ function App() {
         method: 'POST',
         headers: authHeaders(activeAuthToken, { 'Content-Type': 'application/json' }),
         signal: controller.signal,
-        body: JSON.stringify({ text: spokenText, language }),
+        body: JSON.stringify({ text: spokenText, language, response_format: 'url' }),
       });
       window.clearTimeout(timeoutId);
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Voice unavailable'));
@@ -1073,10 +1115,10 @@ function App() {
       setPipelineStage('Translation ready');
       setStatus('Translation ready. Loading voice...');
       const voiceData = await fetchTranslationVoice(data.translated_text, targetLanguage, activeAuthToken);
-      const firstAudioMs = voiceData?.audio_base64 ? Math.round(performance.now() - capturedAt) : null;
+      const firstAudioMs = hasPlayableAudioPayload(voiceData) ? Math.round(performance.now() - capturedAt) : null;
       if (firstAudioMs) updateLatency('first_audio', firstAudioMs);
       recordLatencyTurn({ total: endToEndMs, backend: backendResponseMs, audio: firstAudioMs });
-      if (voiceData?.audio_base64) {
+      if (hasPlayableAudioPayload(voiceData)) {
         setPipelineStage('Playing voice');
         setStatus('Playing voice...');
       }
@@ -1988,8 +2030,8 @@ function App() {
           console.warn('UPLOAD: audio buffer too small for WAV header');
         }
         const url = URL.createObjectURL(new Blob([buffer], { type: data.mime_type || 'audio/wav' }));
-        const item = { url, buffer, mimeType: data.mime_type || 'audio/wav' };
-        if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+        const item = { url, buffer, mimeType: data.mime_type || 'audio/wav', objectUrl: true };
+        revokeTtsItemUrl(lastTtsItemRef.current);
         lastTtsItemRef.current = item;
         setAudioReplayAvailable(true);
         setPlaying(true);
@@ -2225,8 +2267,8 @@ function App() {
             }
             const chunk = chunks[index];
             const url = URL.createObjectURL(new Blob([chunk], { type: 'audio/wav' }));
-            const item = { url, buffer: chunk, mimeType: 'audio/wav' };
-            if (lastTtsItemRef.current?.url) URL.revokeObjectURL(lastTtsItemRef.current.url);
+            const item = { url, buffer: chunk, mimeType: 'audio/wav', objectUrl: true };
+            revokeTtsItemUrl(lastTtsItemRef.current);
             lastTtsItemRef.current = item;
             setAudioReplayAvailable(true);
             console.log(`Playing chunk ${index + 1}/${chunks.length}, size: ${chunk.byteLength} bytes`);
@@ -2377,7 +2419,7 @@ function App() {
       if (finished) return;
       finished = true;
       currentTtsFinishRef.current = null;
-      if (revokeOnFinish) URL.revokeObjectURL(item.url);
+      if (revokeOnFinish) revokeTtsItemUrl(item);
       ttsPlayingRef.current = false;
       setTtsPlaying(false);
       if (onEnd) onEnd();
@@ -2551,6 +2593,12 @@ function App() {
       return;
     }
 
+    if (!item.buffer) {
+      console.log('playTtsItem: direct audio URL, using HTML audio');
+      playWithHtmlAudio();
+      return;
+    }
+
     console.log('playTtsItem: trying AudioContext path');
     ensureAudioContext()
       .then((context) => {
@@ -2596,8 +2644,9 @@ function App() {
     const item = lastTtsItemRef.current;
     if (!item) return;
     if (item.buffer) {
-      if (item.url) URL.revokeObjectURL(item.url);
+      revokeTtsItemUrl(item);
       item.url = URL.createObjectURL(new Blob([item.buffer], { type: item.mimeType || 'audio/wav' }));
+      item.objectUrl = true;
     }
     playTtsItem(item, { revokeOnFinish: false, manual: true });
   }

@@ -58,7 +58,7 @@ metrics = {
     "websocket_connections": 0,
     "websocket_errors": 0,
 }
-RELEASE_ID = "2026-05-13-tts-cache-v15"
+RELEASE_ID = "2026-05-13-tts-url-v16"
 logger = logging.getLogger("universal_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 HOP_BY_HOP_HEADERS = {
@@ -89,6 +89,7 @@ class TextTranslationRequest(BaseModel):
 class TextToSpeechRequest(BaseModel):
     text: str
     language: str = "es"
+    response_format: str = "base64"
 
 
 class LoginRequest(BaseModel):
@@ -396,6 +397,28 @@ async def tts_sample():
     return FileResponse(str(output_path), media_type="audio/wav", filename="tts-sample.wav", headers={"Cache-Control": "no-store"})
 
 
+def _tts_cache_path(cache_key: str) -> Path:
+    return Path("models/tts/cache") / f"{cache_key}.wav"
+
+
+def _is_tts_cache_key(cache_key: str) -> bool:
+    return len(cache_key) == 64 and all(character in "0123456789abcdef" for character in cache_key)
+
+
+@app.get("/tts/audio/{cache_key}.wav")
+async def cached_tts_audio(cache_key: str):
+    if not _is_tts_cache_key(cache_key):
+        raise HTTPException(status_code=404, detail="Voice audio not found.")
+    output_path = _tts_cache_path(cache_key)
+    if not output_path.is_file() or output_path.stat().st_size < 100:
+        raise HTTPException(status_code=404, detail="Voice audio not found.")
+    return FileResponse(
+        str(output_path),
+        media_type="audio/wav",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
 @app.post("/tts")
 async def text_to_speech(request: TextToSpeechRequest, identity: str = Depends(authenticate_http)):
     started_at = time()
@@ -405,15 +428,18 @@ async def text_to_speech(request: TextToSpeechRequest, identity: str = Depends(a
     text = request.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="Text is required for voice output.")
+    response_format = (request.response_format or "base64").strip().lower()
+    if response_format not in {"base64", "url", "both"}:
+        raise HTTPException(status_code=400, detail="response_format must be base64, url, or both.")
     cache_dir = Path("models/tts/cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_key = hashlib.sha256(f"{request.language}\0{text}".encode("utf-8")).hexdigest()
-    output_path = cache_dir / f"{cache_key}.wav"
+    output_path = _tts_cache_path(cache_key)
     cache_hit = output_path.is_file() and output_path.stat().st_size >= 100
     try:
-        if cache_hit:
-            audio_bytes = output_path.read_bytes()
-        else:
+        audio_bytes = None
+        audio_size = output_path.stat().st_size if cache_hit else 0
+        if not cache_hit:
             temp_path = Path("models/tts") / f"{uuid4()}.wav"
             temp_path.parent.mkdir(parents=True, exist_ok=True)
             rendered_path = Path(await run_in_threadpool(lambda: pipeline.tts.synthesize(text, str(temp_path), language=request.language)) or temp_path)
@@ -421,21 +447,28 @@ async def text_to_speech(request: TextToSpeechRequest, identity: str = Depends(a
             if len(audio_bytes) < 100:
                 raise RuntimeError("TTS returned empty audio.")
             output_path.write_bytes(audio_bytes)
+            audio_size = len(audio_bytes)
             if rendered_path != output_path:
                 try:
                     rendered_path.unlink(missing_ok=True)
                 except Exception:
                     pass
         observability.observe_latency("tts_request", time() - started_at)
-        observability.record_event("tts_request", identity=identity, latency_seconds=time() - started_at, cache_hit=cache_hit)
-        return {
+        observability.record_event("tts_request", identity=identity, latency_seconds=time() - started_at, cache_hit=cache_hit, response_format=response_format)
+        response_dict = {
             "text": text,
             "language": request.language,
-            "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
             "mime_type": "audio/wav",
             "audio_output_path": str(output_path),
+            "audio_url": f"/tts/audio/{cache_key}.wav",
+            "audio_bytes": audio_size,
             "cache_hit": cache_hit,
         }
+        if response_format in {"base64", "both"}:
+            if audio_bytes is None:
+                audio_bytes = output_path.read_bytes()
+            response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
+        return response_dict
     except Exception as exc:
         usage_limiter.track(identity, "errors")
         observability.increment("tts_failures_total")
