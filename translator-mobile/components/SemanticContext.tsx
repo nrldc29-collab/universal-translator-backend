@@ -15,7 +15,7 @@ export default function SemanticContext({ context }: SemanticContextProps) {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Semantic Context</Text>
+      <Text style={styles.title}>Conversation Brain</Text>
       
       <View style={styles.row}>
         <View style={styles.badge}>
@@ -45,16 +45,16 @@ export default function SemanticContext({ context }: SemanticContextProps) {
 const styles = StyleSheet.create({
   container: {
     padding: 15,
-    backgroundColor: '#0c1729',
-    borderRadius: 12,
+    backgroundColor: '#07111f',
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#24344f',
+    borderColor: 'rgba(103, 232, 249, 0.18)',
     marginBottom: 15,
   },
   title: {
-    color: '#60a5fa',
+    color: '#67e8f9',
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: '900',
     marginBottom: 10,
     textTransform: 'uppercase',
   },
@@ -66,17 +66,17 @@ const styles = StyleSheet.create({
   badge: {
     flex: 1,
     padding: 8,
-    backgroundColor: '#1e3a8a',
+    backgroundColor: 'rgba(8, 145, 178, 0.28)',
     borderRadius: 8,
     alignItems: 'center',
   },
   moodBadge: {
-    backgroundColor: '#7c3aed',
+    backgroundColor: 'rgba(20, 184, 166, 0.24)',
   },
   badgeText: {
     color: '#e5ecff',
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: '900',
   },
   topicsContainer: {
     marginTop: 5,
@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
   topicChip: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: '#1e293b',
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
     borderRadius: 12,
   },
   topicText: {

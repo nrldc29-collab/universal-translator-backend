@@ -90,7 +90,7 @@ class WhisperSpeechToText:
             try:
                 try:
                     return self._run_transcribe(model, str(path), source_language)
-                except Exception as exc:
+                except (RuntimeError, ValueError, OSError) as exc:
                     logger.warning(
                         "Whisper failed to read %s (%s); attempting ffmpeg transcode fallback",
                         audio_path,

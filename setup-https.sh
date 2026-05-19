@@ -1,11 +1,11 @@
 #!/bin/bash
-# Set up HTTPS for Universal Translator backend using Let's Encrypt
+# Set up HTTPS for Anai Translator backend using Let's Encrypt
 # Usage: ./setup-https.sh your-domain.com
 
 set -e
 
 DOMAIN=$1
-SERVICE_NAME="universal-translator"
+SERVICE_NAME="anai-translator"
 NGINX_CONFIG="/etc/nginx/sites-available/$SERVICE_NAME"
 
 if [ -z "$DOMAIN" ]; then

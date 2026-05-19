@@ -1,0 +1,83 @@
+# Grafana Dashboards Configuration
+# Configures default dashboards for STT Platform
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: stt
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+
+    providers:
+      - name: 'STT Platform Dashboards'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /etc/grafana/provisioning/dashboards
+
+  stt-gateway-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "STT Gateway Metrics",
+        "panels": [
+          {
+            "title": "Active WebSocket Connections",
+            "targets": [
+              {
+                "expr": "stt_active_connections"
+              }
+            ]
+          },
+          {
+            "title": "Sessions Started Rate",
+            "targets": [
+              {
+                "expr": "rate(stt_sessions_started_total[5m])"
+              }
+            ]
+          },
+          {
+            "title": "Audio Bytes Received Rate",
+            "targets": [
+              {
+                "expr": "rate(stt_audio_bytes_received_total[5m])"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+  stt-triton-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "Triton Backend Metrics",
+        "panels": [
+          {
+            "title": "Inference Request Duration",
+            "targets": [
+              {
+                "expr": "nv_inference_request_duration_us"
+              }
+            ]
+          },
+          {
+            "title": "Inference Queue Duration",
+            "targets": [
+              {
+                "expr": "nv_inference_queue_duration_us"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+# Apply with:
+# kubectl apply -f infra/k8s/grafana-dashboards.yaml

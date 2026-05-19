@@ -1,0 +1,45 @@
+# KEDA ScaledObjects for auto-scaling based on custom metrics
+# These objects configure KEDA to scale the STT gateway based on active WebSocket
+# connections and the Triton backend based on inference queue duration.
+
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: stt-gateway-active-websockets
+  namespace: stt
+spec:
+  scaleTargetRef:
+    name: stt-gateway
+  minReplicaCount: 2
+  maxReplicaCount: 20
+  pollingInterval: 15
+  cooldownPeriod: 120
+  triggers:
+    # Scale based on active WebSocket connections stored in Redis list
+    - type: redis
+      metadata:
+        address: redis.stt.svc.cluster.local:6379
+        listName: active_websocket_connections
+        listLength: "100"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: triton-queue-duration
+  namespace: stt
+spec:
+  scaleTargetRef:
+    name: triton-parakeet
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  pollingInterval: 15
+  cooldownPeriod: 180
+  triggers:
+    # Scale based on Triton inference queue duration from Prometheus
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring.svc.cluster.local:9090
+        metricName: nv_inference_queue_duration_us
+        threshold: "5000"
+        query: |
+          avg(nv_inference_queue_duration_us{pod=~"triton-parakeet-.*"})

@@ -1,0 +1,188 @@
+"""Pure helpers used by `backend.streaming`.
+
+These were extracted from `backend.streaming` to keep that module
+focused on the WebSocket handlers. `backend.streaming` re-exports them
+so existing callers (api.py, tests) keep working unchanged.
+
+Each helper is small, pure, and side-effect-free except for
+`stream_debug_log`, which prints when the hot-path logging flag is on.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+import unicodedata
+
+from fastapi.concurrency import run_in_threadpool
+
+from backend.cip_client import call_cip_brain as call_cip_brain_sync
+from backend.config import (
+    get_partial_translation_min_words,
+    get_pipeline_step_timeout_seconds,
+    get_stream_hot_path_logging,
+    get_tts_chunk_chars,
+    get_tts_first_chunk_chars,
+)
+
+
+def stream_debug_log(*args) -> None:
+    """Print to stdout when STREAM_HOT_PATH_LOGGING=1; otherwise no-op."""
+
+    if get_stream_hot_path_logging():
+        print(*args, flush=True)
+
+
+def chunk_text_for_tts(text: str, max_chars: int | None = None) -> list[str]:
+    """Split `text` into TTS-friendly chunks, with a small first chunk.
+
+    The first chunk is intentionally smaller (capped at
+    `TTS_FIRST_CHUNK_CHARS`) so the user hears audio sooner.
+    """
+
+    max_chars = max_chars or get_tts_chunk_chars()
+    parts = re.split(r"(?<=[.!?;:,])\s+", text.strip())
+    chunks: list[str] = []
+    current = ""
+
+    for part in parts:
+        if not part:
+            continue
+        words = part.split()
+        for word in words or [part]:
+            if len(current) + len(word) + 1 <= max_chars:
+                current = f"{current} {word}".strip()
+                continue
+            if current:
+                chunks.append(current)
+            current = word
+
+    if current:
+        chunks.append(current)
+
+    if chunks:
+        first_max = max(6, min(get_tts_first_chunk_chars(), max_chars))
+        if len(chunks[0]) > first_max:
+            first = chunks[0][:first_max].rstrip()
+            rest = chunks[0][first_max:].lstrip()
+            new_chunks = [first]
+            if rest:
+                new_chunks.extend(chunk_text_for_tts(rest, max_chars))
+            chunks = new_chunks + chunks[1:]
+
+    return chunks or [text]
+
+
+def should_translate_partial(text: str) -> bool:
+    """Return True when a partial transcript is worth translating live."""
+
+    normalized = text.strip()
+    if not normalized:
+        return False
+    return (
+        bool(re.search(r"[.!?;:,]\s*$", normalized))
+        or len(normalized.split()) >= get_partial_translation_min_words()
+    )
+
+
+def normalize_live_text(text: str) -> str:
+    """Collapse whitespace in a live caption string."""
+
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def normalized_word(value: str) -> str:
+    """Strip diacritics and surrounding punctuation, lowercase."""
+
+    folded = unicodedata.normalize("NFKD", value or "")
+    folded = "".join(char for char in folded if not unicodedata.combining(char))
+    return re.sub(r"^[^\w]+|[^\w]+$", "", folded).lower()
+
+
+def folded_live_text(value: str) -> str:
+    return " ".join(normalized_word(word) for word in normalize_live_text(value).split())
+
+
+def live_translation_delta(previous: str, current: str) -> str:
+    """Return only the newly translated words that are safe to speak live."""
+
+    previous = normalize_live_text(previous)
+    current = normalize_live_text(current)
+    if not current:
+        return ""
+    if not previous:
+        return current
+    if current.lower().startswith(previous.lower()):
+        return current[len(previous):].lstrip(" \t\r\n,;:.!?")
+
+    previous_words = previous.split()
+    current_words = current.split()
+    common = 0
+    for previous_word, current_word in zip(previous_words, current_words):
+        if normalized_word(previous_word) != normalized_word(current_word):
+            break
+        common += 1
+    if common >= len(previous_words):
+        return " ".join(current_words[common:]).lstrip(" \t\r\n,;:.!?")
+    return ""
+
+
+def is_speakable_live_delta(text: str) -> bool:
+    normalized = normalize_live_text(text)
+    return len(normalized) >= 2 and bool(re.search(r"\w", normalized))
+
+
+def audio_suffix_for_mime(mime_type: str | None) -> str:
+    """Map a MIME type to a sensible audio file suffix."""
+
+    value = (mime_type or "").lower()
+    if "mp4" in value or "aac" in value or "m4a" in value:
+        return ".m4a"
+    if "ogg" in value:
+        return ".ogg"
+    if "wav" in value:
+        return ".wav"
+    return ".webm"
+
+
+def extract_client_voice_active(payload: dict):
+    """Return the client-side VAD signal from a stream payload."""
+
+    return payload.get("voice_active", payload.get("client_voice_active"))
+
+
+class PipelineStepTimeout(RuntimeError):
+    """Raised when a single pipeline step exceeds its budget."""
+
+
+async def run_pipeline_step(label: str, call, *args):
+    """Run `call(*args)` in a threadpool with the configured timeout."""
+
+    timeout = get_pipeline_step_timeout_seconds()
+    try:
+        return await asyncio.wait_for(run_in_threadpool(call, *args), timeout=timeout)
+    except asyncio.TimeoutError as exc:
+        raise PipelineStepTimeout(f"{label} timed out after {timeout:g}s.") from exc
+
+
+async def call_cip_brain(text: str, target_language: str, session_id: str, **kwargs) -> dict | None:
+    """Async wrapper around the synchronous CIP brain client."""
+
+    return await run_in_threadpool(call_cip_brain_sync, text, target_language, session_id, **kwargs)
+
+
+__all__ = [
+    "stream_debug_log",
+    "chunk_text_for_tts",
+    "should_translate_partial",
+    "normalize_live_text",
+    "normalized_word",
+    "folded_live_text",
+    "live_translation_delta",
+    "is_speakable_live_delta",
+    "audio_suffix_for_mime",
+    "extract_client_voice_active",
+    "PipelineStepTimeout",
+    "run_pipeline_step",
+    "call_cip_brain",
+]

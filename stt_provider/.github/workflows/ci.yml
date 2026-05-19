@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  server-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsndfile1
+
+      - name: Install Python dependencies
+        run: |
+          cd server
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e ".[dev]"
+
+      - name: Import server modules
+        run: |
+          cd server
+          python - <<'PY'
+          import stt_server.config
+          import stt_server.vad
+          import stt_server.streaming
+          import stt_server.model
+          import stt_server.main
+          print("imports ok")
+          PY
+
+      - name: Run unit tests
+        run: |
+          cd server
+          pytest
+
+      - name: Start server
+        run: |
+          cd server
+          cat > .env <<'EOF'
+          STT_API_KEY=ci-test-key
+          STT_API_KEYS=browser:ci-test-key,cli:ci-second-key
+          EOF
+          uvicorn stt_server.main:app --host 0.0.0.0 --port 8000 &
+          echo $! > server.pid
+          sleep 15
+
+      - name: Run smoke tests
+        env:
+          STT_API_KEY: ci-test-key
+        run: |
+          cd server
+          python scripts/smoke_test_http.py
+
+      - name: Run WebSocket verification
+        run: |
+          python -m pip install websockets==14.1
+          python deploy/scripts/verify-websocket.py \
+            --base-url http://localhost:8000 \
+            --api-key ci-test-key
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs
+          path: |
+            server/logs/
+            server/server.pid
+          if-no-files-found: ignore
+
+      - name: Stop server
+        if: always()
+        run: |
+          cd server
+          if [ -f server.pid ]; then
+            kill "$(cat server.pid)" || true
+          fi

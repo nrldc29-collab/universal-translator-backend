@@ -1,0 +1,141 @@
+# Kubernetes CronJob for Automated Backups
+# Schedules regular backups of PostgreSQL, Redis, and secrets
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: stt
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: backup
+              image: postgres:15-alpine
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  POD_NAME=$(kubectl get pod -n stt -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+                  kubectl exec -n stt ${POD_NAME} -- pg_dump -U stt -d stt > /backup/postgres_$(date +%Y%m%d_%H%M%S).sql
+                  gzip /backup/postgres_*.sql
+                  aws s3 cp /backup/postgres_*.sql.gz s3://your-backup-bucket/stt/postgres/
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: secret-access-key
+              volumeMounts:
+                - name: backup-volume
+                  mountPath: /backup
+          volumes:
+            - name: backup-volume
+              emptyDir: {}
+          restartPolicy: OnFailure
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-backup
+  namespace: stt
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: backup
+              image: redis:7-alpine
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  POD_NAME=$(kubectl get pod -n stt -l app=redis -o jsonpath='{.items[0].metadata.name}')
+                  kubectl exec -n stt ${POD_NAME} -- redis-cli BGSAVE
+                  sleep 5
+                  kubectl cp stt/${POD_NAME}:/data/dump.rdb /backup/redis_$(date +%Y%m%d_%H%M%S).rdb
+                  gzip /backup/redis_*.rdb
+                  aws s3 cp /backup/redis_*.rdb.gz s3://your-backup-bucket/stt/redis/
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: secret-access-key
+              volumeMounts:
+                - name: backup-volume
+                  mountPath: /backup
+          volumes:
+            - name: backup-volume
+              emptyDir: {}
+          restartPolicy: OnFailure
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: secrets-backup
+  namespace: stt
+spec:
+  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: backup
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  kubectl get secrets -n stt -o yaml > /backup/secrets_$(date +%Y%m%d_%H%M%S).yaml
+                  gpg --encrypt --recipient your-email@example.com --output /backup/secrets_$(date +%Y%m%d_%H%M%S).yaml.enc /backup/secrets_*.yaml
+                  rm /backup/secrets_*.yaml
+                  aws s3 cp /backup/secrets_*.yaml.enc s3://your-backup-bucket/stt/secrets/
+              env:
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: aws-credentials
+                      key: secret-access-key
+              volumeMounts:
+                - name: backup-volume
+                  mountPath: /backup
+          volumes:
+            - name: backup-volume
+              emptyDir: {}
+          restartPolicy: OnFailure
+
+# Apply with:
+# kubectl apply -f scripts/schedule-backups-cronjob.yaml

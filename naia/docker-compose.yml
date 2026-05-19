@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  naia:
+    build: .
+    container_name: naia-runtime
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NAIA_API_KEYS=${NAIA_API_KEYS:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ./memory:/app/memory
+      - ./runtime:/app/runtime
+      - ./governance:/app/governance
+      - ./experiments:/app/experiments
+      - ./telemetry:/app/telemetry
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # Optional: Add a PostgreSQL database for production (Phase 6 task 20)
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: naia-postgres
+  #   environment:
+  #     - POSTGRES_DB=naia
+  #     - POSTGRES_USER=naia
+  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+  # Optional: Add Redis for caching
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: naia-redis
+  #   restart: unless-stopped
+
+volumes:
+  postgres_data:

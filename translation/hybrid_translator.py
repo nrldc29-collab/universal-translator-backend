@@ -25,7 +25,7 @@ class HybridTranslator:
             return lightweight_result
         try:
             return self.remote.translate(text, source_language, target_language)
-        except Exception:
+        except (ConnectionError, TimeoutError, RuntimeError, ValueError):
             if os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "0") != "1":
-                raise
+                return lightweight_result
             return self.marian.translate(text, source_language, target_language)

@@ -1,0 +1,15 @@
+venv/
+.venv/
+node_modules/
+dist/
+web-build/
+.expo/
+models/
+logs/
+archive/
+research/
+*.wav
+*.mp3
+*.m4a
+*.webm
+package-lock.json

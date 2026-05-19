@@ -70,7 +70,7 @@ function Invoke-Git {
 }
 
 Write-Output ""
-Write-Output "Universal Translator deployment preflight"
+Write-Output "Anai Translator deployment preflight"
 Write-Output "Root: $Root"
 Write-Output ""
 

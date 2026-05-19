@@ -9,7 +9,7 @@ interface GradientHeaderProps {
 export default function GradientHeader({ title, subtitle }: GradientHeaderProps) {
   return (
     <LinearGradient
-      colors={['#1e3a8a', '#0f172a']}
+      colors={['#06111f', '#082f49', '#020617']}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.container}
@@ -24,18 +24,20 @@ const styles = StyleSheet.create({
   container: {
     padding: 20,
     paddingTop: 40,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    marginBottom: 20,
+    borderBottomLeftRadius: 32,
+    borderBottomRightRadius: 32,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(103, 232, 249, 0.22)',
   },
   title: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: '#fff',
+    fontSize: 38,
+    fontWeight: "900",
+    color: '#f8fafc',
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
-    color: '#93a4bd',
+    color: '#a5f3fc',
   },
 });

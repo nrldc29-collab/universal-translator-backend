@@ -1,10 +1,10 @@
 #!/bin/bash
-# Test Universal Translator Backend
+# Test Anai Translator Backend
 # Usage: ./test-backend.sh [http://localhost:8000]
 
 BACKEND=${1:-http://localhost:8000}
 
-echo "=== Testing Universal Translator Backend ==="
+echo "=== Testing Anai Translator Backend ==="
 echo "Target: $BACKEND"
 echo ""
 
@@ -57,7 +57,7 @@ curl -s -X POST "$BACKEND/translate/text" \
 echo ""
 echo "=== WebSocket Test ==="
 echo "WebSocket endpoint should be at: ${BACKEND//http/ws}/ws/audio"
-echo "Test with frontend: https://frontend-one-henna-99jlsna6ki.vercel.app"
+echo "Test with frontend: https://your-frontend.example.com"
 echo ""
 
 if command -v wscat &> /dev/null; then

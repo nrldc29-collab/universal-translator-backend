@@ -32,8 +32,8 @@ class ConversationBrain:
         self.turn_counter = 0
         self.active_since = 0.0
         self.playback_since = 0.0
-        self.soft_overlap_seconds = 1.2
-        self.interruption_grace_seconds = 0.8
+        self.soft_overlap_seconds = 0.35
+        self.interruption_grace_seconds = 0.15
         self.semantic_history: list[SemanticTurn] = []
         self.topic_counts: dict[str, int] = {}
         self.last_intent: str = "statement"

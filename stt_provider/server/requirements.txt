@@ -1,0 +1,41 @@
+# Core web framework and server
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+websockets==14.1
+
+# Configuration and environment
+python-dotenv==1.0.1
+pydantic==2.13.4
+pydantic-settings==2.14.1
+
+# Audio processing and ML
+numpy==2.2.1
+scipy
+soundfile==0.12.1
+faster-whisper==1.1.0
+
+# Voice activity detection
+webrtcvad==2.0.10
+
+# HTTP utilities
+python-multipart==0.0.20
+requests==2.32.5
+httpx
+
+# Rate limiting
+slowapi==0.1.9
+
+# Security and encryption
+cryptography
+
+# Database support (optional)
+asyncpg
+
+# Redis support (optional)
+redis
+
+# Triton Inference Server client (optional)
+tritonclient[all]
+
+# Build system (pinned to avoid setuptools 81+ breaking changes)
+setuptools<81

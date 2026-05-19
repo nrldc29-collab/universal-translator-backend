@@ -45,10 +45,10 @@ if (-not $RepoUrl) {
     Write-Output "Create an empty GitHub repo first:"
     Write-Output "  https://github.com/new"
     Write-Output ""
-    Write-Output "Good name: universal-translator"
+    Write-Output "Good name: anai-translator"
     Write-Output "Do not add a README, .gitignore, or license on GitHub because this repo already has files."
     Write-Output ""
-    $RepoUrl = Read-Host "Paste the GitHub repo URL, for example https://github.com/YOURNAME/universal-translator.git"
+    $RepoUrl = Read-Host "Paste the GitHub repo URL, for example https://github.com/YOURNAME/anai-translator.git"
 }
 
 if (-not $RepoUrl) {

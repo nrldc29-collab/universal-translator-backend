@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 from collections import defaultdict
+from threading import RLock
 from time import time
 
 from fastapi import Header, HTTPException, WebSocket
@@ -34,73 +35,80 @@ class UsageLimiter:
             "errors": 0,
             "last_seen": 0.0,
         })
+        self._lock = RLock()
 
     def check(self, identity: str) -> tuple[bool, int]:
-        now = time()
-        minute_start = now - 60
-        minute_requests = [timestamp for timestamp in self.minute_usage[identity] if timestamp >= minute_start]
-        self.minute_usage[identity] = minute_requests
-        if len(minute_requests) >= get_requests_per_minute():
-            return False, 0
-        minute_requests.append(now)
+        with self._lock:
+            now = time()
+            minute_start = now - 60
+            minute_requests = [timestamp for timestamp in self.minute_usage[identity] if timestamp >= minute_start]
+            self.minute_usage[identity] = minute_requests
+            if len(minute_requests) >= get_requests_per_minute():
+                return False, 0
+            minute_requests.append(now)
 
-        window_start = now - 3600
-        requests = [timestamp for timestamp in self.usage[identity] if timestamp >= window_start]
-        self.usage[identity] = requests
-        limit = get_quota_limit()
-        if len(requests) >= limit:
-            return False, 0
-        requests.append(now)
-        return True, limit - len(requests)
+            window_start = now - 3600
+            requests = [timestamp for timestamp in self.usage[identity] if timestamp >= window_start]
+            self.usage[identity] = requests
+            limit = get_quota_limit()
+            if len(requests) >= limit:
+                return False, 0
+            requests.append(now)
+            return True, limit - len(requests)
 
     def check_audio_seconds(self, identity: str, seconds: float) -> tuple[bool, float]:
-        tier = get_user_tiers().get(identity, "free")
-        if tier == "pro":
-            return True, float("inf")
+        with self._lock:
+            tier = get_user_tiers().get(identity, "free")
+            if tier == "pro":
+                return True, float("inf")
 
-        now = time()
-        day_start = now - 86400
-        records = [(timestamp, used_seconds) for timestamp, used_seconds in self.audio_usage[identity] if timestamp >= day_start]
-        used = sum(used_seconds for timestamp, used_seconds in records)
-        limit = get_free_daily_audio_minutes() * 60
-        if used + seconds > limit:
+            now = time()
+            day_start = now - 86400
+            records = [(timestamp, used_seconds) for timestamp, used_seconds in self.audio_usage[identity] if timestamp >= day_start]
+            used = sum(used_seconds for timestamp, used_seconds in records)
+            limit = get_free_daily_audio_minutes() * 60
+            if used + seconds > limit:
+                self.audio_usage[identity] = records
+                return False, max(0, limit - used)
+            records.append((now, seconds))
             self.audio_usage[identity] = records
-            return False, max(0, limit - used)
-        records.append((now, seconds))
-        self.audio_usage[identity] = records
-        return True, max(0, limit - used - seconds)
+            return True, max(0, limit - used - seconds)
 
     def track(self, identity: str, metric: str, amount: float = 1) -> None:
-        record = self.billing_usage[identity]
-        record[metric] = record.get(metric, 0) + amount
-        record["last_seen"] = time()
+        with self._lock:
+            record = self.billing_usage[identity]
+            record[metric] = record.get(metric, 0) + amount
+            record["last_seen"] = time()
 
     def track_audio(self, identity: str, seconds: float, metric: str = "audio_translations") -> None:
         self.track(identity, metric, 1)
         self.track(identity, "audio_seconds", seconds)
 
     def snapshot(self) -> dict:
-        now = time()
-        return {
-            identity: len([timestamp for timestamp in timestamps if timestamp >= now - 3600])
-            for identity, timestamps in self.usage.items()
-        }
+        with self._lock:
+            now = time()
+            return {
+                identity: len([timestamp for timestamp in timestamps if timestamp >= now - 3600])
+                for identity, timestamps in self.usage.items()
+            }
 
     def audio_snapshot(self) -> dict:
-        now = time()
-        return {
-            identity: round(sum(seconds for timestamp, seconds in records if timestamp >= now - 86400) / 60, 2)
-            for identity, records in self.audio_usage.items()
-        }
+        with self._lock:
+            now = time()
+            return {
+                identity: round(sum(seconds for timestamp, seconds in records if timestamp >= now - 86400) / 60, 2)
+                for identity, records in self.audio_usage.items()
+            }
 
     def billing_snapshot(self) -> dict:
-        return {
-            identity: {
-                **record,
-                "audio_minutes": round(record.get("audio_seconds", 0) / 60, 2),
+        with self._lock:
+            return {
+                identity: {
+                    **record,
+                    "audio_minutes": round(record.get("audio_seconds", 0) / 60, 2),
+                }
+                for identity, record in self.billing_usage.items()
             }
-            for identity, record in self.billing_usage.items()
-        }
 
 
 usage_limiter = UsageLimiter()
@@ -131,19 +139,24 @@ def verify_jwt(token: str | None) -> str | None:
     if not token or token.count(".") != 2:
         return None
     header_b64, payload_b64, signature_b64 = token.split(".")
-    signing_input = f"{header_b64}.{payload_b64}"
-    expected = hmac.new(get_jwt_secret().encode("utf-8"), signing_input.encode("ascii"), hashlib.sha256).digest()
     try:
+        signing_input = f"{header_b64}.{payload_b64}"
+        signing_bytes = signing_input.encode("ascii")
         actual = _b64url_decode(signature_b64)
         header = json.loads(_b64url_decode(header_b64))
         payload = json.loads(_b64url_decode(payload_b64))
-    except Exception:
+    except (ValueError, json.JSONDecodeError, TypeError):
         return None
+    expected = hmac.new(get_jwt_secret().encode("utf-8"), signing_bytes, hashlib.sha256).digest()
     if header.get("alg") != "HS256" or header.get("typ") != "JWT":
         return None
     if not hmac.compare_digest(actual, expected):
         return None
-    if int(payload.get("exp", 0)) < int(time()):
+    try:
+        expires_at = int(payload.get("exp", 0))
+    except (TypeError, ValueError):
+        return None
+    if expires_at < int(time()):
         return None
     subject = payload.get("sub")
     return subject if isinstance(subject, str) and subject else None

@@ -1,10 +1,10 @@
 #!/bin/bash
-# Universal Translator Backend Deployment Script
+# Anai Translator Backend Deployment Script
 # Run this on your Linux server to deploy the backend
 
 set -e  # Exit on error
 
-echo "=== Universal Translator Backend Deployment ==="
+echo "=== Anai Translator Backend Deployment ==="
 echo ""
 
 # Color codes for output
@@ -14,8 +14,8 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-DEPLOY_DIR="/opt/universal-translator"
-SERVICE_NAME="universal-translator"
+DEPLOY_DIR="/opt/anai-translator"
+SERVICE_NAME="anai-translator"
 DOMAIN="${1:-translator.local}"
 PORT=8000
 
@@ -46,16 +46,16 @@ echo ""
 echo -e "${YELLOW}Step 3: Clone/copy repository${NC}"
 if [ ! -d "$DEPLOY_DIR" ]; then
   # If you want to clone from GitHub:
-  # sudo git clone https://github.com/YOUR_USERNAME/universal-translator.git $DEPLOY_DIR
+  # sudo git clone https://github.com/YOUR_USERNAME/anai-translator.git $DEPLOY_DIR
   
   # Or copy from local:
-  if [ -d "./universal-translator" ]; then
-    sudo cp -r ./universal-translator $DEPLOY_DIR
+  if [ -d "./anai-translator" ]; then
+    sudo cp -r ./anai-translator $DEPLOY_DIR
   else
     echo -e "${RED}Error: Could not find repository.${NC}"
     echo "Please either:"
     echo "  1. Uncomment git clone in this script and provide your repo URL"
-    echo "  2. Copy the universal-translator directory to this server first"
+    echo "  2. Copy the anai-translator directory to this server first"
     exit 1
   fi
 fi
@@ -67,7 +67,7 @@ echo -e "${GREEN}✓ Repository ready at $DEPLOY_DIR${NC}"
 echo ""
 
 echo -e "${YELLOW}Step 4: Build Docker image${NC}"
-sudo docker build -f Dockerfile.backend -t universal-translator-backend:latest .
+sudo docker build -f Dockerfile.backend -t anai-translator-backend:latest .
 
 echo -e "${GREEN}✓ Docker image built${NC}"
 echo ""
@@ -75,7 +75,7 @@ echo ""
 echo -e "${YELLOW}Step 5: Create systemd service${NC}"
 sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null <<EOF
 [Unit]
-Description=Universal Translator Backend
+Description=Anai Translator Backend
 After=docker.service
 Requires=docker.service
 
@@ -95,7 +95,7 @@ ExecStart=/usr/bin/docker run --rm \\
   -e WHISPER_MODEL_SIZE=tiny \\
   -e STT_MAX_CONCURRENCY=1 \\
   -v $DEPLOY_DIR/models:/app/models \\
-  universal-translator-backend:latest
+  anai-translator-backend:latest
 
 ExecStop=/usr/bin/docker stop $SERVICE_NAME
 Restart=always

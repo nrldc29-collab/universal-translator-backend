@@ -1,0 +1,326 @@
+# Triton Model Ensemble Configuration
+# Implements model ensemble, dynamic batching, and multi-model serving
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: triton-model-config
+  namespace: stt
+data:
+  # Parakeet TDT Streaming Model Configuration
+  parakeet_tdt.pbtxt: |
+    name: "parakeet_tdt_streaming"
+    backend: "onnxruntime"
+    max_batch_size: 32
+    input [
+      {
+        name: "audio_input"
+        data_type: TYPE_FP32
+        dims: [ -1, 1, 80 ]
+      }
+    ]
+    output [
+      {
+        name: "transcript"
+        data_type: TYPE_STRING
+        dims: [ 1 ]
+      },
+      {
+        name: "confidence"
+        data_type: TYPE_FP32
+        dims: [ 1 ]
+      }
+    ]
+    dynamic_batching {
+      max_queue_delay_microseconds: 10000
+      preferred_batch_size: [ 8, 16, 32 ]
+      max_batch_size: 32
+    }
+    instance_group [
+      {
+        count: 1
+        kind: KIND_GPU
+        gpus: [ 0 ]
+        profile: [
+          {
+            min_batch_size: 1
+            max_batch_size: 32
+          }
+        ]
+      }
+    ]
+    model_warmup: true
+  
+  # Parakeet CTC Model Configuration
+  parakeet_ctc.pbtxt: |
+    name: "parakeet_ctc"
+    backend: "onnxruntime"
+    max_batch_size: 64
+    input [
+      {
+        name: "audio_input"
+        data_type: TYPE_FP32
+        dims: [ -1, 1, 80 ]
+      }
+    ]
+    output [
+      {
+        name: "transcript"
+        data_type: TYPE_STRING
+        dims: [ 1 ]
+      }
+    ]
+    dynamic_batching {
+      max_queue_delay_microseconds: 5000
+      preferred_batch_size: [ 16, 32, 64 ]
+      max_batch_size: 64
+    }
+    instance_group [
+      {
+        count: 2
+        kind: KIND_GPU
+        gpus: [ 0, 1 ]
+      }
+    ]
+  
+  # Whisper Large Model Configuration
+  whisper_large.pbtxt: |
+    name: "whisper_large"
+    backend: "onnxruntime"
+    max_batch_size: 8
+    input [
+      {
+        name: "audio_input"
+        data_type: TYPE_FP32
+        dims: [ -1, 1, 80 ]
+      }
+    ]
+    output [
+      {
+        name: "transcript"
+        data_type: TYPE_STRING
+        dims: [ 1 ]
+      },
+      {
+        name: "language"
+        data_type: TYPE_STRING
+        dims: [ 1 ]
+      }
+    ]
+    dynamic_batching {
+      max_queue_delay_microseconds: 20000
+      preferred_batch_size: [ 4, 8 ]
+      max_batch_size: 8
+    }
+    instance_group [
+      {
+        count: 1
+        kind: KIND_GPU
+        gpus: [ 2 ]
+      }
+    ]
+  
+  # Ensemble Configuration
+  ensemble.pbtxt: |
+    name: "stt_ensemble"
+    platform: "ensemble"
+    max_batch_size: 32
+    input [
+      {
+        name: "audio_input"
+        data_type: TYPE_FP32
+        dims: [ -1, 1, 80 ]
+      }
+    ]
+    output [
+      {
+        name: "transcript"
+        data_type: TYPE_STRING
+        dims: [ 1 ]
+      },
+      {
+        name: "confidence"
+        data_type: TYPE_FP32
+        dims: [ 1 ]
+      },
+      {
+        name: "model_used"
+        data_type: TYPE_STRING
+        dims: [ 1 ]
+      }
+    ]
+    ensemble_scheduling {
+      step [
+        {
+          model_name: "parakeet_tdt_streaming"
+          input_map {
+            audio_input: audio_input
+          }
+          output_map {
+            transcript: tdt_transcript
+            confidence: tdt_confidence
+          }
+        },
+        {
+          model_name: "parakeet_ctc"
+          input_map {
+            audio_input: audio_input
+          }
+          output_map {
+            transcript: ctc_transcript
+          }
+        },
+        {
+          model_name: "whisper_large"
+          input_map {
+            audio_input: audio_input
+          }
+          output_map {
+            transcript: whisper_transcript
+            language: language
+          }
+        }
+      ]
+    }
+    
+    # Model selection logic
+    output_map {
+      transcript: model_selector.output
+      confidence: model_selector.confidence
+      model_used: model_selector.model_name
+    }
+
+---
+# Model Repository Init Script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-repository-init
+  namespace: stt
+data:
+  init-models.sh: |
+    #!/bin/bash
+    set -e
+    
+    MODEL_REPO=/models
+    
+    # Create model directories
+    mkdir -p ${MODEL_REPO}/{parakeet_tdt_streaming,parakeet_ctc,whisper_large,stt_ensemble}
+    
+    # Copy model configurations
+    cp /config/*.pbtxt ${MODEL_REPO}/
+    
+    # Download models from S3 (or use pre-loaded models)
+    # aws s3 sync s3://stt-models/ ${MODEL_REPO}/
+    
+    # Set permissions
+    chmod -R 755 ${MODEL_REPO}
+    
+    echo "Model repository initialized"
+
+---
+# Triton StatefulSet with Ensemble Support
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: triton-parakeet
+  namespace: stt
+spec:
+  serviceName: triton-parakeet
+  replicas: 4
+  selector:
+    matchLabels:
+      app: triton-parakeet
+  template:
+    metadata:
+      labels:
+        app: triton-parakeet
+        workload-type: gpu-inference
+    spec:
+      initContainers:
+        - name: init-model-repo
+          image: busybox:1.36
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              /config/init-models.sh
+              ls -la /models/
+          volumeMounts:
+            - name: model-repository
+              mountPath: /models
+            - name: config
+              mountPath: /config
+      containers:
+        - name: triton
+          image: nvcr.io/nvidia/tritonserver:24.05-py3
+          args:
+            - tritonserver
+            - --model-repository=/models
+            - --strict-model-config=false
+            - --log-verbose=1
+            - --allow-growth
+            - --model-control-mode=explicit
+            - --load-model=parakeet_tdt_streaming
+            - --load-model=parakeet_ctc
+            - --load-model=whisper_large
+            - --load-model=stt_ensemble
+          ports:
+            - name: grpc
+              containerPort: 8001
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 8002
+          env:
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0,1,2,3"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+          resources:
+            limits:
+              nvidia.com/gpu: 4
+            requests:
+              cpu: "16"
+              memory: 64Gi
+              nvidia.com/gpu: 4
+          volumeMounts:
+            - name: model-repository
+              mountPath: /models
+            - name: shm
+              mountPath: /dev/shm
+          readinessProbe:
+            httpGet:
+              path: /v2/health/ready
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /v2/health/live
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: triton-model-config
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: model-repository
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 500Gi
+        storageClassName: ssd-gpu
+
+---
+# Apply with:
+# kubectl apply -f infra/k8s/triton-model-ensemble.yaml

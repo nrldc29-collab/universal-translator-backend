@@ -1,0 +1,60 @@
+# Kubernetes StatefulSet for Triton Parakeet backend
+# This StatefulSet deploys the Triton inference server with GPU support,
+# persistent storage for model repository, and resource limits.
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: triton-parakeet
+  namespace: stt
+spec:
+  serviceName: triton-parakeet
+  replicas: 2
+  selector:
+    matchLabels:
+      app: triton-parakeet
+  template:
+    metadata:
+      labels:
+        app: triton-parakeet
+    spec:
+      # Schedule pods only on nodes with GPU
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: triton
+          image: nvcr.io/nvidia/tritonserver:24.05-py3
+          args:
+            - tritonserver
+            - --model-repository=/models
+            - --strict-model-config=false
+          ports:
+            - name: grpc
+              containerPort: 8001
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 8002
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+            requests:
+              cpu: "4"
+              memory: 16Gi
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: model-repository
+              mountPath: /models
+  volumeClaimTemplates:
+    - metadata:
+        name: model-repository
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 100Gi

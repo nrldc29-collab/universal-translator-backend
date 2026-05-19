@@ -1,45 +1,77 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowLeftRight, Check, Copy, Download, Mic, Share2 } from 'lucide-react';
+import { Activity, ArrowLeftRight, Check, Clock3, Copy, Download, Languages, Mic, Radio, Repeat2, Share2, Sparkles, Trash2, UserRound, Volume2 } from 'lucide-react';
 import './styles.css';
 import { registerServiceWorker } from './pwa';
+import Assistant from './Assistant';
+import ErrorBoundary from './ErrorBoundary';
+import {
+  // host detection + URL helpers
+  isLocalHost,
+  isSameOriginBackendHost,
+  defaultApiUrl,
+  configuredUrl,
+  // session/device
+  normalizeSessionId,
+  readInitialSessionId,
+  // constants
+  TARGET_LANGUAGE_OPTIONS,
+  VOICE_WARMUP_PHRASES,
+  HEALTH_POLL_MS,
+  STREAM_HEARTBEAT_MS,
+  STREAM_HEARTBEAT_MAX_MISSES,
+  STREAM_RECONNECT_MS,
+  STREAM_RECONNECT_MAX_ATTEMPTS,
+  STREAM_RECONNECT_MAX_DELAY_MS,
+  MAX_AUDIO_SEND_QUEUE,
+  MAX_BUFFERED_AUDIO_CHUNKS,
+  LATENCY_HISTORY_KEY,
+  LATENCY_HISTORY_LIMIT,
+  LATENCY_TARGET_MS,
+  VOICE_WARMUP_COOLDOWN_MS,
+  VOICE_PREFETCH_TIMEOUT_MS,
+  HOLD_TO_TALK_DELAY_MS,
+  EXPECTED_BACKEND_RELEASE,
+  FRONTEND_BUILD_ID,
+  EXPERIMENTAL_IOS_STREAMING,
+  // persistence
+  readPersistedTargetLanguage,
+  readPersistedSourceLanguage,
+  // debug
+  readDebugFlag,
+  makeDebugLog,
+  // latency
+  blankLatencyStats,
+  formatLatencyValue,
+  readLatencyHistory,
+  summarizeLatencyHistory,
+  // speaker labels
+  fallbackSpeakerLabel,
+  // browser probes
+  isManualInstallBrowser,
+  isIosOrSafariRecorder,
+  // audio
+  preferredAudioMimeType,
+  createAudioRecorder as createAudioRecorderRaw,
+  audioFileExtension,
+  logAudioStream as logAudioStreamRaw,
+  // speech recognition
+  speechRecognitionConstructor,
+  speechRecognitionLanguage,
+  // auth
+  withAuthToken,
+  authHeaders,
+  responseErrorMessage,
+  // mic
+  mediaErrorMessage,
+  requestAudioStream,
+  // misc
+  uniqueStrings,
+  extractBrainPlan,
+  compactRepairLabel,
+} from './utils';
 
-function isLocalHost(hostname) {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    hostname.startsWith('192.168.') ||
-    hostname.startsWith('10.') ||
-    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
-  );
-}
-
-function isSameOriginBackendHost(hostname) {
-  return (
-    hostname.endsWith('.trycloudflare.com') ||
-    hostname.endsWith('.up.railway.app') ||
-    hostname.endsWith('.onrender.com') ||
-    hostname.endsWith('.fly.dev')
-  );
-}
-
-function defaultApiUrl() {
-  if (isLocalHost(window.location.hostname)) {
-    return `${window.location.protocol}//${window.location.hostname}:8000`;
-  }
-  if (isSameOriginBackendHost(window.location.hostname)) {
-    return window.location.origin;
-  }
-  return 'https://universal-translator-phone-production.up.railway.app';
-}
-
-function configuredUrl(value) {
-  if (!value || value.includes('your-backend')) {
-    return '';
-  }
-  return value;
-}
-
+// Resolve API URL up-front from env + host.
 const LOCAL_BACKEND = isLocalHost(window.location.hostname);
 const SAME_ORIGIN_BACKEND = isSameOriginBackendHost(window.location.hostname);
 const API_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? defaultApiUrl() : (configuredUrl(import.meta.env.VITE_API_URL) || defaultApiUrl())).replace(/\/+$/, '');
@@ -47,222 +79,45 @@ const WS_BASE_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? API_URL : (configure
 const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
 const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 
-function normalizeSessionId(value) {
-  return String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
-}
-
-function readInitialSessionId() {
-  const params = new URLSearchParams(window.location.search);
-  const linkedSession = normalizeSessionId(params.get('session') || params.get('room'));
-  return linkedSession || normalizeSessionId(localStorage.getItem('translator_session_id')) || crypto.randomUUID();
-}
-
 const INITIAL_SESSION_ID = readInitialSessionId();
 const INITIAL_DEVICE_ID = localStorage.getItem('translator_device_id') || crypto.randomUUID();
 const INITIAL_SPEAKER_NAME = localStorage.getItem('translator_speaker_name') || '';
-const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 80);
-const STREAM_AUDIO_BITRATE = Number(import.meta.env.VITE_STREAM_AUDIO_BITRATE || 32000);
-const HEALTH_POLL_MS = 3000;
-const STREAM_HEARTBEAT_MS = 2500;
-const STREAM_HEARTBEAT_MAX_MISSES = 2;
-const STREAM_RECONNECT_MS = 1000;
-const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
-const MAX_AUDIO_SEND_QUEUE = 10;
-const MAX_BUFFERED_AUDIO_CHUNKS = 30;
+const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 60);
+const STREAM_AUDIO_BITRATE = Number(import.meta.env.VITE_STREAM_AUDIO_BITRATE || 48000);
+const CLIENT_VAD_THRESHOLD = Number(import.meta.env.VITE_CLIENT_VAD_THRESHOLD || 0.055);
 const FAST_SPEECH_TIMEOUT_MS = Number(import.meta.env.VITE_FAST_SPEECH_TIMEOUT_MS || 10000);
 const FAST_TTS_TIMEOUT_MS = Number(import.meta.env.VITE_FAST_TTS_TIMEOUT_MS || 10000);
-const LATENCY_HISTORY_KEY = 'translator_latency_history';
-const LATENCY_HISTORY_LIMIT = 12;
-const LATENCY_TARGET_MS = 1000;
-const VOICE_WARMUP_COOLDOWN_MS = 5 * 60 * 1000;
-const VOICE_PREFETCH_TIMEOUT_MS = 4000;
-const HOLD_TO_TALK_DELAY_MS = 260;
 const MIN_STREAM_CAPTURE_MS = Number(import.meta.env.VITE_MIN_STREAM_CAPTURE_MS || 1800);
-const EXPECTED_BACKEND_RELEASE = '2026-05-13-voice-warmup-v18';
-const FRONTEND_BUILD_ID = 'futuristic-ui-v25';
-const EXPERIMENTAL_IOS_STREAMING = true;
+const LIVE_SPEECH_TEXT_THROTTLE_MS = Number(import.meta.env.VITE_LIVE_SPEECH_TEXT_THROTTLE_MS || 90);
+
+const DEBUG_LOGS = readDebugFlag();
+const debugLog = makeDebugLog(DEBUG_LOGS);
 localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
 registerServiceWorker();
 
-function blankLatencyStats() {
-  return { mic_to_backend: '-', backend_response: '-', first_audio: '-', end_to_end: '-' };
-}
-
-function formatLatencyValue(value) {
-  if (value === null || value === undefined || value === '' || value === '-') return '-';
-  if (typeof value === 'number' && Number.isFinite(value)) return `${Math.max(0, Math.round(value))}ms`;
-  return String(value);
-}
-
-function readLatencyHistory() {
-  try {
-    const raw = localStorage.getItem(LATENCY_HISTORY_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((item) => ({
-        total: Number(item.total),
-        backend: Number(item.backend),
-        audio: Number(item.audio),
-        created_at: Number(item.created_at) || Date.now(),
-      }))
-      .filter((item) => Number.isFinite(item.total) && item.total > 0)
-      .slice(-LATENCY_HISTORY_LIMIT);
-  } catch {
-    return [];
-  }
-}
-
-function summarizeLatencyHistory(history) {
-  if (!history.length) return { average: null, best: null };
-  const totals = history.map((item) => item.total).filter((value) => Number.isFinite(value) && value > 0);
-  if (!totals.length) return { average: null, best: null };
-  return {
-    average: Math.round(totals.reduce((sum, value) => sum + value, 0) / totals.length),
-    best: Math.min(...totals),
-  };
-}
-
-function fallbackSpeakerLabel(speaker) {
-  const value = String(speaker || '').trim();
-  if (!value || value === '-') return 'Person';
-  const numericId = value.match(/(\d+)$/)?.[1];
-  if (numericId) return `Person ${numericId}`;
-  return value.replace(/^speaker[-_\s]*/i, 'Person ').trim() || 'Person';
-}
-
-function isManualInstallBrowser() {
-  const userAgent = navigator.userAgent || '';
-  const isIos = /iphone|ipad|ipod/i.test(userAgent);
-  const isSafari = /safari/i.test(userAgent) && !/chrome|crios|fxios|edg/i.test(userAgent);
-  return isIos || isSafari;
-}
-
-function isIosOrSafariRecorder() {
-  const userAgent = navigator.userAgent || '';
-  const platform = navigator.platform || '';
-  const isIos =
-    /iphone|ipad|ipod/i.test(userAgent) ||
-    (platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
-  const isSafari = /safari/i.test(userAgent) && !/chrome|crios|fxios|edg|edgios/i.test(userAgent);
-  return isIos || isSafari;
-}
-
-function preferredAudioMimeType() {
-  if (!window.MediaRecorder?.isTypeSupported) return '';
-  const candidates = isIosOrSafariRecorder()
-    ? ['audio/mp4', 'audio/aac', 'audio/mp4;codecs=mp4a.40.2', 'audio/webm;codecs=opus', 'audio/webm']
-    : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac', 'audio/ogg;codecs=opus', 'audio/ogg'];
-  return candidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) || '';
-}
-
+// Bind recorder + audio-stream logger to local bitrate / debugLog so callers
+// keep the original signatures.
 function createAudioRecorder(stream) {
-  if (!window.MediaRecorder) {
-    window.alert?.('Recording not supported on this device/browser');
-    throw new Error('Recording not supported on this device/browser');
-  }
-  const options = {};
-  const mimeType = preferredAudioMimeType();
-  if (mimeType) options.mimeType = mimeType;
-  options.audioBitsPerSecond = 96000;
-  try {
-    return new MediaRecorder(stream, options);
-  } catch (err) {
-    console.warn('MediaRecorder rejected options, retrying without explicit mimeType', err);
-    return new MediaRecorder(stream);
-  }
+  return createAudioRecorderRaw(stream, STREAM_AUDIO_BITRATE);
 }
-
 function logAudioStream(stream) {
-  console.log('AUDIO STREAM:', stream);
-  console.log('AUDIO TRACKS:', stream.getAudioTracks());
-  stream.getAudioTracks().forEach((track) => {
-    console.log('TRACK ENABLED:', track.enabled);
-    console.log('TRACK STATE:', track.readyState);
-  });
+  logAudioStreamRaw(stream, debugLog);
 }
 
-function audioFileExtension(mimeType) {
-  if (mimeType.includes('mp4') || mimeType.includes('aac')) return '.m4a';
-  if (mimeType.includes('ogg')) return '.ogg';
-  return '.webm';
-}
-
-function speechRecognitionConstructor() {
-  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-}
-
-function speechRecognitionLanguage(code) {
-  const normalized = String(code || 'en').toLowerCase().split(/[-_]/)[0];
-  return {
-    en: 'en-US',
-    es: 'es-ES',
-    ht: 'ht-HT',
-    fr: 'fr-FR',
-    de: 'de-DE',
-    it: 'it-IT',
-    pt: 'pt-BR',
-  }[normalized] || normalized;
-}
-
-function withAuthToken(url, token) {
-  if (!token) return url;
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${separator}access_token=${encodeURIComponent(token)}`;
-}
-
-function authHeaders(token, extra = {}) {
-  if (!token) return extra;
-  return { ...extra, Authorization: `Bearer ${token}` };
-}
-
-async function responseErrorMessage(response, fallback) {
-  try {
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      const body = await response.json();
-      return body.detail || body.message || fallback;
-    }
-    const text = await response.text();
-    return text || fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function mediaErrorMessage(error) {
-  if (error?.name === 'NotAllowedError') return 'Microphone permission blocked';
-  if (error?.name === 'NotFoundError') return 'No microphone found';
-  if (error?.name === 'NotSupportedError') return 'Audio recording is not supported in this browser';
-  return 'Could not start microphone';
-}
-
-// Target languages exposed in the picker. Keep tight — every entry needs both
-// translation support (NLLB-200 covers all of these) AND some form of TTS,
-// either Piper (es) or eSpeak NG fallback (ht).
-const TARGET_LANGUAGE_OPTIONS = [
-  { code: 'es', label: 'Spanish' },
-  { code: 'ht', label: 'Haitian Creole' },
-];
-
-const VOICE_WARMUP_PHRASES = {
-  es: 'Hola, ¿cómo estás?',
-  ht: 'Bonjou, kijan ou ye?',
-};
-
-function readPersistedTargetLanguage() {
-  try {
-    const stored = localStorage.getItem('targetLanguage');
-    if (stored && TARGET_LANGUAGE_OPTIONS.some((o) => o.code === stored)) return stored;
-  } catch {}
-  return 'es';
-}
+// Target languages live in `utils.js` (TARGET_LANGUAGE_OPTIONS) so they can
+// be shared between this file and tests. Same for VOICE_WARMUP_PHRASES,
+// readPersistedTargetLanguage, readPersistedSourceLanguage, uniqueStrings,
+// extractBrainPlan, and compactRepairLabel.
 
 function App() {
   const [languages, setLanguages] = useState({ en: 'English', es: 'Spanish', ht: 'Haitian Creole' });
-  const [sourceLanguage, setSourceLanguage] = useState('en');
+  const [sourceLanguageState, setSourceLanguageState] = useState(readPersistedSourceLanguage);
+  const sourceLanguage = sourceLanguageState;
+  const setSourceLanguage = (next) => {
+    setSourceLanguageState(next);
+    try { localStorage.setItem('sourceLanguage', next); } catch {}
+  };
   const [targetLanguage, setTargetLanguageState] = useState(readPersistedTargetLanguage);
   const setTargetLanguage = (next) => {
     setTargetLanguageState(next);
@@ -278,6 +133,7 @@ function App() {
   const [playing, setPlaying] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [instantListening, setInstantListening] = useState(false);
+  const [liveAssistActive, setLiveAssistActive] = useState(false);
   const [partialTranscript, setPartialTranscript] = useState('');
   const [liveTranslation, setLiveTranslation] = useState('');
   const [pipelineStage, setPipelineStage] = useState('Idle');
@@ -340,6 +196,16 @@ function App() {
   const [ocrText, setOcrText] = useState('');
   const [clarifyVisible, setClarifyVisible] = useState(false);
   const [clarifyMessage, setClarifyMessage] = useState('');
+  const [brainUi, setBrainUi] = useState({
+    visible: false,
+    message: '',
+    mode: '',
+    strategy: '',
+    hints: {},
+    repairOptions: [],
+    highlightTerms: [],
+    riskScore: null,
+  });
   const [reconnectToastVisible, setReconnectToastVisible] = useState(false);
 
   useEffect(() => {
@@ -394,6 +260,154 @@ function App() {
       console.warn('copy failed', err);
     }
   }
+
+  function languageName(code) {
+    if (!code) return '';
+    return languages[code] || TARGET_LANGUAGE_OPTIONS.find((option) => option.code === code)?.label || String(code).toUpperCase();
+  }
+
+  function applyBrainPayload(payload = {}, origin = 'translation') {
+    const { plan, hints, repairOptions } = extractBrainPlan(payload);
+    if (!plan && Object.keys(hints).length === 0 && repairOptions.length === 0) return null;
+
+    const repeatedTerms = repairOptions
+      .filter((option) => option?.type === 'repeat_terms')
+      .flatMap((option) => option.terms || []);
+    const highlightTerms = uniqueStrings(repeatedTerms.length ? repeatedTerms : (hints.highlight_terms || []));
+    const repairedLanguage = hints.repaired_source_language || plan?.suggested_source_language;
+    const languageAutoRepaired = Boolean(hints.language_auto_repaired);
+    const suggestSwitch = Boolean(hints.suggest_source_language_switch);
+    const skipTts = Boolean(hints.skip_tts || hints.tts_mode === 'skip');
+    const activeSpeakerId = hints.active_speaker || plan?.turn_policy?.active_speaker || '';
+    const speakerShift = Boolean(hints.speaker_shift || plan?.turn_policy?.speaker_shift);
+    const activeSpeakerLabel = activeSpeakerId ? (speakerLabelsRef.current[activeSpeakerId] || fallbackSpeakerLabel(activeSpeakerId)) : '';
+    const riskScore = Number.isFinite(Number(plan?.meaning_risk_score)) ? Number(plan.meaning_risk_score) : null;
+
+    brainHintsRef.current = hints;
+    brainPlanRef.current = plan;
+
+    let message = '';
+    if (languageAutoRepaired && repairedLanguage) {
+      message = `Source auto-switched to ${languageName(repairedLanguage)}`;
+      if (repairedLanguage !== sourceLanguage) {
+        setSourceLanguage(repairedLanguage);
+      }
+      setClarifyVisible(false);
+    } else if (suggestSwitch && repairedLanguage) {
+      message = `Source sounds like ${languageName(repairedLanguage)}`;
+    } else if (repairOptions.some((option) => option?.type === 'repeat_terms')) {
+      message = 'Exact term check needed';
+    } else if (repairOptions.some((option) => option?.type === 'confirm_exact')) {
+      message = 'Confirm exact words before speaking';
+    } else if (plan?.turn_policy?.mode === 'guarded_translate') {
+      message = 'Guarded translation active';
+    } else if (skipTts) {
+      message = 'Voice skipped for confirmation';
+    } else if (speakerShift && activeSpeakerLabel) {
+      message = `${activeSpeakerLabel} speaking now`;
+    }
+
+    if (speakerShift && activeSpeakerLabel) {
+      setDetectedSpeaker(activeSpeakerLabel);
+      setConversationBrain(`${activeSpeakerLabel}: active speaker shift`);
+    }
+
+    if (skipTts) {
+      ttsQueueRef.current = [];
+      setTtsQueueLength(0);
+      setTtsChunksBuffer([]);
+      setPlaying(false);
+      setTtsPlaying(false);
+    }
+
+    const next = {
+      visible: Boolean(message || repairOptions.length || highlightTerms.length || hints.ask_before_speaking || suggestSwitch || languageAutoRepaired || speakerShift || skipTts),
+      message,
+      mode: plan?.turn_policy?.mode || '',
+      strategy: plan?.strategy || '',
+      hints,
+      repairOptions,
+      highlightTerms,
+      riskScore,
+      skipTts,
+      speakerShift,
+      activeSpeakerLabel,
+      origin,
+    };
+    setBrainUi(next);
+    return next;
+  }
+
+  function runRepairOption(option = {}) {
+    haptic(18);
+    if ((option.type === 'switch_source_language' || option.type === 'auto_switch_source_language') && option.language) {
+      setSourceLanguage(option.language);
+      setBrainUi((current) => ({
+        ...current,
+        message: `Source set to ${languageName(option.language)}`,
+        visible: true,
+      }));
+      setStatus(`Source set to ${languageName(option.language)}`);
+      return;
+    }
+    if (option.type === 'choose_meaning' && option.word) {
+      const choices = Array.isArray(option.options) ? option.options.join(' / ') : 'the intended meaning';
+      setClarifyMessage(`For "${option.word}", say: ${choices}`);
+      setClarifyVisible(true);
+      setStatus('Choose the intended meaning');
+      return;
+    }
+    setClarifyVisible(false);
+    setPipelineStage('Ready to repair');
+    setStatus(option.label || 'Please repeat');
+    if (!streaming && !processing && !playing) {
+      try { handleMicClick(); } catch {}
+    }
+  }
+
+  function shouldSkipBrainTts(payload = null) {
+    const hints = payload ? extractBrainPlan(payload).hints : brainHintsRef.current;
+    return Boolean(hints?.skip_tts || hints?.tts_mode === 'skip');
+  }
+
+  function resetBrainRuntimeUi() {
+    brainHintsRef.current = {};
+    brainPlanRef.current = null;
+    setBrainUi((current) => ({ ...current, visible: false, message: '', repairOptions: [], highlightTerms: [], skipTts: false, speakerShift: false }));
+  }
+
+  function clearInterpreterScreen() {
+    if (streaming || processing || playing || ttsPlaying) return;
+    haptic(14);
+    resetBrainRuntimeUi();
+    setResult(null);
+    setText('');
+    setPartialTranscript('');
+    setLiveTranslation('');
+    setConversationTurns([]);
+    setClarifyVisible(false);
+    setClarifyMessage('');
+    setDetectedSpeaker('-');
+    setLatencyStats(blankLatencyStats());
+    setAudioReplayAvailable(false);
+    setAutoPlayFailed(false);
+    setTtsQueueLength(0);
+    setTtsChunksBuffer([]);
+    setStatus('Ready');
+    setPipelineStage('Ready');
+  }
+
+  function flipLanguageDirection() {
+    if (streaming || processing || playing || ttsPlaying || sourceLanguage === targetLanguage) return;
+    const nextSource = targetLanguage;
+    const nextTarget = sourceLanguage || 'en';
+    haptic(12);
+    setSourceLanguage(nextSource);
+    setTargetLanguage(nextTarget);
+    resetBrainRuntimeUi();
+    setStatus(`${languageName(nextSource)} to ${languageName(nextTarget)}`);
+    setPipelineStage('Direction switched');
+  }
   const mediaRecorderRef = useRef(null);
   const micMeterRef = useRef({});
   const streamRecorderRef = useRef(null);
@@ -401,6 +415,8 @@ function App() {
   const socketRef = useRef(null);
   const duplexRefs = useRef({ A: {}, B: {} });
   const speakerLabelsRef = useRef({});
+  const brainHintsRef = useRef({});
+  const brainPlanRef = useRef(null);
   const recordingStoppedRef = useRef(false);
   const streamFinalizePendingRef = useRef(false);
   const streamFinalizeTimerRef = useRef(null);
@@ -436,6 +452,11 @@ function App() {
   const speechFastPathActiveRef = useRef(false);
   const speechFinalTextRef = useRef('');
   const speechInterimTextRef = useRef('');
+  const speechAssistSocketRef = useRef(null);
+  const speechAssistRestartTimerRef = useRef(null);
+  const speechAssistStopRequestedRef = useRef(false);
+  const speechLastSentTextRef = useRef('');
+  const speechLastSentAtRef = useRef(0);
   const voiceWarmupRef = useRef({ inFlight: false, lastAtByLanguage: {} });
   const appStateRef = useRef({});
 
@@ -623,7 +644,7 @@ function App() {
 
   async function requestMicPermission() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await requestAudioStream();
       stream.getTracks().forEach((track) => track.stop());
       setMicPermission('available');
       setStatus('Microphone ready');
@@ -690,7 +711,7 @@ function App() {
           osc.start();
           warmupOscRef.current = osc;
           warmupGainRef.current = gain;
-          console.log('AudioContext warmup oscillator started');
+          debugLog('AudioContext warmup oscillator started');
         } catch (e) {
           console.warn('Failed to start warmup oscillator:', e);
         }
@@ -738,7 +759,7 @@ function App() {
     }
     if (unlockPromise && unlockPromise.then) {
       unlockPromise.then(() => {
-        console.log('Audio unlocked successfully (muted priming)');
+        debugLog('Audio unlocked successfully (muted priming)');
         mobileAudioUnlockedRef.current = true;
         setMobileAudioUnlocked(true);
       }).catch((e) => {
@@ -924,7 +945,7 @@ function App() {
       setPipelineStage('Testing microphone');
       setStatus('Tap to record, then playback...');
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await requestAudioStream();
       const mediaRecorder = createAudioRecorder(stream);
       const chunks = [];
 
@@ -990,6 +1011,7 @@ function App() {
     if (processing || !text.trim()) return;
     setProcessing(true);
     setStatus('Translating text...');
+    resetBrainRuntimeUi();
     try {
       const response = await fetch(`${API_URL}/translate/text`, {
         method: 'POST',
@@ -1007,6 +1029,7 @@ function App() {
       });
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Text translation failed'));
       const data = await response.json();
+      const brainUpdate = applyBrainPayload(data, 'text');
       setResult(data);
       setLiveTranslation(data.translated_text || '');
       rememberSpeaker(data);
@@ -1018,7 +1041,7 @@ function App() {
         setClarifyMessage(data.clarify_message || 'Clarification requested');
         setClarifyVisible(true);
       } else {
-        setStatus('Text translated');
+        setStatus(brainUpdate?.message || 'Text translated');
       }
     } catch (error) {
       setStatus(error.message || 'Text translation failed');
@@ -1029,6 +1052,13 @@ function App() {
 
   async function playEmbeddedTranslationAudio(data, endStatus = 'Voice played') {
     if (!hasPlayableAudioPayload(data)) return false;
+    if (shouldSkipBrainTts(data)) {
+      setPlaying(false);
+      setTtsPlaying(false);
+      setPipelineStage('Voice skipped');
+      setStatus('Confirmation needed before voice');
+      return false;
+    }
     await ensureAudioUnlocked().catch((e) => console.warn('embedded audio unlock failed:', e));
     const mimeType = data.mime_type || 'audio/wav';
     const directAudioUrl = resolveAudioUrl(data.audio_url);
@@ -1121,6 +1151,7 @@ function App() {
     setProcessing(true);
     setPipelineStage('Translating');
     setStatus('Translating speech...');
+    resetBrainRuntimeUi();
     const capturedAt = streamStartedAtRef.current || performance.now();
     const requestStartedAt = performance.now();
     updateLatency('mic_to_backend', Math.round(requestStartedAt - capturedAt));
@@ -1153,6 +1184,7 @@ function App() {
       const data = await response.json();
       const endToEndMs = Math.round(performance.now() - capturedAt);
       updateLatency('end_to_end', endToEndMs);
+      const brainUpdate = applyBrainPayload(data, 'speech');
       setResult(data);
       setLiveTranslation(data.translated_text || '');
       rememberSpeaker(data);
@@ -1171,10 +1203,10 @@ function App() {
       recordLatencyTurn({ total: endToEndMs, backend: backendResponseMs, audio: firstAudioMs });
       if (hasPlayableAudioPayload(data)) {
         setPipelineStage('Playing voice');
-        setStatus('Playing voice...');
+        setStatus(brainUpdate?.message || 'Playing voice...');
       } else {
         setPipelineStage('Translation ready');
-        setStatus('Translation ready');
+        setStatus(brainUpdate?.message || 'Translation ready');
       }
       const played = await playEmbeddedTranslationAudio(
         data,
@@ -1389,7 +1421,7 @@ function App() {
     shareUrl.searchParams.set('session', sessionId);
     const url = shareUrl.toString();
     const payload = {
-      title: 'Universal Translator',
+      title: 'Anai Translator',
       text: 'Join my live translator room.',
       url,
     };
@@ -1476,6 +1508,7 @@ function App() {
     setProcessing(false);
     setPlaying(false);
     setInterpreterMode(false);
+    setLiveAssistActive(false);
     ttsPlayingRef.current = false;
     streamFinalizePendingRef.current = false;
     streamRecordingStartedAtRef.current = 0;
@@ -1497,14 +1530,14 @@ function App() {
 
   function activePacketMs() {
     if (lowBandwidthMode) return 500;
-    if (isIosOrSafariRecorder()) return EXPERIMENTAL_IOS_STREAMING ? 140 : Math.max(STREAM_PACKET_MS, 400);
-    return Math.min(STREAM_PACKET_MS, 100);
+    if (isIosOrSafariRecorder()) return EXPERIMENTAL_IOS_STREAMING ? 110 : Math.max(STREAM_PACKET_MS, 400);
+    return Math.min(STREAM_PACKET_MS, 80);
   }
 
   function sendAudioPacket(socket, packet) {
     if (socket.readyState !== WebSocket.OPEN) return false;
     try {
-      console.log('sending audio chunk', packet.meta.bytes, packet.meta.mime_type);
+      debugLog('sending audio chunk', packet.meta.bytes, packet.meta.mime_type);
       socket.send(JSON.stringify(packet.meta));
       socket.send(packet.buffer);
       return true;
@@ -1531,11 +1564,12 @@ function App() {
 
   async function sendRecorderChunk(socket, event, recorder) {
     if (event.data.size <= 0) return;
-    console.log('AUDIO CHUNK:', event.data);
+    debugLog('AUDIO CHUNK:', event.data);
     if (audioSendQueueRef.current.length >= MAX_AUDIO_SEND_QUEUE && socket.readyState === WebSocket.OPEN) {
       audioSendQueueRef.current.shift();
     }
     const buffer = await event.data.arrayBuffer();
+    const audioLevel = Number(micMeterRef.current?.smoothed || 0);
     const packet = {
       meta: {
         type: 'chunk_meta',
@@ -1543,6 +1577,8 @@ function App() {
         captured_at_ms: performance.now(),
         bytes: buffer.byteLength,
         mime_type: recorder?.mimeType || event.data.type || preferredAudioMimeType(),
+        audio_level: Number(audioLevel.toFixed(4)),
+        voice_active: audioLevel >= CLIENT_VAD_THRESHOLD,
       },
       buffer,
     };
@@ -1632,25 +1668,126 @@ function App() {
     return true;
   }
 
-  function stopBrowserSpeechFastPath() {
-    if (!speechFastPathActiveRef.current) return false;
-    try {
-      speechRecognitionRef.current?.stop?.();
-    } catch (error) {
-      console.warn('speech recognition stop failed:', error);
+  function shouldKeepContinuousStream(socket) {
+    const options = streamReconnectRef.current.options || {};
+    return (
+      socketRef.current === socket &&
+      options.interpreter === true &&
+      options.speakerMode === 'auto' &&
+      options.holdToTalk !== true &&
+      !holdToTalkActiveRef.current
+    );
+  }
+
+  function isFatalStreamError(message = '') {
+    return /quota|too many active|not authorized|unauthorized|forbidden|exceeds|buffer limit/i.test(String(message || ''));
+  }
+
+  function stopContinuousStream(nextStatus = 'Interpreter stopped') {
+    const socket = socketRef.current;
+    const recorder = streamRecorderRef.current;
+    if (!socket && !recorder) return false;
+    disableStreamReconnect();
+    clearStreamHeartbeat();
+    if (streamSafetyTimeoutRef.current) {
+      window.clearTimeout(streamSafetyTimeoutRef.current);
+      streamSafetyTimeoutRef.current = null;
     }
+    audioSendQueueRef.current = [];
+    streamFinalizePendingRef.current = false;
+    holdToTalkReleasePendingRef.current = false;
+    releaseWakeLock();
+    stopBrowserSpeechFastPath();
+    try {
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'cancel' }));
+      }
+    } catch {}
+    if (recorder?.state === 'recording') {
+      recorder.stop();
+    } else {
+      recorder?.stream?.getTracks().forEach((track) => track.stop());
+    }
+    try {
+      if (socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) socket.close();
+    } catch {}
+    socketRef.current = null;
+    streamRecorderRef.current = null;
     setStreaming(false);
     setInstantListening(false);
-    setProcessing(true);
-    setPipelineStage('Processing');
-    setStatus('Processing speech...');
+    setProcessing(false);
+    setPlaying(false);
+    setTtsPlaying(false);
+    setInterpreterMode(false);
+    setPipelineStage('Stopped');
+    setStatus(nextStatus);
     return true;
   }
 
-  function startBrowserSpeechFastPath() {
+  function stopBrowserSpeechFastPath() {
+    if (!speechFastPathActiveRef.current) return false;
+    speechAssistStopRequestedRef.current = true;
+    if (speechAssistRestartTimerRef.current) {
+      window.clearTimeout(speechAssistRestartTimerRef.current);
+      speechAssistRestartTimerRef.current = null;
+    }
+    try {
+      speechRecognitionRef.current?.abort?.();
+    } catch (error) {
+      console.warn('speech recognition stop failed:', error);
+    }
+    speechFastPathActiveRef.current = false;
+    speechRecognitionRef.current = null;
+    speechAssistSocketRef.current = null;
+    speechFinalTextRef.current = '';
+    speechInterimTextRef.current = '';
+    speechLastSentTextRef.current = '';
+    speechLastSentAtRef.current = 0;
+    setLiveAssistActive(false);
+    if (!socketRef.current) {
+      setStreaming(false);
+      setInstantListening(false);
+      setProcessing(true);
+      setPipelineStage('Processing');
+      setStatus('Processing speech...');
+    }
+    return true;
+  }
+
+  function sendLiveSpeechText(socket, textValue, isFinal = false) {
+    const normalized = String(textValue || '').replace(/\s+/g, ' ').trim();
+    if (!normalized || !socket || socket.readyState !== WebSocket.OPEN) return false;
+    const now = performance.now();
+    if (!isFinal && normalized === speechLastSentTextRef.current) return false;
+    if (!isFinal && now - speechLastSentAtRef.current < LIVE_SPEECH_TEXT_THROTTLE_MS) return false;
+    speechLastSentTextRef.current = normalized;
+    speechLastSentAtRef.current = now;
+    try {
+      socket.send(JSON.stringify({
+        type: 'live_text',
+        text: normalized,
+        final: Boolean(isFinal),
+        session_id: sessionId,
+        device_id: INITIAL_DEVICE_ID,
+        speaker_name: INITIAL_SPEAKER_NAME,
+        source_language: sourceLanguage,
+        target_language: targetLanguage,
+        speaker_mode: speakerMode,
+        speaker: speakerMode === 'auto' ? 'auto' : 'A',
+        sent_at_ms: Date.now(),
+      }));
+      return true;
+    } catch (error) {
+      console.warn('live speech text send failed:', error);
+      return false;
+    }
+  }
+
+  function startBrowserSpeechFastPath(socket = null) {
     const Recognition = speechRecognitionConstructor();
     const current = appStateRef.current;
-    if (!Recognition || socketRef.current || current.recording || current.processing || current.playing) return false;
+    const activeSocket = socket || socketRef.current;
+    if (!Recognition || !activeSocket || current.recording || current.processing) return false;
 
     let recognition;
     try {
@@ -1660,8 +1797,14 @@ function App() {
       return false;
     }
 
+    if (speechFastPathActiveRef.current) return true;
     speechRecognitionRef.current = recognition;
     speechFastPathActiveRef.current = true;
+    speechAssistSocketRef.current = activeSocket;
+    speechAssistStopRequestedRef.current = false;
+    setLiveAssistActive(true);
+    speechLastSentTextRef.current = '';
+    speechLastSentAtRef.current = 0;
     speechFinalTextRef.current = '';
     speechInterimTextRef.current = '';
     setMicPermission('available');
@@ -1675,13 +1818,13 @@ function App() {
     setInstantListening(false);
     setProcessing(false);
     setPipelineStage('Listening');
-    setStatus('Listening...');
+    setStatus('Listening live...');
     streamStartedAtRef.current = performance.now();
     requestWakeLock();
 
     recognition.lang = speechRecognitionLanguage(sourceLanguage);
     recognition.interimResults = true;
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.maxAlternatives = 1;
 
     recognition.onresult = (event) => {
@@ -1697,7 +1840,10 @@ function App() {
       }
       speechInterimTextRef.current = interim.trim();
       const visibleText = `${speechFinalTextRef.current} ${interim}`.trim();
-      if (visibleText) setPartialTranscript(visibleText);
+      if (visibleText) {
+        setPartialTranscript(visibleText);
+        sendLiveSpeechText(activeSocket, visibleText, Boolean(finalText.trim()));
+      }
     };
 
     recognition.onerror = (event) => {
@@ -1706,16 +1852,24 @@ function App() {
       if (message === 'not-allowed' || message === 'service-not-allowed') {
         speechFastPathActiveRef.current = false;
         speechRecognitionRef.current = null;
+        speechAssistSocketRef.current = null;
+        setLiveAssistActive(false);
         releaseWakeLock();
         setMicPermission('denied');
-        setStreaming(false);
-        setStatus('Microphone permission blocked');
-        setPipelineStage('Permission blocked');
+        if (!socketRef.current) {
+          setStreaming(false);
+          setStatus('Microphone permission blocked');
+          setPipelineStage('Permission blocked');
+        } else {
+          setStatus('Audio fallback listening...');
+          setPipelineStage('Audio fallback');
+        }
         return;
       }
-      if (!speechFinalTextRef.current.trim()) {
+      if (!speechFinalTextRef.current.trim() && !socketRef.current) {
         speechFastPathActiveRef.current = false;
         speechRecognitionRef.current = null;
+        setLiveAssistActive(false);
         releaseWakeLock();
         setStreaming(false);
         setStatus('Using audio fallback...');
@@ -1726,9 +1880,22 @@ function App() {
 
     recognition.onend = () => {
       if (!speechFastPathActiveRef.current) return;
-      const finalText = (speechFinalTextRef.current || speechInterimTextRef.current || '').trim();
-      releaseWakeLock();
-      submitRecognizedSpeech(finalText);
+      if (speechAssistStopRequestedRef.current || socketRef.current !== activeSocket || activeSocket.readyState !== WebSocket.OPEN) {
+        speechFastPathActiveRef.current = false;
+        speechRecognitionRef.current = null;
+        speechAssistSocketRef.current = null;
+        setLiveAssistActive(false);
+        return;
+      }
+      speechAssistRestartTimerRef.current = window.setTimeout(() => {
+        if (!speechFastPathActiveRef.current || speechAssistStopRequestedRef.current) return;
+        if (socketRef.current !== activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
+        try {
+          recognition.start();
+        } catch (error) {
+          console.warn('speech recognition restart failed:', error);
+        }
+      }, 80);
     };
 
     try {
@@ -1739,10 +1906,14 @@ function App() {
       console.warn('speech recognition start failed:', error);
       speechFastPathActiveRef.current = false;
       speechRecognitionRef.current = null;
-      releaseWakeLock();
-      setStreaming(false);
+      speechAssistSocketRef.current = null;
+      setLiveAssistActive(false);
       setPipelineStage('Audio fallback');
       setStatus('Using audio fallback...');
+      if (!socketRef.current) {
+        releaseWakeLock();
+        setStreaming(false);
+      }
       return false;
     }
   }
@@ -1761,33 +1932,37 @@ function App() {
       const latest = appStateRef.current;
       if (!latest.interpreterMode || latest.speakerMode !== 'auto') return;
       if (socketRef.current || speechFastPathActiveRef.current || latest.recording || latest.processing || latest.playing) return;
-      if (startBrowserSpeechFastPath()) return;
       toggleStreaming({ interpreter: true, speakerMode: 'auto' });
     }, 450);
   }
 
   async function handleMicClick() {
-    console.log('MIC BUTTON CLICKED');
+    debugLog('MIC BUTTON CLICKED');
     if (ignoreNextMicClickRef.current) {
       ignoreNextMicClickRef.current = false;
       return;
     }
     synchronousAudioUnlock();
+    if (socketRef.current) {
+      haptic(8);
+      setInstantListening(false);
+      stopContinuousStream();
+      return;
+    }
     if (stopBrowserSpeechFastPath()) return;
-    if (!socketRef.current && startBrowserSpeechFastPath()) return;
     if (isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING) {
       haptic(recording ? 8 : 14);
       if (recording) stopRecording();
       else startRecording();
       return;
     }
-    haptic(socketRef.current ? 8 : 14);
-    setInstantListening(!socketRef.current);
+    haptic(14);
+    setInstantListening(true);
     toggleStreaming({ interpreter: true, speakerMode: 'auto' });
   }
 
   async function handleMicPointerDown(event) {
-    console.log('MIC BUTTON CLICKED');
+    debugLog('MIC BUTTON CLICKED');
     synchronousAudioUnlock();
     if (isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING) return;
     if (socketRef.current || processing || playing) return;
@@ -1821,11 +1996,11 @@ function App() {
 
   function downloadPwaInstaller() {
     const appUrl = window.location.origin;
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install Universal Translator</title></head><body style="font-family:system-ui;margin:24px;line-height:1.5"><h1>Install Universal Translator</h1><p>Open <a href="${appUrl}">${appUrl}</a>, then use your browser's Add to Home Screen or Install app option.</p><p><a href="${appUrl}">Open app now</a></p></body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install Anai Translator</title></head><body style="font-family:system-ui;margin:24px;line-height:1.5;background:#03050a;color:#f8fafc"><h1>Install Anai Translator</h1><p>Open <a style="color:#67e8f9" href="${appUrl}">${appUrl}</a>, then use your browser's Add to Home Screen or Install app option.</p><p><a style="color:#67e8f9" href="${appUrl}">Open app now</a></p></body></html>`;
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'universal-translator-install.html';
+    link.download = 'anai-translator-install.html';
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -1956,15 +2131,15 @@ function App() {
   }
 
   async function startRecording() {
-    console.log('startRecording: called');
+    debugLog('startRecording: called');
     if (recording || processing) {
-      console.log('startRecording: already recording or processing, skipping');
+      debugLog('startRecording: already recording or processing, skipping');
       return;
     }
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log('MIC STREAM ACTIVE:', stream);
+      stream = await requestAudioStream();
+      debugLog('MIC STREAM ACTIVE:', stream);
       logAudioStream(stream);
     } catch (error) {
       setMicPermission('denied');
@@ -1984,7 +2159,7 @@ function App() {
     }
     mediaRecorderRef.current = recorder;
     recorder.ondataavailable = (event) => {
-      console.log('MOBILE AUDIO SIZE:', event.data.size);
+      debugLog('MOBILE AUDIO SIZE:', event.data.size);
       if (event.data.size > 0) chunksRef.current.push(event.data);
     };
     recorder.onstop = () => {
@@ -2016,9 +2191,9 @@ function App() {
   }
 
   function stopRecording() {
-    console.log('stopRecording: called');
+    debugLog('stopRecording: called');
     if (recordingStoppedRef.current) {
-      console.log('stopRecording: already stopped, skipping');
+      debugLog('stopRecording: already stopped, skipping');
       return;
     }
     stopSilenceDetector();
@@ -2043,20 +2218,22 @@ function App() {
     formData.append('source_language', sourceLanguage);
     formData.append('target_language', targetLanguage);
     formData.append('synthesize_audio', 'true');
+    resetBrainRuntimeUi();
 
     try {
-      console.log('UPLOAD: posting audio to', `${API_URL}/translate/audio`, 'size', blob.size);
+      debugLog('UPLOAD: posting audio to', `${API_URL}/translate/audio`, 'size', blob.size);
       const response = await fetch(`${API_URL}/translate/audio`, { method: 'POST', headers: authHeaders(authToken), body: formData });
-      console.log('UPLOAD: response status', response.status);
+      debugLog('UPLOAD: response status', response.status);
       if (!response.ok) {
         const errText = await responseErrorMessage(response, 'Audio translation failed');
         console.error('UPLOAD: response not ok', response.status, errText);
         throw new Error(errText);
       }
       const data = await response.json();
-      console.log('UPLOAD: response data keys', Object.keys(data));
-      console.log('UPLOAD: translated_text', data.translated_text ? 'yes' : 'no');
-      console.log('UPLOAD: audio_base64 length', data.audio_base64?.length || 0);
+      debugLog('UPLOAD: response data keys', Object.keys(data));
+      debugLog('UPLOAD: translated_text', data.translated_text ? 'yes' : 'no');
+      debugLog('UPLOAD: audio_base64 length', data.audio_base64?.length || 0);
+      const brainUpdate = applyBrainPayload(data, 'audio');
       if (data.clarify) {
         setResult(data);
         setStatus(data.clarify_message || 'Clarification requested');
@@ -2066,20 +2243,24 @@ function App() {
         return;
       }
       setResult(data);
-      setStatus(data.translated_text ? (data.audio_base64 ? 'Playing...' : 'Audio translated') : 'No clear speech recognized');
+      setStatus(brainUpdate?.message || (data.translated_text ? (data.audio_base64 ? 'Playing...' : 'Audio translated') : 'No clear speech recognized'));
+      if (shouldSkipBrainTts(data)) {
+        setPipelineStage('Voice skipped');
+        return;
+      }
       if (data.audio_base64) {
         await ensureAudioUnlocked().catch((e) => console.warn('uploadRecording audio unlock failed:', e));
         const binary = atob(data.audio_base64);
         const bytes = new Uint8Array(binary.length);
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        console.log('UPLOAD: decoded audio buffer size', buffer.byteLength);
+        debugLog('UPLOAD: decoded audio buffer size', buffer.byteLength);
         // Validate WAV header
         if (buffer.byteLength >= 12) {
           const header = new Uint8Array(buffer, 0, 12);
           const riff = String.fromCharCode(...header.slice(0, 4));
           const wave = String.fromCharCode(...header.slice(8, 12));
-          console.log('UPLOAD: WAV header', riff, wave, 'valid:', riff === 'RIFF' && wave === 'WAVE');
+          debugLog('UPLOAD: WAV header', riff, wave, 'valid:', riff === 'RIFF' && wave === 'WAVE');
         } else {
           console.warn('UPLOAD: audio buffer too small for WAV header');
         }
@@ -2089,14 +2270,14 @@ function App() {
         lastTtsItemRef.current = item;
         setAudioReplayAvailable(true);
         setPlaying(true);
-        console.log('UPLOAD: calling playTtsItem');
+        debugLog('UPLOAD: calling playTtsItem');
         // iOS needs a delay after mic release for the audio session to transition
         // from playAndRecord back to playback; 150ms is often too short.
         const playDelay = isIosOrSafariRecorder() ? 400 : 0;
         window.setTimeout(() => {
-          console.log('UPLOAD: starting playback after', playDelay, 'ms delay');
+          debugLog('UPLOAD: starting playback after', playDelay, 'ms delay');
           playTtsItem(item, { revokeOnFinish: false, manual: true, onEnd: () => {
-            console.log('UPLOAD: playTtsItem finished');
+            debugLog('UPLOAD: playTtsItem finished');
             setPlaying(false);
             setStatus('Audio translated');
           }});
@@ -2112,7 +2293,7 @@ function App() {
 
   async function toggleStreaming(options = {}) {
     if (socketRef.current) {
-      finalizeCurrentStream();
+      stopContinuousStream();
       return;
     }
 
@@ -2121,7 +2302,7 @@ function App() {
     delete cleanOptions.reconnect;
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream = await requestAudioStream();
       logAudioStream(stream);
     } catch (error) {
       disableStreamReconnect();
@@ -2164,6 +2345,9 @@ function App() {
     const socket = new WebSocket(socketUrl);
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
+    if (!cleanOptions.holdToTalk) {
+      startBrowserSpeechFastPath(socket);
+    }
     recorder.ondataavailable = (event) => {
       sendRecorderChunk(socket, event, recorder).catch((err) => {
         console.error('sendRecorderChunk error:', err);
@@ -2197,6 +2381,7 @@ function App() {
       setResult(null);
       setPartialTranscript('');
       setLiveTranslation('');
+      resetBrainRuntimeUi();
       setPipelineStage('Listening');
       setStatus(selectedSpeakerMode === 'auto' ? 'Interpreter mode listening...' : 'Streaming audio...');
       socket.send(JSON.stringify({
@@ -2210,12 +2395,19 @@ function App() {
         speaker: selectedSpeakerMode === 'auto' ? 'auto' : 'A',
         mime_type: recorder.mimeType || preferredAudioMimeType(),
       }));
+      if (!cleanOptions.holdToTalk && !speechFastPathActiveRef.current) {
+        startBrowserSpeechFastPath(socket);
+      }
       flushAudioSendQueue(socket);
       startStreamHeartbeat(socket);
       streamRecorderRef.current = recorder;
-      console.log('STEP 9: starting recorder');
+      debugLog('STEP 9: starting recorder');
       try {
         recorder.start(activePacketMs());
+        if (streamSafetyTimeoutRef.current) {
+          window.clearTimeout(streamSafetyTimeoutRef.current);
+          streamSafetyTimeoutRef.current = null;
+        }
       } catch (startErr) {
         console.error('Recorder start failed:', startErr);
         stopTracks(stream);
@@ -2227,7 +2419,7 @@ function App() {
       }
       startMicMeter(stream);
       streamRecordingStartedAtRef.current = performance.now();
-      console.log('STEP 10: recorder started, state=', recorder.state);
+      debugLog('STEP 10: recorder started, state=', recorder.state);
       if (cleanOptions.holdToTalk && holdToTalkReleasePendingRef.current) {
         holdToTalkReleasePendingRef.current = false;
         finalizeCurrentStream('Processing speech...');
@@ -2235,7 +2427,7 @@ function App() {
     };
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      console.log('WS MESSAGE:', event.data);
+      debugLog('WS MESSAGE:', event.data);
       if (data.type === 'pong') {
         markStreamPong();
         return;
@@ -2245,8 +2437,21 @@ function App() {
         const label = rememberSpeaker(data);
         setPipelineStage(`${label} detected`);
       }
+      if (data.type === 'active_speaker') {
+        const label = rememberSpeaker(data);
+        setDetectedSpeaker(label);
+        setConversationBrain(`${label}: ${data.reason || 'speaking'}${data.behavior ? ` - ${data.behavior}` : ''}`);
+        if (data.allowed !== false) setPipelineStage(`${label} speaking`);
+      }
       if (data.type === 'latency') {
         updateLatency(data.metric, data.ms);
+      }
+      if (data.type === 'cip') {
+        const brainUpdate = applyBrainPayload(data, 'stream');
+        if (brainUpdate?.message) {
+          setPipelineStage(brainUpdate.message);
+          setStatus(brainUpdate.message);
+        }
       }
       if (data.type === 'clarify') {
         setPipelineStage('Clarification needed');
@@ -2260,8 +2465,13 @@ function App() {
       }
       if (data.type === 'turn') {
         const label = rememberSpeaker(data);
+        const brainUpdate = applyBrainPayload(data, 'turn');
         const playback = data.playback_owner_label || data.playback_owner;
         setConversationBrain(`${label}: ${data.reason}${data.behavior ? ` - ${data.behavior}` : ''}${playback ? ` - playback: ${playback}` : ''}`);
+        if (brainUpdate?.speakerShift && brainUpdate.message) {
+          setPipelineStage(brainUpdate.message);
+          setStatus(brainUpdate.message);
+        }
       }
       if (data.type === 'partial_transcription') {
         rememberSpeaker(data);
@@ -2283,40 +2493,69 @@ function App() {
         setPipelineStage('Translation ready');
       }
       if (data.type === 'tts_start') {
+        if (shouldSkipBrainTts(data)) {
+          ttsQueueRef.current = [];
+          setTtsQueueLength(0);
+          setTtsChunksBuffer([]);
+          setPlaying(false);
+          setTtsPlaying(false);
+          setPipelineStage('Voice skipped');
+          setStatus('Confirmation needed before voice');
+          return;
+        }
         setPlaying(true);
         setPipelineStage(`Streaming voice: 0/${data.chunks}`);
-        if (isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING) {
+        if (!data.partial && isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING && !shouldKeepContinuousStream(socket)) {
           // Pause mic capture to route audio to speaker reliably on iOS
           resumeAfterTtsRef.current = true;
           finalizeCurrentStream('Playing voice...', { delay: false });
         }
       }
       if (data.type === 'tts_audio_chunk') {
+        if (shouldSkipBrainTts(data)) {
+          setPipelineStage('Voice skipped');
+          return;
+        }
         if (!firstAudioSeenRef.current) {
           firstAudioSeenRef.current = true;
           updateLatency('first_audio', Math.round(performance.now() - streamStartedAtRef.current));
         }
         setPipelineStage(`Streaming voice: ${data.index}/${data.total}`);
-        console.log(`Received TTS chunk ${data.index}/${data.total}, text: "${data.text}", audio size: ${data.audio_base64?.length || 0} chars`);
+        debugLog(`Received TTS chunk ${data.index}/${data.total}, text: "${data.text}", audio size: ${data.audio_base64?.length || 0} chars`);
         ensureAudioUnlocked().catch((e) => console.warn('TTS chunk audio unlock failed:', e));
         enqueueTtsChunk(data.audio_base64, data.mime_type);
       }
       if (data.type === 'tts_end') {
+        if (shouldSkipBrainTts(data)) {
+          ttsQueueRef.current = [];
+          setTtsQueueLength(0);
+          setTtsChunksBuffer([]);
+          setPlaying(false);
+          setTtsPlaying(false);
+          setPipelineStage('Voice skipped');
+          setStatus('Confirmation needed before voice');
+          return;
+        }
         setPipelineStage('Voice stream complete');
         setTtsChunksBuffer((chunks) => {
           if (chunks.length === 0) {
-            console.log('No TTS chunks to play');
+            debugLog('No TTS chunks to play');
             return [];
           }
-          console.log(`Playing ${chunks.length} TTS chunks sequentially to bypass concatenation error`);
+          debugLog(`Playing ${chunks.length} TTS chunks sequentially to bypass concatenation error`);
           let index = 0;
           const playNextChunk = () => {
             if (index >= chunks.length) {
-              console.log('All chunks played');
+              debugLog('All chunks played');
               setPlaying(false);
               setTtsPlaying(false);
-              setPipelineStage('Voice played');
-              setStatus('Voice played');
+              if (shouldKeepContinuousStream(socket)) {
+                setPipelineStage('Listening');
+                setStatus('Listening for the next speaker...');
+              } else {
+                setPipelineStage('Voice played');
+                setStatus('Voice played');
+              }
               return;
             }
             const chunk = chunks[index];
@@ -2325,19 +2564,19 @@ function App() {
             revokeTtsItemUrl(lastTtsItemRef.current);
             lastTtsItemRef.current = item;
             setAudioReplayAvailable(true);
-            console.log(`Playing chunk ${index + 1}/${chunks.length}, size: ${chunk.byteLength} bytes`);
+            debugLog(`Playing chunk ${index + 1}/${chunks.length}, size: ${chunk.byteLength} bytes`);
             playTtsItem(item, { revokeOnFinish: true, manual: false, onEnd: () => {
               index++;
               playNextChunk();
             }});
           };
           ensureAudioUnlocked().catch((e) => console.warn('TTS end audio unlock failed:', e));
-          console.log('Starting sequential TTS playback');
+          debugLog('Starting sequential TTS playback');
           playNextChunk();
           return [];
         });
         setTtsQueueLength(0);
-        if (resumeAfterTtsRef.current && (isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING)) {
+        if (!data.partial && resumeAfterTtsRef.current && (isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING) && !shouldKeepContinuousStream(socket)) {
           resumeAfterTtsRef.current = false;
           window.setTimeout(() => {
             if (!socketRef.current) {
@@ -2347,14 +2586,23 @@ function App() {
         }
       }
       if (data.type === 'error') {
-        console.log('WS ERROR MESSAGE:', data);
+        debugLog('WS ERROR MESSAGE:', data);
+        const message = data.message || 'Stream recovered';
+        if (shouldKeepContinuousStream(socket) && !isFatalStreamError(message)) {
+          setProcessing(false);
+          setPipelineStage('Listening');
+          setStatus(`${message} Listening...`);
+          streamFinalizePendingRef.current = false;
+          holdToTalkReleasePendingRef.current = false;
+          return;
+        }
         disableStreamReconnect();
         clearStreamHeartbeat();
         audioSendQueueRef.current = [];
         releaseWakeLock();
         resetStreamState();
         setPipelineStage('Hold and speak longer');
-        setStatus(data.message || 'Stream failed');
+        setStatus(message || 'Stream failed');
         streamFinalizePendingRef.current = false;
         holdToTalkReleasePendingRef.current = false;
         if (streamRecorderRef.current?.state === 'recording') streamRecorderRef.current.stop();
@@ -2364,9 +2612,13 @@ function App() {
       }
       if (data.type === 'vad' && data.speech_detected) setStatus('Streaming audio... speech detected');
       if (data.type === 'final') {
-        disableStreamReconnect();
-        clearStreamHeartbeat();
-        audioSendQueueRef.current = [];
+        const keepContinuous = shouldKeepContinuousStream(socket);
+        if (!keepContinuous) {
+          disableStreamReconnect();
+          clearStreamHeartbeat();
+          audioSendQueueRef.current = [];
+        }
+        const brainUpdate = applyBrainPayload(data, 'final');
         rememberSpeaker(data);
         setResult(data);
         if (data.session) {
@@ -2375,10 +2627,19 @@ function App() {
           appendConversationTurn(data);
         }
         setProcessing(false);
+        streamFinalizePendingRef.current = false;
+        if (keepContinuous) {
+          setStreaming(true);
+          setInstantListening(false);
+          if (!ttsPlayingRef.current && !playing) {
+            setPipelineStage(data.clarify ? 'Clarification needed' : 'Listening');
+            setStatus(brainUpdate?.message || (data.clarify ? 'Clarification needed. Listening...' : 'Listening for the next speaker...'));
+          }
+          return;
+        }
         setPipelineStage('Complete');
-        setStatus('Stream translated');
+        setStatus(brainUpdate?.message || 'Stream translated');
         if (streamRecorderRef.current?.state === 'recording') {
-          streamFinalizePendingRef.current = false;
           streamRecorderRef.current.stop();
         }
         socket.close();
@@ -2390,6 +2651,7 @@ function App() {
       setStatus('Stream connection error');
       setPipelineStage('Connection error');
       releaseWakeLock();
+      stopBrowserSpeechFastPath();
       resetStreamState();
       if (streamRecorderRef.current?.state === 'recording') streamRecorderRef.current.stop();
       else stopTracks(stream);
@@ -2401,6 +2663,7 @@ function App() {
       }));
       clearStreamHeartbeat();
       releaseWakeLock();
+      stopBrowserSpeechFastPath();
       resetStreamState();
       streamFinalizePendingRef.current = false;
       holdToTalkReleasePendingRef.current = false;
@@ -2428,16 +2691,25 @@ function App() {
       }
 
       streamReconnectRef.current.attempts += 1;
+      const attempt = streamReconnectRef.current.attempts;
+      const exponentialDelay = Math.min(
+        STREAM_RECONNECT_MS * Math.pow(2, attempt - 1),
+        STREAM_RECONNECT_MAX_DELAY_MS
+      );
       setStatus('Reconnecting stream...');
-      setPipelineStage(`Reconnecting ${streamReconnectRef.current.attempts}/${STREAM_RECONNECT_MAX_ATTEMPTS}`);
+      setPipelineStage(`Reconnecting ${attempt}/${STREAM_RECONNECT_MAX_ATTEMPTS} (${Math.round(exponentialDelay / 1000)}s)`);
       window.setTimeout(() => {
         if (!streamReconnectRef.current.enabled || socketRef.current) return;
         toggleStreaming({ ...(streamReconnectRef.current.options || {}), reconnect: true });
-      }, STREAM_RECONNECT_MS);
+      }, exponentialDelay);
     };
   }
 
   function enqueueTtsChunk(audioBase64, mimeType) {
+    if (shouldSkipBrainTts()) {
+      setPipelineStage('Voice skipped');
+      return;
+    }
     if (lowBandwidthMode) {
       setPipelineStage('Low-bandwidth mode: text translation only');
       return;
@@ -2461,7 +2733,7 @@ function App() {
       currentTtsFinishRef.current = null;
       prevFinish();
     }
-    console.log('playTtsItem: starting playback, manual=', manual, 'mimeType=', item.mimeType, 'buffer size=', item.buffer?.byteLength || 0);
+    debugLog('playTtsItem: starting playback, manual=', manual, 'mimeType=', item.mimeType, 'buffer size=', item.buffer?.byteLength || 0);
     ttsPlayingRef.current = true;
     setTtsPlaying(true);
     setPlaying(true);
@@ -2487,7 +2759,7 @@ function App() {
     };
     currentTtsFinishRef.current = finish;
     const playWithHtmlAudio = () => {
-      console.log('playWithHtmlAudio: using persistent audio element');
+      debugLog('playWithHtmlAudio: using persistent audio element');
       if (!item?.url) {
         console.error('playWithHtmlAudio: no item.url available');
         finish();
@@ -2525,14 +2797,14 @@ function App() {
         const doPlay = () => {
           if (doPlayCalled) return;
           doPlayCalled = true;
-          console.log('Audio readyState:', audio.readyState, 'paused:', audio.paused, 'muted:', audio.muted, 'volume:', audio.volume, 'duration:', audio.duration);
+          debugLog('Audio readyState:', audio.readyState, 'paused:', audio.paused, 'muted:', audio.muted, 'volume:', audio.volume, 'duration:', audio.duration);
           audio.play().then(() => {
-            console.log('HTML audio playing successfully (persistent element)');
+            debugLog('HTML audio playing successfully (persistent element)');
             setLastAudioError(null);
           }).catch((error) => {
             console.error('HTML audio play failed on persistent element:', error);
             // Nuclear fallback: try a completely fresh audio element
-            console.log('Trying nuclear fallback with fresh audio element');
+            debugLog('Trying nuclear fallback with fresh audio element');
             const fresh = new Audio(item.url);
             fresh.setAttribute('playsinline', '');
             fresh.setAttribute('webkit-playsinline', '');
@@ -2559,7 +2831,7 @@ function App() {
               setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
             };
             fresh.play().then(() => {
-              console.log('Fresh audio element playing successfully');
+              debugLog('Fresh audio element playing successfully');
               setLastAudioError(null);
             }).catch((err2) => {
               console.error('Fresh audio element play failed:', err2);
@@ -2577,12 +2849,12 @@ function App() {
 
         // On iOS, wait for canplay to ensure the audio session is ready
         if (audio.readyState >= 2) {
-          console.log('Audio already ready (readyState >= 2), playing immediately');
+          debugLog('Audio already ready (readyState >= 2), playing immediately');
           doPlay();
         } else {
-          console.log('Audio not ready yet (readyState:', audio.readyState, '), waiting for canplay');
+          debugLog('Audio not ready yet (readyState:', audio.readyState, '), waiting for canplay');
           audio.oncanplay = () => {
-            console.log('Audio canplay event fired, readyState:', audio.readyState);
+            debugLog('Audio canplay event fired, readyState:', audio.readyState);
             audio.oncanplay = null;
             if (canplayTimeoutRef.current) {
               window.clearTimeout(canplayTimeoutRef.current);
@@ -2625,7 +2897,7 @@ function App() {
         finish();
       };
       fallbackAudio.play().then(() => {
-        console.log('HTML audio playing successfully (fallback)');
+        debugLog('HTML audio playing successfully (fallback)');
         setLastAudioError(null);
       }).catch((error) => {
         console.error('HTML audio play failed:', error);
@@ -2642,29 +2914,29 @@ function App() {
     // iOS Safari: skip AudioContext and use persistent HTML audio directly.
     // After microphone use, iOS audio session transitions can break AudioContext.
     if (isIosOrSafariRecorder()) {
-      console.log('playTtsItem: iOS detected, using HTML audio directly');
+      debugLog('playTtsItem: iOS detected, using HTML audio directly');
       playWithHtmlAudio();
       return;
     }
 
     if (!item.buffer) {
-      console.log('playTtsItem: direct audio URL, using HTML audio');
+      debugLog('playTtsItem: direct audio URL, using HTML audio');
       playWithHtmlAudio();
       return;
     }
 
-    console.log('playTtsItem: trying AudioContext path');
+    debugLog('playTtsItem: trying AudioContext path');
     ensureAudioContext()
       .then((context) => {
-        console.log('playTtsItem: AudioContext state', context?.state);
+        debugLog('playTtsItem: AudioContext state', context?.state);
         if (!context || context.state !== 'running') {
-          console.log('AudioContext not running, using HTML audio fallback');
+          debugLog('AudioContext not running, using HTML audio fallback');
           playWithHtmlAudio();
           return;
         }
         return context.decodeAudioData(item.buffer.slice(0))
           .then((audioBuffer) => {
-            console.log('playTtsItem: decoded audio buffer, duration', audioBuffer.duration);
+            debugLog('playTtsItem: decoded audio buffer, duration', audioBuffer.duration);
             const source = context.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(context.destination);
@@ -2678,7 +2950,7 @@ function App() {
               console.warn('AudioBufferSource safety timeout fired, forcing finish');
               finish();
             }, Math.ceil(audioBuffer.duration * 1000) + 1000);
-            console.log('playTtsItem: AudioBufferSource started');
+            debugLog('playTtsItem: AudioBufferSource started');
           })
           .catch((error) => {
             console.error('AudioContext decode failed, using HTML audio fallback:', error);
@@ -2710,15 +2982,20 @@ function App() {
       if (!ttsPlayingRef.current && ttsQueueRef.current.length === 0 && playing) {
         setPlaying(false);
         setTtsQueueLength(0);
-        setPipelineStage('Ready to listen');
-        setStatus('Ready to listen');
+        if (socketRef.current && shouldKeepContinuousStream(socketRef.current)) {
+          setPipelineStage('Listening');
+          setStatus('Listening live...');
+        } else {
+          setPipelineStage('Ready to listen');
+          setStatus('Ready to listen');
+        }
       }
       return;
     }
 
     const item = ttsQueueRef.current.shift();
     setTtsQueueLength(ttsQueueRef.current.length);
-    console.log(`Playing TTS chunk, ${ttsQueueRef.current.length} remaining in queue`);
+    debugLog(`Playing TTS chunk, ${ttsQueueRef.current.length} remaining in queue`);
     playTtsItem(item, { revokeOnFinish: false });
   }
 
@@ -2747,8 +3024,8 @@ function App() {
 
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      console.log('MIC STREAM ACTIVE:', stream);
+      stream = await requestAudioStream();
+      debugLog('MIC STREAM ACTIVE:', stream);
       logAudioStream(stream);
     } catch (error) {
       setMicPermission('denied');
@@ -2775,7 +3052,7 @@ function App() {
     }
     refs.recorder = recorder;
     recorder.ondataavailable = (event) => {
-      console.log('MOBILE AUDIO SIZE:', event.data.size);
+      debugLog('MOBILE AUDIO SIZE:', event.data.size);
       sendRecorderChunk(socket, event, recorder).catch((err) => {
         console.error('Duplex sendRecorderChunk error:', err);
       });
@@ -2815,10 +3092,18 @@ function App() {
         const label = rememberSpeaker(data);
         updateDuplexSpeaker(speaker, { speaker_label: label, stage: `${label} connected` });
       }
+      if (data.type === 'cip') {
+        const brainUpdate = applyBrainPayload(data, `duplex-${speaker}`);
+        if (brainUpdate?.message) updateDuplexSpeaker(speaker, { stage: brainUpdate.message });
+      }
       if (data.type === 'stage') updateDuplexSpeaker(speaker, { stage: data.message });
       if (data.type === 'turn') {
         const label = rememberSpeaker(data);
+        const brainUpdate = applyBrainPayload(data, `duplex-${speaker}`);
         setConversationBrain(`${label}: ${data.reason}${data.behavior ? ` - ${data.behavior}` : ''}${data.playback_owner ? ` - playback: ${data.playback_owner}` : ''}`);
+        if (brainUpdate?.speakerShift && brainUpdate.message) {
+          updateDuplexSpeaker(speaker, { stage: brainUpdate.message });
+        }
         if (!data.allowed && data.behavior === 'hold') {
           refs.recorder?.stop();
           refs.recorder?.stream.getTracks().forEach((track) => track.stop());
@@ -2848,6 +3133,10 @@ function App() {
         updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Live translation' });
       }
       if (data.type === 'tts_audio_chunk') {
+        if (shouldSkipBrainTts(data)) {
+          updateDuplexSpeaker(speaker, { stage: 'Voice skipped for confirmation' });
+          return;
+        }
         ensureAudioUnlocked().catch((e) => console.warn('Duplex TTS chunk audio unlock failed:', e));
         enqueueTtsChunk(data.audio_base64, data.mime_type);
       }
@@ -2864,6 +3153,7 @@ function App() {
       if (data.type === 'final') {
         refs.manualClose = true;
         refs.shouldReconnect = false;
+        const brainUpdate = applyBrainPayload(data, `duplex-${speaker}`);
         const label = rememberSpeaker(data);
         if (data.session) applySharedSession(data.session);
         updateDuplexSpeaker(speaker, {
@@ -2871,7 +3161,7 @@ function App() {
           transcript: data.source_text,
           translation: data.translated_text,
           speaker_label: label,
-          stage: 'Complete',
+          stage: brainUpdate?.message || 'Complete',
         });
         if (refs.recorder?.state === 'recording') {
           refs.finalizePending = false;
@@ -2905,7 +3195,7 @@ function App() {
 
 
   const sourceText = partialTranscript || result?.source_text || 'Ready to listen';
-  const translatedText = liveTranslation || result?.translated_text || 'Translation appears here';
+  const translatedText = liveTranslation || result?.translated_text || 'Ready to translate';
   const hasSourceText = Boolean(partialTranscript || result?.source_text);
   const hasTranslatedText = Boolean(liveTranslation || result?.translated_text);
   const perceivedListening = streaming || instantListening;
@@ -2915,22 +3205,50 @@ function App() {
   const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
   const activeSpeakerLabel = detectedSpeaker && detectedSpeaker !== '-' && detectedSpeaker !== 'Person' ? detectedSpeaker : '';
   const recentConversationTurns = conversationTurns.slice(-4);
-  const latencyItems = [
-    { label: 'Text', value: latencyStats.end_to_end },
-    { label: 'Backend', value: latencyStats.backend_response },
-    { label: 'Audio', value: latencyStats.first_audio },
-  ].filter((item) => item.value && item.value !== '-');
   const latencyTotalMs = Number.parseInt(String(latencyStats.end_to_end || ''), 10);
-  const latencyTone = Number.isFinite(latencyTotalMs) && latencyTotalMs <= LATENCY_TARGET_MS ? 'fast' : Number.isFinite(latencyTotalMs) ? 'slow' : 'pending';
-  const { average: latencyAverageMs, best: latencyBestMs } = summarizeLatencyHistory(latencyHistory);
-  const latencyTrendItems = [
-    { label: 'Avg', value: latencyAverageMs ? `${latencyAverageMs}ms` : '-' },
-    { label: 'Best', value: latencyBestMs ? `${latencyBestMs}ms` : '-' },
-  ].filter((item) => item.value !== '-');
-  const latencyTrendTone = latencyAverageMs && latencyAverageMs <= LATENCY_TARGET_MS ? 'fast' : latencyAverageMs ? 'slow' : 'pending';
+  const { average: latencyAverageMs } = summarizeLatencyHistory(latencyHistory);
   const sourceLanguageLabel = languages[sourceLanguage] || sourceLanguage.toUpperCase();
   const targetLanguageLabel = TARGET_LANGUAGE_OPTIONS.find((option) => option.code === targetLanguage)?.label || languages[targetLanguage] || targetLanguage.toUpperCase();
+  const statusTone = connectionStatus !== 'online' ? 'offline' : playing || ttsPlaying ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'ready';
+  const timingLabel = Number.isFinite(latencyTotalMs) ? `${latencyTotalMs}ms` : latencyAverageMs ? `${latencyAverageMs}ms avg` : '';
+  const speakerSummary = activeSpeakerLabel;
   const micHint = perceivedListening ? 'Listening now' : processing ? 'Translation in motion' : playing ? 'Voice playing' : 'Ready for one tap';
+  const visibleRepairOptions = (brainUi.repairOptions || []).slice(0, 3);
+  const visibleHighlightTerms = (brainUi.highlightTerms || []).slice(0, 5);
+  const brainModeLabel = brainUi.mode ? brainUi.mode.replace(/_/g, ' ') : brainUi.strategy?.replace(/_/g, ' ');
+  const liveHudMode = liveAssistActive ? 'Instant' : perceivedListening ? 'Audio' : connectionStatus === 'online' ? 'Ready' : 'Offline';
+  const transcriptState = hasSourceText ? (perceivedListening ? 'live' : 'filled') : 'empty';
+  const translationState = hasTranslatedText ? ((playing || ttsPlaying) ? 'speaking' : 'filled') : 'empty';
+  const liveHudItems = [
+    { key: 'listen', label: 'Hear', Icon: Radio, active: perceivedListening, level: micLevel },
+    { key: 'ai', label: 'AI', Icon: Sparkles, active: liveAssistActive || brainUi.visible },
+    { key: 'translate', label: 'Text', Icon: Languages, active: Boolean(liveTranslation) || /translat/i.test(statusText || '') },
+    { key: 'voice', label: 'Voice', Icon: Volume2, active: playing || ttsPlaying || ttsQueueLength > 0 },
+  ];
+  const hasVisibleConversation = hasSourceText || hasTranslatedText || recentConversationTurns.length > 0 || clarifyVisible || brainUi.visible;
+  const quickActions = [
+    {
+      key: 'flip',
+      label: 'Flip',
+      Icon: Repeat2,
+      onClick: flipLanguageDirection,
+      disabled: streaming || processing || playing || ttsPlaying || sourceLanguage === targetLanguage,
+    },
+    {
+      key: 'replay',
+      label: 'Replay',
+      Icon: Volume2,
+      onClick: playTranslationAudio,
+      disabled: !audioReplayAvailable || playing || ttsPlaying,
+    },
+    {
+      key: 'clear',
+      label: 'Clear',
+      Icon: Trash2,
+      onClick: clearInterpreterScreen,
+      disabled: streaming || processing || playing || ttsPlaying || !hasVisibleConversation,
+    },
+  ];
 
   return (
     <main className="app-shell">
@@ -2987,6 +3305,7 @@ function App() {
         <section className="mic-panel">
           <button
             className={`mic-orb ${micState} ${perceivedListening ? 'listening-pulse' : ''}`}
+            style={{ '--voice-level': Math.max(0.02, Math.min(1, micLevel || 0)) }}
             onClick={handleMicClick}
             onPointerDown={handleMicPointerDown}
             onPointerUp={handleMicPointerUp}
@@ -2996,8 +3315,17 @@ function App() {
             aria-label={micLabel}
             aria-live="polite"
           >
+            <span className="voice-field" aria-hidden="true" />
+            <span className="energy-rim" aria-hidden="true" />
             <span className="orb-ring" />
             <span className="orb-spin" />
+            <span className="mic-grille" aria-hidden="true">
+              {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => {
+                const centerBoost = 1 - Math.abs(4 - i) * 0.1;
+                const height = 22 + Math.max(0.02, micLevel || 0) * 70 * centerBoost;
+                return <span key={i} style={{ height: `${Math.min(92, height)}%`, '--delay': `${i * 38}ms` }} />;
+              })}
+            </span>
             <Mic className="mic-icon" size={62} strokeWidth={2.3} aria-hidden="true" />
             <span className="sr-only">{micLabel}</span>
             <span className="rec-led">
@@ -3009,6 +3337,21 @@ function App() {
           </button>
           <p className="mic-hint">{micHint}</p>
           <p className="mic-label">{micLabel}</p>
+          <div className="live-hud" data-mode={liveHudMode.toLowerCase()} aria-label="Live interpreter state">
+            <span className="live-mode-chip">{liveHudMode}</span>
+            <div className="live-flow" aria-hidden="true">
+              {liveHudItems.map((item) => (
+                <span
+                  key={item.key}
+                  className={`live-flow-step ${item.active ? 'active' : ''}`}
+                  style={item.key === 'listen' ? { '--level': Math.max(0.08, Math.min(1, item.level || 0)) } : undefined}
+                >
+                  <item.Icon size={12} strokeWidth={2.6} aria-hidden="true" />
+                  <b>{item.label}</b>
+                </span>
+              ))}
+            </div>
+          </div>
           {(streaming || recording) && (
             <div className="voice-meter" aria-hidden="true">
               {[0, 1, 2, 3, 4, 5, 6].map((i) => {
@@ -3021,28 +3364,18 @@ function App() {
               })}
             </div>
           )}
-          <p className="status-line">{statusText}</p>
-          {activeSpeakerLabel && <p className="speaker-line">{activeSpeakerLabel}</p>}
-          {latencyItems.length > 0 && (
-            <div className="latency-strip" data-speed={latencyTone} aria-label="Translation timing">
-              {latencyItems.map((item) => (
-                <span className="latency-chip" key={item.label}>
-                  <span>{item.label}</span>
-                  <strong>{item.value}</strong>
-                </span>
-              ))}
+          <div className="status-panel" data-tone={statusTone} aria-live="polite">
+            <div className="status-primary">
+              <Activity size={14} strokeWidth={2.6} aria-hidden="true" />
+              <span>{statusText}</span>
             </div>
-          )}
-          {latencyTrendItems.length > 0 && (
-            <div className="latency-strip latency-trend" data-speed={latencyTrendTone} aria-label="Recent timing trend">
-              {latencyTrendItems.map((item) => (
-                <span className="latency-chip" key={item.label}>
-                  <span>{item.label}</span>
-                  <strong>{item.value}</strong>
-                </span>
-              ))}
-            </div>
-          )}
+            {(speakerSummary || timingLabel) && (
+              <div className="status-meta" aria-label="Interpreter details">
+                {speakerSummary && <span><UserRound size={12} strokeWidth={2.5} aria-hidden="true" />{speakerSummary}</span>}
+                {timingLabel && <span><Clock3 size={12} strokeWidth={2.5} aria-hidden="true" />{timingLabel}</span>}
+              </div>
+            )}
+          </div>
           {audioReplayAvailable && autoPlayFailed && (
             <button className="play-voice-button compact-voice-action" type="button" onClick={playTranslationAudio} disabled={playing}>
               Play Voice
@@ -3053,10 +3386,24 @@ function App() {
 
         <section className="language-dock" aria-label="Target language">
           <div className="language-direction" aria-hidden="true">
-            <span>{sourceLanguageLabel}</span>
-            <ArrowLeftRight size={15} strokeWidth={2.4} />
-            <strong>{targetLanguageLabel}</strong>
+            <span className="route-pill">
+              <small>From</small>
+              <strong>{sourceLanguageLabel}</strong>
+            </span>
+            <span className="route-switch">
+              <ArrowLeftRight size={15} strokeWidth={2.4} />
+            </span>
+            <span className="route-pill target">
+              <small>To</small>
+              <strong>{targetLanguageLabel}</strong>
+            </span>
           </div>
+          {brainUi.hints?.language_auto_repaired && (
+            <div className="language-repair-line" role="status">
+              <Check size={14} strokeWidth={2.6} />
+              <span>{brainUi.message || `Source set to ${sourceLanguageLabel}`}</span>
+            </div>
+          )}
           <div className="language-options" role="radiogroup" aria-label="Target language">
             {TARGET_LANGUAGE_OPTIONS.map((opt) => {
               const active = targetLanguage === opt.code;
@@ -3075,12 +3422,67 @@ function App() {
               );
             })}
           </div>
+          <div className="quick-actions" aria-label="Quick interpreter actions">
+            {quickActions.map((action) => (
+              <button
+                key={action.key}
+                type="button"
+                onClick={action.onClick}
+                disabled={action.disabled}
+                aria-label={action.label}
+                title={action.label}
+              >
+                <action.Icon size={14} strokeWidth={2.5} aria-hidden="true" />
+                <span>{action.label}</span>
+              </button>
+            ))}
+          </div>
         </section>
 
         <section className="translation-stack">
-          <article className={`transcript-card ${hasSourceText ? 'has-text' : ''}`}>
-            <span className="card-kicker">Heard</span>
-            <p className="transcript-text fade-in" key={sourceText}>{sourceText}</p>
+          {brainUi.visible && (
+            <section className={`ai-recovery ${brainUi.hints?.language_auto_repaired ? 'success' : brainUi.hints?.ask_before_speaking || brainUi.skipTts ? 'guarded' : ''} ${brainUi.speakerShift ? 'shift' : ''}`} aria-label="AI recovery">
+              <div className="ai-recovery-main">
+                <span>{brainUi.message || brainModeLabel || 'Ready'}</span>
+                {brainModeLabel && <strong>{brainModeLabel}</strong>}
+              </div>
+              {brainUi.speakerShift && brainUi.activeSpeakerLabel && (
+                <div className="speaker-shift-line" role="status">
+                  <span>Active speaker</span>
+                  <strong>{brainUi.activeSpeakerLabel}</strong>
+                </div>
+              )}
+              {(visibleRepairOptions.length > 0 || visibleHighlightTerms.length > 0) && (
+                <div className="repair-chip-row">
+                  {visibleRepairOptions.map((option, index) => (
+                    <button
+                      type="button"
+                      key={`${option.type || 'repair'}-${option.word || option.language || index}`}
+                      className={option.applied ? 'applied' : ''}
+                      onClick={() => runRepairOption(option)}
+                    >
+                      {option.applied && <Check size={13} strokeWidth={2.8} />}
+                      <span>{compactRepairLabel(option)}</span>
+                    </button>
+                  ))}
+                  {visibleHighlightTerms.map((term) => (
+                    <span className="term-chip" key={term}>{term}</span>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+          <article className={`transcript-card ${hasSourceText ? 'has-text' : ''}`} data-state={transcriptState}>
+            <span className="card-kicker"><Radio size={13} strokeWidth={2.5} aria-hidden="true" />{sourceLanguageLabel}</span>
+            <p className="transcript-text fade-in" key={sourceText}>
+              {sourceText}
+              {transcriptState === 'live' && <span className="live-cursor" aria-hidden="true" />}
+            </p>
+            {visibleHighlightTerms.length > 0 && (
+              <div className="term-row" aria-label="Exact terms">
+                {visibleHighlightTerms.map((term) => <span key={term}>{term}</span>)}
+              </div>
+            )}
             {hasSourceText && (
               <button
                 type="button"
@@ -3093,9 +3495,12 @@ function App() {
               </button>
             )}
           </article>
-          <article className={`translation-card ${hasTranslatedText ? 'has-text' : ''}`}>
-            <span className="card-kicker">Translation</span>
-            <p className="translation-text fade-in" key={translatedText}>{translatedText}</p>
+          <article className={`translation-card ${hasTranslatedText ? 'has-text' : ''}`} data-state={translationState}>
+            <span className="card-kicker"><Languages size={13} strokeWidth={2.5} aria-hidden="true" />{targetLanguageLabel}</span>
+            <p className="translation-text fade-in" key={translatedText}>
+              {translatedText}
+              {translationState === 'speaking' && <span className="live-cursor voice" aria-hidden="true" />}
+            </p>
             {cameraActive && (
               <div className="camera-preview">
                 <video ref={videoRef} muted playsInline />
@@ -3265,8 +3670,21 @@ function App() {
         )}
 
       </section>
+      <Assistant
+        apiUrl={API_URL}
+        authToken={authToken}
+        getTranslationContext={() => {
+          if (!result) return null;
+          return {
+            source_language: sourceLanguage,
+            target_language: targetLanguage,
+            source_text: result.source_text || result.original_text || '',
+            translated_text: result.translated_text || '',
+          };
+        }}
+      />
     </main>
   );
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(<ErrorBoundary><App /></ErrorBoundary>);

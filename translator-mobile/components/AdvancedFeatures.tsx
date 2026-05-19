@@ -113,22 +113,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   card: {
-    backgroundColor: '#0c1729',
+    backgroundColor: '#07111f',
     padding: 12,
-    borderRadius: 12,
+    borderRadius: 18,
     marginRight: 10,
     minWidth: 160,
     borderWidth: 1,
   },
-  layer1: { borderColor: '#2563eb' },
-  layer2: { borderColor: '#7c3aed' },
-  layer3: { borderColor: '#16a34a' },
-  layer4: { borderColor: '#ca8a04' },
-  layer5: { borderColor: '#dc2626' },
+  layer1: { borderColor: '#67e8f9' },
+  layer2: { borderColor: '#a78bfa' },
+  layer3: { borderColor: '#2dd4bf' },
+  layer4: { borderColor: '#facc15' },
+  layer5: { borderColor: '#f472b6' },
   layerTitle: {
     color: '#e5ecff',
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: '900',
     marginBottom: 8,
   },
   statusRow: {
@@ -148,7 +148,7 @@ const styles = StyleSheet.create({
   },
   noiseLabel: {
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: '900',
   },
   hint: {
     color: '#6b7280',
@@ -169,7 +169,7 @@ const styles = StyleSheet.create({
   },
   prosodyFill: {
     height: '100%',
-    backgroundColor: '#2563eb',
+    backgroundColor: '#67e8f9',
     borderRadius: 2,
   },
 });

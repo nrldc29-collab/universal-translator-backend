@@ -1,10 +1,10 @@
 import base64
-import hashlib
 import asyncio
+import hashlib
 from pathlib import Path
 from uuid import uuid4
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from html import escape
 import json
 import os
@@ -19,10 +19,13 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Respon
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from starlette.websockets import WebSocketDisconnect
 
 from backend.conversation import ConversationBrain
+from backend.memory import ConversationMemory
+from backend.refine import refine_translation
+from backend.speakers import SpeakerMemory, detect_language_heuristic
 from backend.config import (
     LANGUAGES,
     get_allowed_origin_regex,
@@ -35,203 +38,76 @@ from backend.config import (
     get_preload_models,
     get_speech_merge_ms,
     get_serve_frontend_dist,
+    get_stt_provider,
+    get_stt_provider_url,
+    get_stt_provider_ws_url,
+    get_translation_backend,
+    get_translation_device,
     get_vad_force_final_seconds,
     get_vad_silent_checks,
     get_whisper_compute_type,
     get_whisper_device,
     get_whisper_model_size,
 )
-from backend.pipeline import UniversalTranslatorPipeline
+from backend.service_health import get_service_health_manager
+from backend.pipeline import AnaiTranslatorPipeline
 from backend.observability import observability
 from backend.security import WEBSOCKET_AUTH_RELEASE, authenticate_http, authenticate_user, authenticate_websocket, usage_limiter
 from backend.sessions import session_registry
 from backend.streaming import websocket_audio_translation, websocket_text_translation
 from speech import SileroVoiceActivityDetector
+from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
+from backend.cip_client import call_cip_brain, cip_health_snapshot, cip_settings
+from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, is_cip_clarification
+from backend import assistant as naia_assistant
+try:
+    import pytesseract  # type: ignore
+    from PIL import Image
+    _HAS_PYTESSERACT = True
+except (ImportError, ModuleNotFoundError):
+    _HAS_PYTESSERACT = False
 
 
-runtime_state = {
-    "ready": False,
-    "started_at": time(),
-    "models": {},
-}
-metrics = {
-    "http_requests": 0,
-    "websocket_connections": 0,
-    "websocket_errors": 0,
-}
-RELEASE_ID = "2026-05-13-voice-warmup-v18"
+# --- Helpers, models, and shared state are in sibling modules. ---
+# `backend.api` keeps the route table and lifespan; everything else
+# is split out so this file stays readable.
+from backend.api_models import (
+    ImageTranslationResponse,
+    LoginRequest,
+    TextToSpeechRequest,
+    TextTranslationRequest,
+)
+from backend.api_helpers import (
+    HOP_BY_HOP_HEADERS,
+    normalize_language as _normalize_language,
+    read_limited_upload as _read_limited_upload,
+    safe_upload_suffix as _safe_upload_suffix,
+)
+from backend.api_frontend import (
+    embedded_frontend_response as _embedded_frontend_response,
+    frontend_asset_path as _frontend_asset_path,
+    frontend_dist_dir as _frontend_dist_dir,
+    frontend_index_path as _frontend_index_path,
+    frontend_launcher as _frontend_launcher,
+    frontend_proxy_response as _frontend_proxy_response,
+    local_frontend_url as _local_frontend_url,
+    proxy_frontend as _proxy_frontend,
+)
+from backend.api_health import (
+    RELEASE_ID,
+    metrics,
+    runtime_payload as _runtime_payload,
+    runtime_state,
+    stt_provider_health_snapshot as _stt_provider_health_snapshot,
+)
+
+
 VOICE_WARMUP_TEXTS = {
     "es": ["Hola, ¿cómo estás?"],
     "ht": ["Bonjou, kijan ou ye?"],
 }
-logger = logging.getLogger("universal_translator")
+logger = logging.getLogger("anai_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-HOP_BY_HOP_HEADERS = {
-    "connection",
-    "content-length",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-}
-
-
-class TextTranslationRequest(BaseModel):
-    text: str
-    source_language: str = "en"
-    target_language: str = "es"
-    tone: str | None = None
-    synthesize_audio: bool = False
-    audio_response_format: str = "base64"
-    session_id: str | None = None
-    device_id: str | None = None
-    speaker_name: str | None = None
-    speaker_mode: str = "auto"
-
-
-class TextToSpeechRequest(BaseModel):
-    text: str
-    language: str = "es"
-    response_format: str = "base64"
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-def _local_frontend_url(request: Request) -> str:
-    frontend_url = get_frontend_url()
-    if frontend_url == "http://127.0.0.1:5173":
-        host = request.headers.get("host", "").split(":", 1)[0]
-        if host in {"localhost", "127.0.0.1"} or host.startswith(("192.168.", "10.", "172.")):
-            return f"{request.url.scheme}://{host}:5173"
-    return frontend_url
-
-
-def _frontend_dist_dir() -> Path:
-    dist_dir = Path(get_frontend_dist_dir())
-    if not dist_dir.is_absolute():
-        dist_dir = Path.cwd() / dist_dir
-    return dist_dir
-
-
-def _frontend_index_path() -> Path | None:
-    index_path = _frontend_dist_dir() / "index.html"
-    if get_serve_frontend_dist() and index_path.is_file():
-        return index_path
-    return None
-
-
-def _frontend_asset_path(full_path: str) -> Path | None:
-    try:
-        dist_dir = _frontend_dist_dir().resolve()
-        asset_path = (dist_dir / full_path).resolve()
-    except OSError:
-        return None
-
-    if asset_path.is_file() and (asset_path == dist_dir or dist_dir in asset_path.parents):
-        return asset_path
-    return None
-
-
-def _embedded_frontend_response(full_path: str = "") -> FileResponse | None:
-    index_path = _frontend_index_path()
-    if not index_path:
-        return None
-
-    if full_path:
-        asset_path = _frontend_asset_path(full_path)
-        if asset_path:
-            return FileResponse(asset_path)
-
-    return FileResponse(index_path)
-
-
-def _frontend_launcher(frontend_url: str) -> HTMLResponse:
-    frontend_href = escape(frontend_url, quote=True)
-    frontend_js = json.dumps(frontend_url)
-    return HTMLResponse(f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="refresh" content="0; url={frontend_href}" />
-    <title>Opening Universal Translator</title>
-    <style>
-      body {{
-        margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        font-family: system-ui, sans-serif;
-        background: #07111f;
-        color: #e5ecff;
-      }}
-      main {{
-        width: min(520px, calc(100vw - 32px));
-        border: 1px solid rgba(148, 163, 184, .3);
-        border-radius: 18px;
-        padding: 24px;
-        background: #0f172a;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
-      }}
-      a {{
-        display: inline-flex;
-        margin-top: 12px;
-        min-height: 48px;
-        align-items: center;
-        justify-content: center;
-        padding: 0 18px;
-        border-radius: 999px;
-        background: #2563eb;
-        color: white;
-        font-weight: 800;
-        text-decoration: none;
-      }}
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>Opening Universal Translator...</h1>
-      <p>If it does not open automatically, use the button below.</p>
-      <a href="{frontend_href}">Open app</a>
-    </main>
-    <script>window.location.replace({frontend_js});</script>
-  </body>
-</html>""")
-
-
-def _frontend_proxy_response(content: bytes, status_code: int, upstream_headers) -> Response:
-    headers = {}
-    media_type = None
-    for name, value in upstream_headers.items():
-        lower_name = name.lower()
-        if lower_name == "content-type":
-            media_type = value
-        elif lower_name not in HOP_BY_HOP_HEADERS:
-            headers[name] = value
-    return Response(content=content, status_code=status_code, media_type=media_type, headers=headers)
-
-
-def _proxy_frontend(request: Request, full_path: str = "") -> Response:
-    frontend_url = _local_frontend_url(request).rstrip("/")
-    path = quote(full_path, safe="/@._-")
-    upstream_url = f"{frontend_url}/{path}" if path else f"{frontend_url}/"
-    if request.url.query:
-        upstream_url = f"{upstream_url}?{request.url.query}"
-
-    try:
-        upstream_request = UrlRequest(upstream_url, headers={"User-Agent": "UniversalTranslatorLocalProxy/1.0"})
-        with urlopen(upstream_request, timeout=8) as upstream:
-            return _frontend_proxy_response(upstream.read(), upstream.status, upstream.headers)
-    except HTTPError as exc:
-        return _frontend_proxy_response(exc.read(), exc.code, exc.headers)
-    except URLError:
-        return _frontend_launcher(frontend_url)
 
 
 @asynccontextmanager
@@ -241,6 +117,9 @@ async def lifespan(app_instance: FastAPI):
         "whisper_device": get_whisper_device(),
         "whisper_compute_type": get_whisper_compute_type(),
         "whisper_model_size": get_whisper_model_size(),
+        "translation_backend": get_translation_backend(),
+        "translation_runtime": pipeline.translator.__class__.__name__,
+        "translation_device": get_translation_device(),
         "tts": "piper",
         "vad": "silero",
     }
@@ -259,7 +138,7 @@ async def lifespan(app_instance: FastAPI):
         runtime_state["ready"] = False
 
 
-app = FastAPI(title="Universal Translator", lifespan=lifespan)
+app = FastAPI(title="Anai Translator", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_allowed_origins(),
@@ -268,9 +147,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-pipeline = UniversalTranslatorPipeline()
+pipeline = AnaiTranslatorPipeline()
 vad = SileroVoiceActivityDetector()
 conversation_brain = ConversationBrain()
+memory = ConversationMemory()
+speaker_memory = SpeakerMemory()
+from backend.profile_memory import ProfileMemory
+profiles = ProfileMemory()
+confidence_engine = ConfidenceEngine()
 
 
 @app.get("/")
@@ -283,7 +167,7 @@ def root(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return _runtime_payload()
 
 
 @app.get("/debug/version")
@@ -305,12 +189,7 @@ async def api_debug_version():
 
 @app.get("/ready")
 def ready():
-    return {
-        "ready": runtime_state["ready"],
-        "uptime_seconds": round(time() - runtime_state["started_at"], 2),
-        "models": runtime_state["models"],
-        "voice_warmup": runtime_state.get("voice_warmup"),
-    }
+    return _runtime_payload(include_details=True)
 
 
 @app.get("/diagnostics")
@@ -332,13 +211,17 @@ def diagnostics(request: Request):
             "status_code": None,
         }
         try:
-            upstream_request = UrlRequest(f"{frontend_url}/", headers={"User-Agent": "UniversalTranslatorDiagnostics/1.0"})
+            upstream_request = UrlRequest(f"{frontend_url}/", headers={"User-Agent": "AnaiTranslatorDiagnostics/1.0"})
             with urlopen(upstream_request, timeout=1.5) as upstream:
                 frontend["reachable"] = 200 <= upstream.status < 500
                 frontend["status_code"] = upstream.status
-        except Exception as exc:
+        except (URLError, TimeoutError, ConnectionError) as exc:
             frontend["error"] = exc.__class__.__name__
 
+    stt_provider = _stt_provider_health_snapshot(timeout_seconds=3)
+
+    service_health_manager = get_service_health_manager()
+    
     return {
         "status": "ok",
         "ready": runtime_state["ready"],
@@ -347,8 +230,12 @@ def diagnostics(request: Request):
         "frontend": frontend,
         "models": runtime_state["models"],
         "voice_warmup": runtime_state.get("voice_warmup"),
+        "cip": cip_health_snapshot(),
+        "stt_provider": stt_provider,
+        "service_health": service_health_manager.get_all_health_summaries(),
         "streaming": {
             "websocket_path": "/ws/audio",
+            "streaming_stt_path": "/ws/audio/streaming",
             "vad_silent_checks": get_vad_silent_checks(),
             "vad_force_final_seconds": get_vad_force_final_seconds(),
             "speech_merge_ms": get_speech_merge_ms(),
@@ -374,6 +261,7 @@ def metrics_snapshot(identity: str = Depends(authenticate_http)):
         "billing_usage": usage_limiter.billing_snapshot(),
         "gpu_queue": pipeline.stt.queue_snapshot(),
         "sessions": session_registry.snapshot(),
+        "cip": cip_settings(),
         "observability": observability.snapshot(),
     }
 
@@ -406,7 +294,7 @@ async def tts_sample():
     try:
         if not output_path.is_file():
             await run_in_threadpool(pipeline.tts.synthesize, "This is a voice test.", str(output_path))
-    except Exception as exc:
+    except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
         logger.exception("tts_sample_failed")
         raise HTTPException(status_code=503, detail=f"TTS sample unavailable: {exc}") from exc
     return FileResponse(str(output_path), media_type="audio/wav", filename="tts-sample.wav", headers={"Cache-Control": "no-store"})
@@ -448,7 +336,7 @@ def _cached_tts_payload(text: str, language: str, response_format: str) -> dict:
         if rendered_path != output_path:
             try:
                 rendered_path.unlink(missing_ok=True)
-            except Exception:
+            except (OSError, PermissionError):
                 pass
 
     response_dict = {
@@ -482,7 +370,7 @@ async def _warm_voice_cache(reason: str) -> None:
                     "audio_bytes": payload["audio_bytes"],
                 })
                 observability.record_event("voice_warmup", language=language, cache_hit=payload["cache_hit"], reason=reason)
-            except Exception as exc:
+            except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
                 logger.warning("voice_warmup_failed language=%s reason=%s error=%s", language, reason, exc)
                 observability.record_event("voice_warmup_failed", language=language, reason=reason, error=exc.__class__.__name__)
     runtime_state["voice_warmup"] = {
@@ -522,7 +410,7 @@ async def text_to_speech(request: TextToSpeechRequest, identity: str = Depends(a
         observability.observe_latency("tts_request", time() - started_at)
         observability.record_event("tts_request", identity=identity, latency_seconds=time() - started_at, cache_hit=response_dict["cache_hit"], response_format=response_format)
         return response_dict
-    except Exception as exc:
+    except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
         usage_limiter.track(identity, "errors")
         observability.increment("tts_failures_total")
         observability.record_event("tts_failure", identity=identity)
@@ -542,34 +430,97 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
     metrics["http_requests"] += 1
     usage_limiter.track(identity, "http_requests")
     usage_limiter.track(identity, "text_translations")
+    request.source_language = _normalize_language(request.source_language, "en")
+    request.target_language = _normalize_language(request.target_language, "es")
     logger.info("text_translation identity=%s source=%s target=%s", identity, request.source_language, request.target_language)
     audio_response_format = _normalize_audio_response_format(request.audio_response_format) if request.synthesize_audio else "base64"
     try:
-        result = pipeline.translate_text(
+        # Run pipeline up to translation (no synth), then refine, then optionally TTS
+        # Register default speaker 'A' and lock/request language
+        speaker_id = "A"
+        if not speaker_memory.get_language(speaker_id):
+            speaker_memory.register(speaker_id, language=request.source_language or detect_language_heuristic(request.text))
+        interim = pipeline.translate_text(
             text=request.text,
             source_language=request.source_language,
             target_language=request.target_language,
             tone=request.tone,
             synthesize_audio=False,
         )
+        user_profile = profiles.get(identity)
+        # Let the UT pipeline produce the translation first, then let CIP make
+        # confidence, clarification, and conversation-routing decisions.
+        memory_context = memory.get_context()
+        speaker_context = speaker_memory.get_context(speaker_id)
+        refined_text = refine_translation(request.text, interim.translated_text, memory_context, speaker_context)
+        stt_conf = 0.9
+        tr_conf = estimate_translation_confidence(request.text, refined_text)
+        semantic_context = {
+            "conversation_mood": "neutral",
+            "topics": memory.recent_topics(),
+        }
+        cip = None
+        cip = call_cip_brain(
+            request.text,
+            request.target_language,
+            identity,
+            fallback_translation=refined_text,
+            source_language=request.source_language,
+            stt_confidence=stt_conf,
+            translation_confidence=tr_conf,
+            context=memory_context,
+            speaker_context=speaker_context,
+            semantic_context=semantic_context,
+        )
+        cip_clarify = is_cip_clarification(cip)
+        final_text = "" if cip_clarify else choose_translation(cip, refined_text)
+        if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
+            semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
+            semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"
+        # Confidence/clarify for text path
+        tr_conf = estimate_translation_confidence(request.text, final_text)
+        cip_conf = get_cip_confidence(cip)
+        conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
+        audio_path = None
+        audio_payload = None
+        if request.synthesize_audio and final_text and not cip_clarify:
+            audio_payload = _cached_tts_payload(final_text, request.target_language, audio_response_format)
+            audio_path = audio_payload["audio_output_path"]
+        result = type(interim)(
+            source_text=request.text,
+            improved_text=interim.improved_text,
+            translated_text=final_text,
+            audio_output_path=audio_path,
+        )
         observability.observe_latency("text_translation", time() - started_at)
         observability.record_event("text_translation", identity=identity, latency_seconds=time() - started_at)
+        memory.add(speaker_id, request.text, result.translated_text, {"cip": cip})
+        # Update profile preferences heuristically
+        langs = set(user_profile.get("preferred_languages") or [])
+        langs.update([request.source_language, request.target_language])
+        user_profile["preferred_languages"] = [l for l in langs if l]
+        user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "text", "source": request.text, "translated": result.translated_text}]
+        profiles.save(identity, user_profile)
+        speaker_memory.add_message(speaker_id, request.text)
         response_dict = result.__dict__
-        if request.synthesize_audio and result.translated_text:
-            audio_payload = _cached_tts_payload(result.translated_text, request.target_language, audio_response_format)
+        apply_cip_decision(response_dict, cip)
+        if conf_score < 0.4 and not response_dict.get("clarify"):
+            response_dict["clarify"] = True
+            response_dict["clarify_message"] = clarification_for(request.text, detect_ambiguities(request.text))
+        if audio_payload and not response_dict.get("clarify"):
             response_dict.update(audio_payload)
-            response_dict["translated_text"] = result.translated_text
+            response_dict["translated_text"] = final_text
             observability.record_event("text_translation_tts", identity=identity, cache_hit=audio_payload["cache_hit"], response_format=audio_response_format)
-        elif result.audio_output_path:
+        elif result.audio_output_path and not response_dict.get("clarify"):
             try:
                 audio_bytes = Path(result.audio_output_path).read_bytes()
                 if len(audio_bytes) >= 100:
                     response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
                     response_dict["mime_type"] = "audio/wav"
-            except Exception as exc:
+            except (OSError, IOError) as exc:
                 logger.warning("failed_to_embed_text_audio identity=%s error=%s", identity, exc)
-        if request.session_id:
-            semantic_context = {"last_intent": "statement", "conversation_mood": "neutral", "topics": []}
+        if request.session_id and not response_dict.get("clarify"):
+            semantic_context["cip"] = cip.get("analysis") if isinstance(cip, dict) else None
             speaker_profile = session_registry.resolve_auto_speaker(
                 request.session_id,
                 identity,
@@ -598,7 +549,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 "session": shared_session,
             })
         return response_dict
-    except Exception:
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
         usage_limiter.track(identity, "errors")
         observability.increment("translation_failures_total")
         observability.record_event("translation_failure", identity=identity, mode="text")
@@ -616,11 +567,11 @@ async def translate_audio(
     started_at = time()
     metrics["http_requests"] += 1
     usage_limiter.track(identity, "http_requests")
+    source_language = _normalize_language(source_language, "en")
+    target_language = _normalize_language(target_language, "es")
     logger.info("audio_translation identity=%s source=%s target=%s", identity, source_language, target_language)
-    audio_bytes = await audio.read()
     max_bytes = get_max_audio_mb() * 1024 * 1024
-    if len(audio_bytes) > max_bytes:
-        raise HTTPException(status_code=413, detail=f"Audio upload exceeds {get_max_audio_mb()} MB limit.")
+    audio_bytes = await _read_limited_upload(audio, max_bytes)
 
     estimated_seconds = max(1, len(audio_bytes) / 16000)
     if estimated_seconds > get_max_audio_seconds():
@@ -632,47 +583,178 @@ async def translate_audio(
 
     upload_dir = Path("models/uploads")
     upload_dir.mkdir(parents=True, exist_ok=True)
-    suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
+    suffix = _safe_upload_suffix(audio.filename, "audio.webm", {".webm", ".wav", ".m4a", ".mp3", ".ogg", ".aac"})
     audio_path = upload_dir / f"{uuid4()}{suffix}"
     audio_path.write_bytes(audio_bytes)
 
     try:
-        result = await run_in_threadpool(
-            pipeline.translate_audio,
-            str(audio_path),
+        source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), source_language)
+        # Default single-speaker flow: lock language for 'A'
+        speaker_id = "A"
+        if not speaker_memory.get_language(speaker_id):
+            auto_lang = detect_language_heuristic(source_text)
+            speaker_memory.register(speaker_id, language=source_language or auto_lang)
+        # Translate (no synth), then refine, then synthesize if requested
+        interim = await run_in_threadpool(
+            pipeline.translate_text,
+            source_text,
             source_language,
             target_language,
             None,
-            synthesize_audio,
+            False,
             f"models/tts/{uuid4()}.wav",
+        )
+        user_profile = profiles.get(identity)
+        cip = None
+        memory_context = memory.get_context()
+        speaker_context = speaker_memory.get_context(speaker_id)
+        refined_text = refine_translation(source_text, interim.translated_text, memory_context, speaker_context)
+        stt_conf = estimate_stt_confidence(source_text)
+        tr_conf = estimate_translation_confidence(source_text, refined_text)
+        semantic_context = {
+            "conversation_mood": "neutral",
+            "topics": memory.recent_topics(),
+        }
+        cip = call_cip_brain(
+            source_text,
+            target_language,
+            identity,
+            fallback_translation=refined_text,
+            source_language=source_language,
+            stt_confidence=stt_conf,
+            translation_confidence=tr_conf,
+            context=memory_context,
+            speaker_context=speaker_context,
+            semantic_context=semantic_context,
+        )
+        cip_clarify = is_cip_clarification(cip)
+        final_text = "" if cip_clarify else choose_translation(cip, refined_text)
+        if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
+            semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
+            semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"
+        # Confidence/clarify for audio path
+        tr_conf = estimate_translation_confidence(source_text, final_text)
+        cip_conf = get_cip_confidence(cip)
+        conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
+        audio_path = None
+        if synthesize_audio and final_text and conf_score >= 0.4 and not cip_clarify:
+            audio_path = await run_in_threadpool(pipeline.tts.synthesize, final_text, f"models/tts/{uuid4()}.wav", target_language)
+        result = type(interim)(
+            source_text=source_text,
+            improved_text=interim.improved_text,
+            translated_text=final_text,
+            audio_output_path=audio_path,
         )
         observability.observe_latency("audio_translation", time() - started_at)
         observability.record_event("audio_translation", identity=identity, latency_seconds=time() - started_at)
         usage_limiter.track_audio(identity, estimated_seconds, "audio_translations")
         response_dict = result.__dict__
+        apply_cip_decision(response_dict, cip)
+        if conf_score < 0.4 and not response_dict.get("clarify"):
+            response_dict["clarify"] = True
+            response_dict["clarify_message"] = clarification_for(source_text, detect_ambiguities(source_text))
+        try:
+            memory.add(speaker_id, source_text, result.translated_text, {"cip": cip})
+            speaker_memory.add_message(speaker_id, source_text)
+            # Update profile: languages, history
+            langs = set(user_profile.get("preferred_languages") or [])
+            langs.update([source_language, target_language])
+            user_profile["preferred_languages"] = [l for l in langs if l]
+            user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "audio", "source": source_text, "translated": result.translated_text}]
+            profiles.save(identity, user_profile)
+        except (OSError, PermissionError, KeyError) as exc:
+            logger.warning("profile_save_failed identity=%s error=%s", identity, exc)
         # Include audio as base64 so mobile clients can play without fetching a separate file
-        if result.audio_output_path:
+        if result.audio_output_path and not response_dict.get("clarify"):
             try:
                 audio_bytes = Path(result.audio_output_path).read_bytes()
                 if len(audio_bytes) >= 100:
                     response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
                     response_dict["mime_type"] = "audio/wav"
-            except Exception as exc:
+            except (OSError, IOError) as exc:
                 logger.warning("failed_to_embed_audio identity=%s error=%s", identity, exc)
         return response_dict
-    except Exception:
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError, OSError):
         usage_limiter.track(identity, "errors")
         observability.increment("translation_failures_total")
         observability.record_event("translation_failure", identity=identity, mode="audio")
         raise
+    finally:
+        with suppress(Exception):
+            audio_path.unlink(missing_ok=True)
+
+
+@app.post("/translate/image")
+async def translate_image(
+    image: UploadFile = File(...),
+    source_language: str = Form("auto"),
+    target_language: str = Form("es"),
+    synthesize_audio: bool = Form(False),
+    identity: str = Depends(authenticate_http),
+):
+    metrics["http_requests"] += 1
+    usage_limiter.track(identity, "http_requests")
+    source_language = _normalize_language(source_language, "auto", allow_auto=True)
+    target_language = _normalize_language(target_language, "es")
+    logger.info("image_translation identity=%s target=%s", identity, target_language)
+    if not _HAS_PYTESSERACT:
+        raise HTTPException(status_code=503, detail="OCR unavailable on server. Install Tesseract to enable.")
+    # Save upload to a temp path
+    upload_dir = Path("models/uploads")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    suffix = _safe_upload_suffix(image.filename, "image.png", {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"})
+    image_path = upload_dir / f"{uuid4()}{suffix}"
+    image_bytes = await _read_limited_upload(image, get_max_audio_mb() * 1024 * 1024)
+    image_path.write_bytes(image_bytes)
+    try:
+        # OCR
+        ocr_text = pytesseract.image_to_string(Image.open(image_path)) or ""
+        if source_language == "auto":
+            source_language = detect_language_heuristic(ocr_text)
+        # Translate (no synth), then optional TTS synth
+        interim = pipeline.translate_text(
+            text=ocr_text,
+            source_language=source_language,
+            target_language=target_language,
+            tone=None,
+            synthesize_audio=False,
+        )
+        user_profile = profiles.get(identity)
+        final_text = refine_translation(ocr_text, interim.translated_text, memory.get_context(), speaker_memory.get_context("CAM"))
+        audio_path = None
+        audio_b64 = None
+        if synthesize_audio and final_text:
+            audio_path = pipeline.tts.synthesize(final_text, f"models/tts/{uuid4()}.wav", language=target_language)
+            try:
+                audio_bytes = Path(audio_path).read_bytes()
+                if len(audio_bytes) >= 100:
+                    audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+            except (OSError, IOError) as exc:
+                logger.warning("tts_audio_read_failed identity=%s error=%s", identity, exc)
+        # Store in memory under virtual speaker CAM
+        memory.add("CAM", ocr_text, final_text)
+        speaker_memory.register("CAM", language=source_language)
+        speaker_memory.add_message("CAM", ocr_text)
+        # Update profile history
+        user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "image", "source": ocr_text, "translated": final_text}]
+        profiles.save(identity, user_profile)
+        return {
+            "ocr_text": ocr_text.strip(),
+            "translated_text": final_text,
+            "mime_type": "audio/wav" if audio_b64 else None,
+            "audio_base64": audio_b64,
+        }
+    finally:
+        with suppress(Exception):
+            image_path.unlink(missing_ok=True)
 
 
 @app.post("/vad")
 async def detect_voice_activity(audio: UploadFile = File(...), identity: str = Depends(authenticate_http)):
     metrics["http_requests"] += 1
     usage_limiter.track(identity, "http_requests")
-    audio_bytes = await audio.read()
-    suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
+    audio_bytes = await _read_limited_upload(audio, get_max_audio_mb() * 1024 * 1024)
+    suffix = _safe_upload_suffix(audio.filename, "audio.webm", {".webm", ".wav", ".m4a", ".mp3", ".ogg", ".aac"})
     return await run_in_threadpool(vad.detect_bytes, audio_bytes, suffix)
 
 
@@ -689,7 +771,7 @@ async def websocket_translate(websocket: WebSocket):
         observability.increment("websocket_disconnects_total")
         observability.record_event("websocket_disconnect", identity=identity, mode="text")
         logger.info("text_websocket_disconnected identity=%s", identity)
-    except Exception:
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
         metrics["websocket_errors"] += 1
         observability.increment("websocket_errors_total")
         observability.record_event("websocket_error", identity=identity, mode="text")
@@ -707,16 +789,57 @@ async def websocket_audio(websocket: WebSocket):
     metrics["websocket_connections"] += 1
     logger.info("audio_websocket_connected identity=%s", identity)
     try:
-        await websocket_audio_translation(websocket, pipeline, vad, conversation_brain, identity)
+        if get_stt_provider() == "streaming":
+            from backend.streaming import websocket_streaming_stt_translation
+
+            await websocket_streaming_stt_translation(
+                websocket, pipeline, conversation_brain, memory, speaker_memory, identity
+            )
+        else:
+            await websocket_audio_translation(websocket, pipeline, vad, conversation_brain, memory, speaker_memory, identity)
     except WebSocketDisconnect:
         observability.increment("websocket_disconnects_total")
         observability.record_event("websocket_disconnect", identity=identity, mode="audio")
         logger.info("audio_websocket_disconnected identity=%s", identity)
-    except Exception:
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
         metrics["websocket_errors"] += 1
         observability.increment("websocket_errors_total")
         observability.record_event("websocket_error", identity=identity, mode="audio")
         logger.exception("audio_websocket_error identity=%s", identity)
+        await websocket.close(code=1011, reason="Internal WebSocket error")
+
+
+@app.websocket("/ws/audio/streaming")
+async def websocket_audio_streaming(websocket: WebSocket):
+    """Streaming STT audio WebSocket — proxies audio to the STT provider service."""
+    from backend.streaming import websocket_streaming_stt_translation
+    from backend.config import get_stt_provider
+
+    logger.info("streaming_stt_websocket_auth_start release=%s", WEBSOCKET_AUTH_RELEASE)
+    ok, identity = await authenticate_websocket(websocket)
+    if not ok:
+        logger.warning("streaming_stt_websocket_auth_rejected identity=%s", identity)
+        return
+
+    if get_stt_provider() != "streaming":
+        await websocket.close(code=1008, reason="STT provider is not in streaming mode")
+        return
+
+    metrics["websocket_connections"] += 1
+    logger.info("streaming_stt_websocket_connected identity=%s", identity)
+    try:
+        await websocket_streaming_stt_translation(
+            websocket, pipeline, conversation_brain, memory, speaker_memory, identity
+        )
+    except WebSocketDisconnect:
+        observability.increment("websocket_disconnects_total")
+        observability.record_event("websocket_disconnect", identity=identity, mode="streaming_stt")
+        logger.info("streaming_stt_websocket_disconnected identity=%s", identity)
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
+        metrics["websocket_errors"] += 1
+        observability.increment("websocket_errors_total")
+        observability.record_event("websocket_error", identity=identity, mode="streaming_stt")
+        logger.exception("streaming_stt_websocket_error identity=%s", identity)
         await websocket.close(code=1011, reason="Internal WebSocket error")
 
 
@@ -725,6 +848,127 @@ async def websocket_ping(websocket: WebSocket):
     await websocket.accept()
     await websocket.send_json({"type": "ready", "release": RELEASE_ID, "websocket_auth_release": WEBSOCKET_AUTH_RELEASE})
     await websocket.close()
+
+
+# ---------------------------------------------------------------------------
+# NAIA assistant — conversational helper alongside translations
+# ---------------------------------------------------------------------------
+
+
+class AssistantChatRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+    translation_context: dict | None = None
+    metadata: dict | None = None
+
+    @field_validator("message")
+    @classmethod
+    def message_must_be_bounded(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("message is required")
+        if len(v) > 4000:
+            raise ValueError("message too long (max 4000 characters)")
+        return v
+
+
+@app.get("/api/assistant/health")
+async def assistant_health():
+    """Report whether the bundled naia kernel is available."""
+    return {
+        "available": naia_assistant.is_available(),
+        "error": naia_assistant.import_error(),
+        "kernel_timeout_seconds": naia_assistant.KERNEL_TIMEOUT_SECONDS,
+    }
+
+
+@app.post("/api/assistant/chat")
+async def assistant_chat(payload: AssistantChatRequest, identity: str = Depends(authenticate_http)):
+    """Send a chat message to the naia assistant.
+
+    Accepts an optional ``translation_context`` so the assistant can answer
+    follow-up questions about the user's most recent translation
+    (e.g. "rephrase that more formally" or "what does this idiom mean?").
+    """
+    metrics["http_requests"] += 1
+    usage_limiter.track(identity, "http_requests")
+    if not payload.message or not payload.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+    if not naia_assistant.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail=f"Assistant unavailable: {naia_assistant.import_error()}",
+        )
+    meta = dict(payload.metadata or {})
+    if payload.session_id:
+        meta["client_session_id"] = payload.session_id
+    meta["identity"] = identity
+    try:
+        result = await naia_assistant.chat(
+            payload.message,
+            source="http",
+            translation_context=payload.translation_context,
+            metadata=meta,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
+        logger.exception("assistant_chat_failed identity=%s", identity)
+        raise HTTPException(status_code=500, detail="Assistant error")
+    return result
+
+
+@app.websocket("/ws/assistant")
+async def websocket_assistant(websocket: WebSocket):
+    """Streaming chat with the naia assistant over a WebSocket."""
+    ok, identity = await authenticate_websocket(websocket)
+    if not ok:
+        return
+    metrics["websocket_connections"] += 1
+    logger.info("assistant_websocket_connected identity=%s", identity)
+    if not naia_assistant.is_available():
+        await websocket.send_json({
+            "event": "error",
+            "detail": f"Assistant unavailable: {naia_assistant.import_error()}",
+        })
+        await websocket.close(code=1011, reason="Assistant unavailable")
+        return
+    try:
+        while True:
+            raw = await websocket.receive_json()
+            try:
+                req = AssistantChatRequest.model_validate(raw)
+            except (ValueError, TypeError, KeyError) as exc:
+                await websocket.send_json({"event": "error", "detail": f"Bad payload: {exc}"})
+                continue
+            if not req.message or not req.message.strip():
+                await websocket.send_json({"event": "error", "detail": "message is required"})
+                continue
+            await websocket.send_json({"event": "started"})
+            meta = dict(req.metadata or {})
+            if req.session_id:
+                meta["client_session_id"] = req.session_id
+            meta["identity"] = identity
+            try:
+                result = await naia_assistant.chat(
+                    req.message,
+                    source="websocket",
+                    translation_context=req.translation_context,
+                    metadata=meta,
+                )
+                await websocket.send_json({"event": "completed", "response": result})
+            except (RuntimeError, ValueError, ConnectionError, TimeoutError) as exc:
+                logger.exception("assistant_ws_error identity=%s", identity)
+                await websocket.send_json({"event": "error", "detail": "Assistant error"})
+    except WebSocketDisconnect:
+        observability.increment("websocket_disconnects_total")
+        observability.record_event("websocket_disconnect", identity=identity, mode="assistant")
+        logger.info("assistant_websocket_disconnected identity=%s", identity)
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
+        metrics["websocket_errors"] += 1
+        logger.exception("assistant_websocket_error identity=%s", identity)
+        with suppress(Exception):
+            await websocket.close(code=1011, reason="Internal WebSocket error")
 
 
 @app.get("/{full_path:path}")

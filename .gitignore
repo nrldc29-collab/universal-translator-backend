@@ -1,6 +1,9 @@
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 venv/
 .venv/
 
@@ -10,17 +13,45 @@ dist/
 web-build/
 .expo/
 .vercel/
+
+# naia internals (large model weights, training data)
+naia/.venv/
+naia/__pycache__/
+naia/dataset/
+naia/experiments/
+naia/naia-student-3b-lora/
+naia/*.egg-info/
+
+# STT provider internals (model weights, venv, test artifacts)
+stt_provider/.venv/
+stt_provider/venv/
+stt_provider/__pycache__/
+stt_provider/**/__pycache__/
+stt_provider/dataset/
+stt_provider/server/.venv/
+stt_provider/server/__pycache__/
+stt_provider/.pytest_cache/
+stt_provider/**/.pytest_cache/
+stt_provider/server/.pytest_cache/
+stt_provider/*.egg-info/
+stt_provider/**/*.egg-info/
 .vite/
+coverage/
 
 # Local config and secrets
 .env
 .env.*
 !.env.example
+!.env.production
 
 # Generated model/audio artifacts
 models/whisper/*
 models/translation/*
 models/tts/*
+models/tts/cache/
+models/tts/*.wav
+models/tts/*.onnx
+models/tts/*.onnx.json
 !models/.gitkeep
 !models/whisper/.gitkeep
 !models/translation/.gitkeep
@@ -33,3 +64,10 @@ logs/
 .DS_Store
 Thumbs.db
 *.tmp
+*.log
+
+# Local scratch/debug artifacts
+patch.diff
+full_patch.diff
+temp_diff.txt
+models/profiles.json

@@ -1,0 +1,267 @@
+# Multi-Region Deployment: US-West-2
+# Deploys STT Platform to us-west-2 region with regional routing
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stt
+  labels:
+    region: us-west-2
+    environment: production
+
+---
+# PostgreSQL for us-west-2
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: stt
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+        region: us-west-2
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: stt
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 100Gi
+
+---
+# Redis for us-west-2
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: stt
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        region: us-west-2
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+          command:
+            - redis-server
+            - --appendonly yes
+            - --appendfsync everysec
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+# Triton Backend for us-west-2
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: triton-parakeet
+  namespace: stt
+spec:
+  serviceName: triton-parakeet
+  replicas: 2
+  selector:
+    matchLabels:
+      app: triton-parakeet
+  template:
+    metadata:
+      labels:
+        app: triton-parakeet
+        region: us-west-2
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: triton
+          image: nvcr.io/nvidia/tritonserver:24.05-py3
+          args:
+            - tritonserver
+            - --model-repository=/models
+            - --strict-model-config=false
+          ports:
+            - name: grpc
+              containerPort: 8001
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 8002
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+            requests:
+              cpu: "4"
+              memory: 16Gi
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: model-repository
+              mountPath: /models
+  volumeClaimTemplates:
+    - metadata:
+        name: model-repository
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 100Gi
+
+---
+# STT Gateway for us-west-2
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stt-gateway
+  namespace: stt
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: stt-gateway
+  template:
+    metadata:
+      labels:
+        app: stt-gateway
+        region: us-west-2
+    spec:
+      terminationGracePeriodSeconds: 3600
+      containers:
+        - name: stt-gateway
+          image: ghcr.io/your-org/true-streaming-stt-provider:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: stt-platform-secrets
+          env:
+            - name: HOME_REGION
+              value: "us-west-2"
+            - name: REGIONAL_ROUTING_ENABLED
+              value: "true"
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+
+---
+# Regional Ingress for us-west-2
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stt-gateway-ingress
+  namespace: stt
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/websocket-services: "stt-gateway"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - us-west-2.stt.example.com
+      secretName: stt-gateway-tls-us-west-2
+  rules:
+    - host: us-west-2.stt.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: stt-gateway
+                port:
+                  number: 80
+
+---
+# Apply with:
+# kubectl apply -f infra/k8s/multi-region/us-west-2-deployment.yaml

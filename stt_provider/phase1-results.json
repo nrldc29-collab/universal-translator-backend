@@ -1,0 +1,24 @@
+{
+  "release": "v0.2.0",
+  "captured_at_unix": 1778834343,
+  "metrics": [
+    {
+      "metric": "time_to_first_partial",
+      "count": 0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "avg_ms": 0.0
+    },
+    {
+      "metric": "time_between_partials",
+      "count": 0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.0,
+      "avg_ms": 0.0
+    }
+  ],
+  "wer": {
+    "baseline_without_hotwords": null,
+    "baseline_with_hotwords": null
+  }
+}

@@ -1,0 +1,59 @@
+# Render.com deployment configuration for True Streaming STT Provider
+# This file configures the web service deployment on Render.com including
+# environment variables, health checks, and auto-deployment settings.
+
+services:
+  - type: web
+    name: true-streaming-stt-provider
+    env: docker
+    plan: standard
+    rootDir: server
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      # Authentication keys (auto-generated)
+      - key: STT_API_KEY
+        generateValue: true
+      - key: ADMIN_API_KEY
+        generateValue: true
+      # Additional API keys configuration
+      - key: STT_API_KEYS
+        value: ""
+      # CORS configuration
+      - key: ALLOWED_ORIGINS
+        value: https://your-client-domain.com
+      # Whisper model configuration
+      - key: WHISPER_MODEL_SIZE
+        value: base
+      - key: WHISPER_DEVICE
+        value: cpu
+      - key: WHISPER_COMPUTE_TYPE
+        value: int8
+      - key: TRANSCRIPTION_LANGUAGE
+        value: en
+      # Audio processing parameters
+      - key: SAMPLE_RATE
+        value: "16000"
+      - key: CHANNELS
+        value: "1"
+      - key: FRAME_MS
+        value: "30"
+      - key: VAD_MODE
+        value: "2"
+      # Connection and session limits
+      - key: MAX_ACTIVE_CONNECTIONS
+        value: "10"
+      - key: MAX_CONNECTIONS_PER_KEY
+        value: "3"
+      - key: MAX_SESSION_SECONDS
+        value: "1800"
+      - key: IDLE_TIMEOUT_SECONDS
+        value: "60"
+      - key: MAX_AUDIO_FRAME_BYTES
+        value: "262144"
+      # Billing and admin settings
+      - key: BILLING_RATE_PER_AUDIO_HOUR
+        value: "0.0"
+      - key: ENABLE_ADMIN_RESET
+        value: "false"

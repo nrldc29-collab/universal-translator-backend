@@ -11,9 +11,17 @@ mobile/node_modules
 mobile/dist
 translator-mobile/node_modules
 translator-mobile/dist
+research/
+archive/
 models
 logs
 *.wav
 *.mp3
 *.m4a
 *.webm
+
+.pytest_cache
+.ruff_cache
+.mypy_cache
+coverage
+*.log

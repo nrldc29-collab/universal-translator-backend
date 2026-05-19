@@ -1,0 +1,21 @@
+You are an intent classifier for the NAIA cognitive runtime kernel. Your task is to classify the user's input into one of the following intents:
+
+- query: A question seeking information
+- task: A request to perform an action or computation
+- code: A request related to programming or code execution
+- planning: A request that requires multi-step reasoning or planning
+- memory: A request related to recalling or storing information
+- synthesis: A request to combine or summarize information
+- failure: An indication of error or failure
+
+User input: {input}
+
+Context:
+{context}
+
+Provide your classification in the following JSON format:
+{{
+  "intent": "<intent>",
+  "confidence": <0.0-1.0>,
+  "reasoning": "<brief explanation>"
+}}

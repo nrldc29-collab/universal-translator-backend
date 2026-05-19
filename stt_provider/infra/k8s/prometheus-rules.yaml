@@ -1,0 +1,111 @@
+# Prometheus Alert Rules for STT Platform
+# Defines alerting rules for production monitoring
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  namespace: stt
+data:
+  alerts.yml: |
+    groups:
+      - name: stt_gateway_alerts
+        rules:
+          - alert: HighActiveConnections
+            expr: stt_active_connections > 80
+            for: 5m
+            labels:
+              severity: warning
+              service: stt-gateway
+            annotations:
+              summary: "High number of active WebSocket connections"
+              description: "Active connections are {{ $value }} which exceeds 80% of capacity"
+
+          - alert: GatewayDown
+            expr: up{job="stt-gateway"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              service: stt-gateway
+            annotations:
+              summary: "STT Gateway is down"
+              description: "STT Gateway has been down for more than 1 minute"
+
+          - alert: HighErrorRate
+            expr: rate(stt_errors_total[5m]) / rate(stt_requests_total[5m]) > 0.05
+            for: 5m
+            labels:
+              severity: warning
+              service: stt-gateway
+            annotations:
+              summary: "High error rate on STT Gateway"
+              description: "Error rate is {{ $value | humanizePercentage }}"
+
+      - name: triton_alerts
+        rules:
+          - alert: TritonDown
+            expr: up{job="triton"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              service: triton
+            annotations:
+              summary: "Triton backend is down"
+              description: "Triton backend has been down for more than 1 minute"
+
+          - alert: HighInferenceLatency
+            expr: histogram_quantile(0.95, nv_inference_request_duration_us) > 5000000
+            for: 5m
+            labels:
+              severity: warning
+              service: triton
+            annotations:
+              summary: "High Triton inference latency"
+              description: "P95 inference latency is {{ $value }}us which exceeds 5s"
+
+          - alert: HighQueueDuration
+            expr: histogram_quantile(0.95, nv_inference_queue_duration_us) > 1000000
+            for: 5m
+            labels:
+              severity: warning
+              service: triton
+            annotations:
+              summary: "High Triton queue duration"
+              description: "P95 queue duration is {{ $value }}us which exceeds 1s"
+
+      - name: database_alerts
+        rules:
+          - alert: PostgresDown
+            expr: up{job="postgres"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              service: postgres
+            annotations:
+              summary: "PostgreSQL is down"
+              description: "PostgreSQL has been down for more than 1 minute"
+
+          - alert: HighDatabaseConnections
+            expr: pg_stat_activity_count > 80
+            for: 5m
+            labels:
+              severity: warning
+              service: postgres
+            annotations:
+              summary: "High number of database connections"
+              description: "Database connections are {{ $value }} which exceeds 80% of max"
+
+      - name: redis_alerts
+        rules:
+          - alert: RedisDown
+            expr: up{job="redis"} == 0
+            for: 1m
+            labels:
+              severity: critical
+              service: redis
+            annotations:
+              summary: "Redis is down"
+              description: "Redis has been down for more than 1 minute"
+
+# Apply with:
+# kubectl apply -f infra/k8s/prometheus-rules.yaml

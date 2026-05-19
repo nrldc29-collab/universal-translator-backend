@@ -1,0 +1,238 @@
+# Advanced GPU Scheduling Configuration
+# Implements GPU sharing, node pools, and advanced scheduling policies
+
+# GPU Node Pool Configuration
+apiVersion: v1
+kind: Node
+metadata:
+  labels:
+    node-type: gpu
+    gpu-tier: high-performance
+    nvidia.com/gpu.count: "4"
+  name: gpu-node-pool-1
+spec:
+  unschedulable: false
+
+---
+# GPU Device Plugin with Sharing
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nvidia-device-plugin-config
+  namespace: stt
+data:
+  config.yaml: |
+    version: v1
+    sharing:
+      timeSlicing:
+        renameByDefault: false
+        failRequestsGreaterThanOne: false
+        resources:
+          - name: nvidia.com/gpu
+            replicas: 4
+    flags:
+      migStrategy: single
+      failOnInitError: true
+
+---
+# PriorityClass for GPU Workloads
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: gpu-high-priority
+  namespace: stt
+value: 1000
+globalDefault: false
+description: "High priority for GPU inference workloads"
+
+---
+# Triton with GPU Sharing
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: triton-parakeet
+  namespace: stt
+spec:
+  serviceName: triton-parakeet
+  replicas: 4
+  selector:
+    matchLabels:
+      app: triton-parakeet
+  template:
+    metadata:
+      labels:
+        app: triton-parakeet
+        workload-type: gpu-inference
+    spec:
+      priorityClassName: gpu-high-priority
+      nodeSelector:
+        node-type: gpu
+        gpu-tier: high-performance
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "dedicated"
+          operator: "Equal"
+          value: "gpu"
+          effect: "NoSchedule"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - triton-parakeet
+                topologyKey: kubernetes.io/hostname
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: nvidia.com/gpu.count
+                    operator: Gt
+                    values:
+                      - "2"
+                  - key: nvidia.com/gpu.product
+                    operator: In
+                    values:
+                      - NVIDIA_A100
+                      - NVIDIA_H100
+      containers:
+        - name: triton
+          image: nvcr.io/nvidia/tritonserver:24.05-py3
+          args:
+            - tritonserver
+            - --model-repository=/models
+            - --strict-model-config=false
+            - --log-verbose=1
+            - --allow-growth
+          ports:
+            - name: grpc
+              containerPort: 8001
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 8002
+          env:
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0,1,2,3"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "compute,utility"
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              nvidia.com/gpu.shared: 4
+            requests:
+              cpu: "8"
+              memory: 32Gi
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: model-repository
+              mountPath: /models
+            - name: shm
+              mountPath: /dev/shm
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - sleep 30
+          readinessProbe:
+            httpGet:
+              path: /v2/health/ready
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /v2/health/live
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+      volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: model-repository
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 200Gi
+        storageClassName: ssd-gpu
+
+---
+# GPU Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-quota
+  namespace: stt
+spec:
+  hard:
+    requests.nvidia.com/gpu: "16"
+    limits.nvidia.com/gpu: "16"
+    requests.cpu: "128"
+    requests.memory: "512Gi"
+    limits.cpu: "256"
+    limits.memory: "1024Gi"
+  scopes:
+    - BestEffort
+    - NotBestEffort
+
+---
+# Limit Range for GPU Workloads
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: gpu-limit-range
+  namespace: stt
+spec:
+  limits:
+    - type: Container
+      max:
+        cpu: "16"
+        memory: 64Gi
+        nvidia.com/gpu: "4"
+      min:
+        cpu: "1"
+        memory: 4Gi
+        nvidia.com/gpu: "1"
+      default:
+        cpu: "4"
+        memory: 16Gi
+        nvidia.com/gpu: "1"
+      defaultRequest:
+        cpu: "2"
+        memory: 8Gi
+        nvidia.com/gpu: "1"
+
+---
+# Pod Disruption Budget for Triton
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: triton-pdb
+  namespace: stt
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: triton-parakeet
+
+---
+# Apply with:
+# kubectl apply -f infra/k8s/advanced-gpu-scheduling.yaml

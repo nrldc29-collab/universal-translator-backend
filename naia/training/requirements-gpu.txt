@@ -1,0 +1,23 @@
+# GPU training dependencies for NAIA student distillation
+# Tested against Python 3.10 / 3.11 on Linux + CUDA 12.1 (RunPod / Vast / Lambda)
+# Pin versions so a fresh GPU rental produces reproducible builds.
+
+torch==2.4.0
+transformers==4.45.2
+datasets==3.0.1
+trl==0.11.4
+peft==0.13.2
+accelerate==1.0.1
+bitsandbytes==0.44.1
+
+# Unsloth pulls a specific torch wheel - install from PyPI:
+unsloth==2024.10.7
+
+# Optional: speed up data loading
+huggingface_hub==0.26.0
+sentencepiece==0.2.0
+protobuf==5.28.2
+
+# For GGUF conversion after training (used by training/merge_and_convert.py)
+# llama.cpp is installed separately:
+#   git clone https://github.com/ggerganov/llama.cpp && cd llama.cpp && make

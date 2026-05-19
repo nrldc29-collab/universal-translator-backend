@@ -1,15 +1,15 @@
 {
-  "name": "Universal Translator",
-  "short_name": "Translator",
-  "description": "One-tap real-time speech translation.",
+  "name": "Anai Translator",
+  "short_name": "Anai",
+  "description": "Futuristic one-tap real-time speech translation.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "fullscreen", "browser"],
   "orientation": "portrait",
-  "background_color": "#0b1120",
-  "theme_color": "#2563eb",
+  "background_color": "#03050a",
+  "theme_color": "#050711",
   "categories": ["productivity", "utilities", "travel"],
   "lang": "en",
   "dir": "ltr",
@@ -18,7 +18,7 @@
     {
       "name": "Start Interpreter",
       "short_name": "Interpret",
-      "description": "Open Universal Translator in one-tap interpreter mode.",
+      "description": "Open Anai in one-tap interpreter mode.",
       "url": "/?mode=interpreter",
       "icons": [
         {

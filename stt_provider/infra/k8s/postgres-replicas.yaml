@@ -1,0 +1,412 @@
+# PostgreSQL Read Replicas and Connection Pooling
+# Implements high availability with read replicas and PgBouncer
+
+---
+# Primary PostgreSQL with Replication
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-primary
+  namespace: stt
+spec:
+  serviceName: postgres-primary
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-primary
+  template:
+    metadata:
+      labels:
+        app: postgres-primary
+        role: primary
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: stt
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_REPLICATION_USER
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_REPLICATION_USER
+            - name: POSTGRES_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: "scram-sha-256"
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgresql.conf
+          resources:
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+      volumes:
+        - name: postgres-config
+          configMap:
+            name: postgres-primary-config
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 500Gi
+        storageClassName: ssd-postgres
+
+---
+# PostgreSQL Primary Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-primary-config
+  namespace: stt
+data:
+  postgresql.conf: |
+    listen_addresses = '*'
+    max_connections = 200
+    shared_buffers = 4GB
+    effective_cache_size = 12GB
+    maintenance_work_mem = 1GB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 2621kB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+    
+    # Replication settings
+    wal_level = replica
+    max_wal_senders = 10
+    max_replication_slots = 10
+    hot_standby = on
+    
+    # Performance tuning
+    synchronous_commit = on
+    wal_compression = on
+    full_page_writes = on
+    
+    # Logging
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_statement = 'all'
+    log_duration = on
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+
+---
+# PostgreSQL Read Replica
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-replica
+  namespace: stt
+spec:
+  serviceName: postgres-replica
+  replicas: 2
+  selector:
+    matchLabels:
+      app: postgres-replica
+  template:
+    metadata:
+      labels:
+        app: postgres-replica
+        role: replica
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: stt
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_REPLICATION_USER
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_REPLICATION_USER
+            - name: POSTGRES_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_REPLICATION_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-config
+              mountPath: /etc/postgresql/postgresql.conf
+              subPath: postgresql.conf
+          resources:
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+            limits:
+              cpu: "4"
+              memory: "16Gi"
+      volumes:
+        - name: postgres-config
+          configMap:
+            name: postgres-replica-config
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 500Gi
+        storageClassName: ssd-postgres
+
+---
+# PostgreSQL Replica Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-replica-config
+  namespace: stt
+data:
+  postgresql.conf: |
+    listen_addresses = '*'
+    max_connections = 200
+    shared_buffers = 4GB
+    effective_cache_size = 12GB
+    maintenance_work_mem = 1GB
+    checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    default_statistics_target = 100
+    random_page_cost = 1.1
+    effective_io_concurrency = 200
+    work_mem = 2621kB
+    min_wal_size = 1GB
+    max_wal_size = 4GB
+    
+    # Replication settings
+    hot_standby = on
+    max_standby_streaming_delay = 30s
+    wal_receiver_status_interval = 10s
+    hot_standby_feedback = on
+    
+    # Performance tuning
+    wal_compression = on
+    full_page_writes = on
+    
+    # Logging
+    logging_collector = on
+    log_directory = 'log'
+    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+    log_statement = 'all'
+    log_duration = on
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+
+  recovery.conf: |
+    standby_mode = on
+    primary_conninfo = 'host=postgres-primary-primary port=5432 user=replicator password=${POSTGRES_REPLICATION_PASSWORD} sslmode=require'
+    restore_command = 'cp /var/lib/postgresql/archive/%f %p'
+    archive_cleanup_command = 'pg_archivecleanup /var/lib/postgresql/archive %r'
+
+---
+# PgBouncer Connection Pooler
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: stt
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+    spec:
+      containers:
+        - name: pgbouncer
+          image: pgbouncer/pgbouncer:latest
+          ports:
+            - name: pgbouncer
+              containerPort: 6432
+          env:
+            - name: POSTGRES_HOST
+              value: postgres-primary-primary
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: stt-platform-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              value: stt
+          volumeMounts:
+            - name: pgbouncer-config
+              mountPath: /etc/pgbouncer
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+          readinessProbe:
+            exec:
+              command:
+                - pgbouncer
+                - --show-config
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - pgbouncer
+                - --show-config
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: pgbouncer-config
+          configMap:
+            name: pgbouncer-config
+
+---
+# PgBouncer Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-config
+  namespace: stt
+data:
+  pgbouncer.ini: |
+    [databases]
+    stt = host=postgres-primary-primary port=5432 dbname=stt
+    stt_replica = host=postgres-replica-0.postgres-replica port=5432 dbname=stt
+    
+    [pgbouncer]
+    listen_addr = 0.0.0.0
+    listen_port = 6432
+    auth_type = scram-sha-256
+    auth_file = /etc/pgbouncer/userlist.txt
+    pool_mode = transaction
+    max_client_conn = 1000
+    default_pool_size = 50
+    min_pool_size = 10
+    reserve_pool_size = 10
+    reserve_pool_timeout = 3
+    server_lifetime = 3600
+    server_idle_timeout = 600
+    server_connect_timeout = 15
+    query_timeout = 0
+    client_idle_timeout = 0
+    idle_transaction_timeout = 0
+    
+    # Logging
+    log_connections = 1
+    log_disconnections = 1
+    log_pooler_errors = 1
+    stats_period = 60
+    
+    # Performance
+    tcp_keepalive = 1
+    tcp_keepalive_idle = 600
+    tcp_keepalive_interval = 30
+    tcp_keepalive_count = 3
+
+  userlist.txt: |
+    "stt" "md5hash"
+    "replicator" "md5hash"
+
+---
+# Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary
+  namespace: stt
+spec:
+  selector:
+    app: postgres-primary
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  clusterIP: None
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-replica
+  namespace: stt
+spec:
+  selector:
+    app: postgres-replica
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+  clusterIP: None
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: stt
+spec:
+  selector:
+    app: pgbouncer
+  ports:
+    - name: pgbouncer
+      port: 6432
+      targetPort: 6432
+
+---
+# Apply with:
+# kubectl apply -f infra/k8s/postgres-replicas.yaml

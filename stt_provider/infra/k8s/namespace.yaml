@@ -1,0 +1,13 @@
+# Kubernetes Namespace for STT Platform
+# Creates the stt namespace for all platform components
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: stt
+  labels:
+    name: stt
+    environment: production
+
+# Apply with:
+# kubectl apply -f infra/k8s/namespace.yaml

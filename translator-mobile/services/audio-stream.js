@@ -4,7 +4,7 @@ import * as FileSystem from "expo-file-system";
 let recording = null;
 let onChunkCallback = null;
 let streamingInterval = null;
-const CHUNK_INTERVAL = 500; // ms between chunks (500ms = good balance)
+const CHUNK_INTERVAL = 140;
 
 export const startAudioStream = async (onChunk, onError) => {
   try {
@@ -109,9 +109,17 @@ export const playTtsAudio = async (audioBase64, mimeType = "audio/wav") => {
       encoding: FileSystem.EncodingType.Base64,
     });
 
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: false,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+    });
+
     const { sound } = await Audio.Sound.createAsync(
       { uri },
-      { shouldPlay: true }
+      { shouldPlay: true, isMuted: false, volume: 1.0 }
     );
 
     sound.setOnPlaybackStatusUpdate((playbackStatus) => {

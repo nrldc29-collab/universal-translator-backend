@@ -50,7 +50,7 @@ class MarianTranslator:
                 tokenizer = AutoTokenizer.from_pretrained(model_name)
                 model = AutoModelForSeq2SeqLM.from_pretrained(model_name, use_safetensors=False)
                 uses_nllb = False
-            except Exception:
+            except (OSError, ValueError, RuntimeError):
                 tokenizer = AutoTokenizer.from_pretrained(self.nllb_model)
                 model = AutoModelForSeq2SeqLM.from_pretrained(self.nllb_model)
                 uses_nllb = True
@@ -64,7 +64,7 @@ class MarianTranslator:
                     if torch.cuda.is_available():
                         model = model.to("cuda")
                         device = "cuda"
-                except Exception:
+                except (RuntimeError, OSError):
                     device = "cpu"
             model.eval()
             translator = {

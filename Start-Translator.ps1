@@ -103,7 +103,7 @@ if (-not $NoTunnel) {
 }
 
 Write-Output ""
-Write-Output "Universal Translator is starting."
+Write-Output "Anai Translator is starting."
 Write-Output "Local app:  http://127.0.0.1:$BackendPort/"
 Write-Output "Health:     http://127.0.0.1:$BackendPort/health"
 if ($tunnelUrl) {

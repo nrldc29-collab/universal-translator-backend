@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
-import { StyleSheet, Animated, Easing } from "react-native";
+import { StyleSheet, Animated, Easing, ViewStyle } from "react-native";
 
 interface AnimatedCardProps {
-  children: any;
-  style?: any;
+  children: React.ReactNode;
+  style?: ViewStyle;
   delay?: number;
 }
 
@@ -48,16 +48,16 @@ export default function AnimatedCard({ children, style, delay = 0 }: AnimatedCar
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#0c1729',
-    borderRadius: 16,
+    backgroundColor: '#07111f',
+    borderRadius: 22,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#1e293b',
-    shadowColor: '#000',
+    borderColor: 'rgba(103, 232, 249, 0.16)',
+    shadowColor: '#22d3ee',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 5,
   },
 });

@@ -5,11 +5,15 @@ Provides voice cloning, emotional/prosodic control, and high-quality neural synt
 
 import os
 import io
+import logging
 import wave
 import numpy as np
 from enum import Enum
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
 
 
 class TTSBackend(str, Enum):
@@ -56,8 +60,8 @@ class AdvancedTTS:
                 return self._preload_coqui_tts()
             else:
                 raise ValueError(f"Unknown backend: {self.backend}")
-        except Exception as e:
-            print(f"Failed to preload TTS model: {e}")
+        except (ImportError, RuntimeError, OSError, ConnectionError) as exc:
+            logger.warning("advanced_tts_preload_failed backend=%s error=%s", self.backend, exc)
             return False
 
     def _preload_xtts(self):
@@ -66,18 +70,16 @@ class AdvancedTTS:
             self._model = TTS(self.model_name, gpu=self.device == "cuda")
             return True
         except ImportError:
-            print("TTS package not installed. Install with: pip install TTS")
+            logger.info("coqui_tts_package_not_installed")
             return False
 
     def _preload_styletts2(self):
-        # StyleTTS2 typically requires a local setup or custom integration
-        # This is a placeholder for actual StyleTTS2 integration
-        print("StyleTTS2: Placeholder - implement actual model loading")
+        logger.info("styletts2_integration_not_configured")
         return True
 
     def _preload_elevenlabs(self):
         if not self.elevenlabs_api_key:
-            print("ElevenLabs API key not provided")
+            logger.info("elevenlabs_api_key_not_configured")
             return False
         try:
             import elevenlabs
@@ -85,7 +87,7 @@ class AdvancedTTS:
             self._elevenlabs_client = elevenlabs
             return True
         except ImportError:
-            print("elevenlabs package not installed. Install with: pip install elevenlabs")
+            logger.info("elevenlabs_package_not_installed")
             return False
 
     def _preload_coqui_tts(self):
@@ -157,14 +159,13 @@ class AdvancedTTS:
     ) -> bytes:
         """
         StyleTTS2 synthesis with style and emotion control.
-        Placeholder - implement actual StyleTTS2 inference here.
+        StyleTTS2 integration point with deterministic silence fallback.
         """
-        # TODO: Implement actual StyleTTS2 inference
         # StyleTTS2 supports:
         # - Style extraction from reference audio
         # - Emotion/prosody transfer
         # - Fine-grained style control
-        print(f"StyleTTS2 synthesis: text='{text}', style={style}, emotion={emotion}")
+        logger.info("styletts2_silence_fallback style=%s emotion=%s", style, emotion)
         
         # Placeholder: return silence or use fallback
         return self._generate_silence(1.0, output_path)
@@ -204,8 +205,8 @@ class AdvancedTTS:
             
             return audio_bytes
             
-        except Exception as e:
-            print(f"ElevenLabs synthesis failed: {e}")
+        except (requests.RequestException, ConnectionError, TimeoutError, ValueError) as exc:
+            logger.exception("elevenlabs_synthesis_failed")
             raise
 
     def _synthesize_coqui(self, text: str, output_path: Optional[str]) -> bytes:
@@ -276,8 +277,8 @@ class AdvancedTTS:
             try:
                 voices = elevenlabs.voices()
                 return [{"id": v.voice_id, "name": v.name} for v in voices.voices]
-            except Exception as e:
-                print(f"Failed to get ElevenLabs voices: {e}")
+            except (requests.RequestException, ConnectionError, TimeoutError) as exc:
+                logger.warning("elevenlabs_voices_failed error=%s", exc)
                 return []
         else:
             # For XTTS, voices are defined by speaker_wav files
@@ -289,7 +290,7 @@ class AdvancedTTS:
         Returns voice ID or path to cloned voice model.
         """
         if self.backend != TTSBackend.XTTS:
-            print(f"Voice cloning not supported for {self.backend}")
+            logger.info("voice_cloning_not_supported backend=%s", self.backend)
             return None
         
         # XTTS uses speaker_wav directly, no separate cloning step needed

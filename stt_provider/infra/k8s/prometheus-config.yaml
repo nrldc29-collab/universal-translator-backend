@@ -1,0 +1,65 @@
+# Prometheus Configuration for STT Platform
+# Configures Prometheus to scrape metrics from gateway, Triton, and other components
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: stt
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'stt-production'
+        environment: 'production'
+
+    scrape_configs:
+      # Gateway metrics
+      - job_name: 'stt-gateway'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - stt
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: stt-gateway
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:8000
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+      # Triton metrics
+      - job_name: 'triton'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - stt
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            regex: triton-parakeet
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: $1:8002
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+      # Node exporter metrics
+      - job_name: 'node-exporter'
+        static_configs:
+          - targets: ['node-exporter:9100']
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager:9093
+
+# Apply with:
+# kubectl apply -f infra/k8s/prometheus-config.yaml

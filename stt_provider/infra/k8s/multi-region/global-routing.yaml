@@ -1,0 +1,82 @@
+# Global Routing Configuration for Multi-Region Deployment
+# Configures DNS and load balancing for regional routing
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: regional-routing-config
+  namespace: stt
+data:
+  routing.yaml: |
+    regions:
+      - name: us-east-1
+        endpoint: wss://us-east-1.stt.example.com/stt/stream
+        health_check: https://us-east-1.stt.example.com/health
+        priority: 1
+        enabled: true
+        capacity: 1000
+        current_load: 0
+      - name: us-west-2
+        endpoint: wss://us-west-2.stt.example.com/stt/stream
+        health_check: https://us-west-2.stt.example.com/health
+        priority: 2
+        enabled: true
+        capacity: 1000
+        current_load: 0
+      - name: eu-west-1
+        endpoint: wss://eu-west-1.stt.example.com/stt/stream
+        health_check: https://eu-west-1.stt.example.com/health
+        priority: 3
+        enabled: true
+        capacity: 1000
+        current_load: 0
+    
+    routing_strategy: latency_based
+    fallback_strategy: nearest_available
+    health_check_interval: 30s
+    health_check_timeout: 5s
+    
+    geo_routing:
+      - region: north-america
+        preferred_regions:
+          - us-east-1
+          - us-west-2
+      - region: europe
+        preferred_regions:
+          - eu-west-1
+          - us-east-1
+      - region: asia
+        preferred_regions:
+          - us-west-2
+          - us-east-1
+    
+    failover:
+      enabled: true
+      threshold: 3
+      timeout: 10s
+      automatic: true
+
+---
+# Global Load Balancer Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: stt-global
+  namespace: stt
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+spec:
+  type: LoadBalancer
+  selector:
+    app: stt-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+    - name: https
+      port: 443
+      targetPort: 8000
+
+---
+# Apply with:
+# kubectl apply -f infra/k8s/multi-region/global-routing.yaml

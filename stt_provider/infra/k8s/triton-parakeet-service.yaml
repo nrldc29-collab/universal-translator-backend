@@ -1,0 +1,21 @@
+# Kubernetes Service for Triton Parakeet backend
+# This service exposes the Triton inference server on gRPC, HTTP, and metrics ports.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: triton-parakeet
+  namespace: stt
+spec:
+  selector:
+    app: triton-parakeet
+  ports:
+    - name: grpc
+      port: 8001
+      targetPort: 8001
+    - name: http
+      port: 8000
+      targetPort: 8000
+    - name: metrics
+      port: 8002
+      targetPort: 8002

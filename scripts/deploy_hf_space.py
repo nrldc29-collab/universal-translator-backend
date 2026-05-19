@@ -6,7 +6,7 @@ from pathlib import Path
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create or update a Hugging Face Space.")
-    parser.add_argument("--space-id", required=True, help="Space id, for example username/universal-translator")
+    parser.add_argument("--space-id", required=True, help="Space id, for example username/anai-translator")
     parser.add_argument("--folder", default="hf-space", help="Folder to upload to the Space repo")
     parser.add_argument("--private", action="store_true", help="Create the Space as private")
     args = parser.parse_args()
@@ -40,7 +40,7 @@ def main() -> None:
         folder_path=str(folder),
         repo_id=args.space_id,
         repo_type="space",
-        commit_message="Deploy Universal Translator Space",
+        commit_message="Deploy Anai Translator Space",
         token=token,
     )
 

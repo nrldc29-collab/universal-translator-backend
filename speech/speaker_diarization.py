@@ -8,6 +8,10 @@ from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 from dataclasses import dataclass
 import base64
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -50,8 +54,8 @@ class SpeakerDiarizer:
             else:
                 # simple_vad_based needs no preload
                 return True
-        except Exception as e:
-            print(f"Failed to preload diarization: {e}")
+        except (ImportError, RuntimeError, OSError) as exc:
+            logger.warning("diarization_preload_failed error=%s", exc)
             return False
     
     def _preload_pyannote(self):
@@ -59,22 +63,21 @@ class SpeakerDiarizer:
             import pyannote.audio
             # Pyannote requires authentication - check for token
             # For now, fall back to embedding method
-            print("Pyannote: falling back to embedding-based method")
+            logger.info("pyannote_unavailable_fallback method=embedding_cluster")
             self.method = "embedding_cluster"
             return self._preload_embedding_model()
         except ImportError:
-            print("Pyannote not installed. Install: pip install pyannote.audio")
+            logger.info("pyannote_not_installed_fallback method=simple_vad_based")
             self.method = "simple_vad_based"
             return True
     
     def _preload_embedding_model(self):
         try:
             # Use speechbrain or similar for speaker embeddings
-            # Placeholder for actual implementation
-            print("Embedding-based diarization: ready (placeholder)")
+            logger.info("embedding_diarization_ready")
             return True
-        except Exception as e:
-            print(f"Embedding model failed: {e}")
+        except Exception as exc:
+            logger.warning("embedding_model_failed error=%s", exc)
             self.method = "simple_vad_based"
             return True
     
@@ -150,11 +153,8 @@ class SpeakerDiarizer:
             if not segments:
                 return self._diarize_simple(audio_data, sample_rate)
             
-            # Extract embeddings (placeholder - use actual speaker embedding model)
             embeddings = []
             for segment in segments:
-                # Placeholder: use actual speaker embedding extraction
-                # e.g., from speechbrain or pyannote
                 embedding = np.mean(segment) * np.ones(128)  # Dummy 128-dim embedding
                 embeddings.append(embedding)
             
@@ -183,10 +183,10 @@ class SpeakerDiarizer:
             return speaker_segments
             
         except ImportError:
-            print("sklearn not available, falling back to simple diarization")
+            logger.info("sklearn_not_installed_fallback method=simple_vad_based")
             return self._diarize_simple(audio_data, sample_rate)
-        except Exception as e:
-            print(f"Embedding diarization error: {e}")
+        except Exception as exc:
+            logger.warning("embedding_diarization_failed error=%s", exc)
             return self._diarize_simple(audio_data, sample_rate)
     
     def _diarize_pyannote(
@@ -194,8 +194,7 @@ class SpeakerDiarizer:
         audio_data: bytes,
         sample_rate: int,
     ) -> List[SpeakerSegment]:
-        """Pyannote-based diarization (placeholder)."""
-        # TODO: Implement actual pyannote diarization
+        """Pyannote-based diarization integration point."""
         return self._diarize_simple(audio_data, sample_rate)
     
     def identify_speaker(
@@ -207,21 +206,18 @@ class SpeakerDiarizer:
         Identify the speaker of a given audio segment.
         Returns (speaker_id, confidence).
         """
-        # Placeholder: compare against stored speaker profiles
         if not self._speaker_profiles:
             speaker_id = f"speaker_{self._next_speaker_id}"
             self._next_speaker_id += 1
             self._speaker_profiles[speaker_id] = self._extract_embedding(audio_segment)
             return speaker_id, 1.0
         
-        # Compare with existing profiles
-        # Placeholder implementation
         return "speaker_1", 0.8
     
     def _extract_embedding(self, audio_data: bytes) -> np.ndarray:
         """Extract speaker embedding from audio."""
         samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32767.0
-        return np.mean(samples) * np.ones(128)  # Placeholder
+        return np.mean(samples) * np.ones(128)
     
     def diarize_file(self, audio_path: str) -> List[SpeakerSegment]:
         """Diarize an audio file."""

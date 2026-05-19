@@ -1,7 +1,12 @@
 import json
 import os
+import logging
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteTranslator:
@@ -24,11 +29,18 @@ class RemoteTranslator:
         })
         request = Request(
             f"https://translate.googleapis.com/translate_a/single?{query}",
-            headers={"User-Agent": "UniversalTranslator/1.0"},
+            headers={"User-Agent": "AnaiTranslator/1.0"},
         )
-        with urlopen(request, timeout=self.timeout_seconds) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-        translated = "".join(part[0] for part in payload[0] if part and part[0]).strip()
-        if not translated:
-            raise RuntimeError("Remote translation returned empty text")
-        return translated
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            translated = "".join(part[0] for part in payload[0] if part and part[0]).strip()
+            if not translated:
+                raise RuntimeError("Remote translation returned empty text")
+            return translated
+        except (URLError, HTTPError, TimeoutError) as exc:
+            logger.warning("remote_translation_failed error=%s", exc)
+            raise RuntimeError(f"Remote translation failed: {exc}") from exc
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+            logger.warning("remote_translation_response_parse_failed error=%s", exc)
+            raise RuntimeError(f"Remote translation response parse failed: {exc}") from exc

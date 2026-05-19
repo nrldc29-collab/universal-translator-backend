@@ -4,10 +4,14 @@ Maintains conversation context and handles domain-specific terminology.
 """
 
 import json
+import logging
 import re
 from typing import Dict, List, Optional, Set
 from pathlib import Path
 from collections import defaultdict
+
+
+logger = logging.getLogger(__name__)
 
 
 class TechnicalJargonDatabase:
@@ -30,8 +34,8 @@ class TechnicalJargonDatabase:
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except Exception as e:
-            print(f"Error loading jargon database: {e}")
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("jargon_database_load_failed error=%s", e)
             return self._default_jargon()
     
     def _default_jargon(self) -> Dict[str, Dict[str, Dict[str, str]]]:

@@ -72,8 +72,8 @@ def language_choices():
     return [(name, code) for code, name in LANGUAGES.items()]
 
 
-with gr.Blocks(title="Universal Translator") as demo:
-    gr.Markdown("# Universal Translator")
+with gr.Blocks(title="Anai Translator") as demo:
+    gr.Markdown("# Anai Translator")
     gr.Markdown("Record or upload speech, transcribe it, and translate between English and Spanish.")
 
     with gr.Tab("Audio Translation"):

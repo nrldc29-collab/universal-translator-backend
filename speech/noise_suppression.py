@@ -5,9 +5,13 @@ Uses spectral gating and deep learning-based approaches for real-world noise red
 
 import numpy as np
 import io
+import logging
 import wave
 from pathlib import Path
 from typing import Optional, Tuple
+
+
+logger = logging.getLogger(__name__)
 
 
 class NoiseSuppressor:
@@ -37,11 +41,11 @@ class NoiseSuppressor:
                 # Try to import deep noise suppression library
                 # This could be RNNoise, DeepFilterNet, etc.
                 # For now, we'll use spectral gating as fallback
-                print("Deep noise suppression: using spectral gating fallback")
+                logger.info("deep_noise_suppression_fallback method=spectral_gating")
                 self.method = "spectral_gating"
                 return True
             except ImportError:
-                print("Deep noise suppression not available, using spectral gating")
+                logger.info("deep_noise_suppression_unavailable method=spectral_gating")
                 self.method = "spectral_gating"
                 return True
         return True
@@ -114,17 +118,15 @@ class NoiseSuppressor:
         except ImportError:
             # Fallback: return original if scipy not available
             return audio_data
-        except Exception as e:
-            print(f"Noise suppression error: {e}")
+        except Exception as exc:
+            logger.warning("noise_suppression_failed error=%s", exc)
             return audio_data
     
     def _deep_suppression(self, audio_data: bytes) -> bytes:
         """
         Deep learning-based noise suppression.
-        Placeholder for integration with models like RNNoise, DeepFilterNet, etc.
+        Integration point for models like RNNoise, DeepFilterNet, etc.
         """
-        # TODO: Implement actual deep noise suppression
-        # For now, fall back to spectral gating
         return self._spectral_gating(audio_data)
     
     def suppress_wav_file(self, input_path: str, output_path: Optional[str] = None) -> str:

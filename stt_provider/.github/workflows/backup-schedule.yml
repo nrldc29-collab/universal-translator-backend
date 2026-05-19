@@ -1,0 +1,94 @@
+# Scheduled Backup Workflow
+# Runs automated backups on a schedule
+
+name: Scheduled Backups
+
+on:
+  schedule:
+    # Daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup-postgres:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          kubeconfig: ${{ secrets.PRODUCTION_KUBECONFIG }}
+      
+      - name: Create PostgreSQL backup
+        run: |
+          POD_NAME=$(kubectl get pod -n stt -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n stt ${POD_NAME} -- pg_dump -U stt -d stt > /tmp/postgres_backup.sql
+          gzip /tmp/postgres_backup.sql
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      
+      - name: Upload to S3
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: Upload backup to S3
+        run: |
+          aws s3 cp /tmp/postgres_backup.sql.gz \
+            s3://your-backup-bucket/stt/postgres/postgres_backup_$(date +%Y%m%d_%H%M%S).sql.gz
+      
+      - name: Clean old backups
+        run: |
+          aws s3 ls s3://your-backup-bucket/stt/postgres/ | \
+            awk '{print $2}' | \
+            while read file; do
+              file_date=$(echo $file | grep -oP '\d{8}_\d{6}' | head -1)
+              if [ ! -z "$file_date" ]; then
+                file_seconds=$(date -d "${file_date:0:8} ${file_date:9:2}:${file_date:11:2}:${file_date:13:2}" +%s 2>/dev/null || echo 0)
+                current_seconds=$(date +%s)
+                age_days=$(( (current_seconds - file_seconds) / 86400 ))
+                if [ $age_days -gt 30 ]; then
+                  echo "Deleting old backup: $file"
+                  aws s3 rm s3://your-backup-bucket/stt/postgres/$file
+                fi
+              fi
+            done
+
+  backup-secrets:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          kubeconfig: ${{ secrets.PRODUCTION_KUBECONFIG }}
+      
+      - name: Backup secrets
+        run: |
+          kubectl get secrets -n stt -o yaml > /tmp/secrets_backup.yaml
+      
+      - name: Encrypt secrets
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --import
+          gpg --encrypt --recipient your-email@example.com --output /tmp/secrets_backup.yaml.enc /tmp/secrets_backup.yaml
+          rm /tmp/secrets_backup.yaml
+      
+      - name: Upload to S3
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: Upload encrypted secrets to S3
+        run: |
+          aws s3 cp /tmp/secrets_backup.yaml.enc \
+            s3://your-backup-bucket/stt/secrets/secrets_backup_$(date +%Y%m%d_%H%M%S).yaml.enc

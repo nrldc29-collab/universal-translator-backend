@@ -1,0 +1,27 @@
+# PodDisruptionBudgets for STT Gateway and Triton Backend
+# These PDBs ensure availability during voluntary disruptions like node maintenance
+# or cluster upgrades by limiting how many pods can be unavailable at once.
+
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: stt-gateway-pdb
+  namespace: stt
+spec:
+  # Allow at most 1 gateway pod to be unavailable during disruptions
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: stt-gateway
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: triton-parakeet-pdb
+  namespace: stt
+spec:
+  # Require at least 2 Triton pods to remain available during disruptions
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: triton-parakeet

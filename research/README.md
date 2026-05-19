@@ -1,0 +1,1 @@
+This directory contains experimental translator research, prototype service code, and archived AI communication concepts that are intentionally kept off the production import path; production runtime code should stay in the root `backend/`, `speech/`, `translation/`, `tts/`, `llm/`, and app directories.

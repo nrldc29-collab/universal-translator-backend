@@ -5,6 +5,11 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000]; // Exponential backoff
 const HEARTBEAT_INTERVAL = 15000; // 15 seconds
 const CONNECTION_TIMEOUT = 10000; // 10 seconds
+const DEBUG_LOGS = Boolean(__DEV__ || process.env.EXPO_PUBLIC_DEBUG_LOGS === '1');
+
+const debugLog = (...args) => {
+  if (DEBUG_LOGS) console.debug(...args);
+};
 
 export const apiToWsUrl = (apiUrl, path, token) => {
   let wsUrl = (apiUrl || API_URL).replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
@@ -75,7 +80,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     clearTimers();
     connectionTimeout = setTimeout(() => {
       if (ws && ws.readyState !== WebSocket.OPEN) {
-        console.log('Connection timeout');
+        debugLog('Connection timeout');
         ws.close();
         setStatus?.('Connection timeout');
         scheduleReconnect();
@@ -87,7 +92,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     newWs.onopen = () => {
       clearTimers();
       reconnectAttempts = 0; // Reset on successful connection
-      console.log("WebSocket connected:", url);
+      debugLog("WebSocket connected:", url);
       setStatus?.("Connected");
       startHeartbeat();
     };
@@ -112,12 +117,13 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     
     newWs.onclose = (event) => {
       clearTimers();
-      console.log("WebSocket closed:", event.code, event.reason);
+      debugLog("WebSocket closed:", event.code, event.reason);
       
       if (!intentionallyClosed) {
-        setStatus?.(`Disconnected (${event.code})`);
+        setStatusWithType?.(`Disconnected (${event.code})`);
         scheduleReconnect();
       } else {
+        setStatusWithType?.('Disconnected');
         setStatus?.('Disconnected');
       }
     };

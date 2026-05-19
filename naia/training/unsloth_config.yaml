@@ -1,0 +1,58 @@
+# Unisloth configuration for LoRA fine-tuning of Qwen 2.5 3B
+# Usage: unsloth train --config unsloth_config.yaml
+
+model:
+  name: "Qwen/Qwen2.5-3B-Instruct"
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_use_double_quant: true
+  bnb_4bit_quant_type: "nf4"
+
+lora:
+  r: 64  # LoRA rank
+  alpha: 16  # LoRA alpha
+  dropout: 0.05  # LoRA dropout
+  bias: "none"  # Bias configuration
+  target_modules:  # Target modules for LoRA
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  task_type: "CAUSAL_LM"
+
+training:
+  output_dir: "./naia-student-3b-lora"
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 100
+  logging_steps: 10
+  save_steps: 500
+  eval_steps: 500
+  save_total_limit: 3
+  lr_scheduler_type: "cosine"
+  max_grad_norm: 1.0
+
+data:
+  # naia's prepared dataset is a single JSON file with a "text" field per row.
+  # Run `python training/prepare_dataset.py` first to produce this from
+  # dataset/output/{single_shot,pipeline_aware}.jsonl.
+  train_file: "./dataset/output/combined_unsloth.json"
+  max_seq_length: 4096
+  preprocessing_num_workers: 4
+
+optimizer:
+  type: "adamw_torch"
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+
+quantization:
+  quantization_method: "q4_k_m"  # GGUF quantization
+  output_format: "gguf"
+  output_path: "./naia-student-3b-q4.gguf"

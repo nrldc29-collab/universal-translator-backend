@@ -1,227 +1,184 @@
-# Backend Deployment Guide
+# Anai Translator — Deployment Guide
 
-Your Universal Translator backend is ready for production deployment to `https://anai.wok`.
+This is the single, authoritative deployment guide for the Anai Translator
+backend (FastAPI + WebSocket) and the optional Hugging Face Spaces demo
+(`hf-space/`).
 
-## Prerequisites
+It covers, in order:
 
-- Docker + Docker Compose installed
-- GPU with NVIDIA drivers (for CUDA support)
-- HTTPS/SSL certificate for `anai.wok`
-- A server or cloud instance (AWS, Google Cloud, DigitalOcean, etc.)
+1. [Choosing a target](#choosing-a-target)
+2. [Hugging Face Spaces](#hugging-face-spaces-free-demo)
+3. [Railway](#railway-managed-docker-host)
+4. [Your own Linux server](#your-own-linux-server)
+5. [Google Cloud Run](#google-cloud-run-serverless-cpu)
+6. [AWS ECS with GPU](#aws-ecs-with-gpu)
+7. [Reverse proxy, HTTPS, and CORS](#reverse-proxy-https-and-cors)
+8. [Verification](#verification)
+9. [Performance tuning](#performance-tuning)
+10. [Troubleshooting](#troubleshooting)
 
-## Option 1: Deploy on Your Own GPU Server
+## Choosing a target
 
-### Local Testing (Before Production)
+| Target | Cost | Time | Always-on | GPU | WebSocket |
+| --- | --- | --- | --- | --- | --- |
+| HF Spaces (Gradio demo) | Free | 5 min | No (sleeps) | Paid upgrade | Limited |
+| Railway | Free → $5–20/mo | 5 min | Yes | Limited | Yes |
+| DigitalOcean / Hetzner / Linode (`deploy.sh`) | $3–50/mo | 15 min | Yes | Yes (GPU droplet) | Yes |
+| Google Cloud Run | Free tier → pay-per-use | 10 min | Cold starts | No | Yes |
+| AWS ECS + GPU | Pay-per-use | 30 min | Yes | Yes | Yes |
 
-```bash
-# Build and run locally
-docker-compose up --build
+Recommendations:
 
-# Test the API
-curl -X GET http://localhost:8000/docs  # Swagger UI
-curl -X GET http://localhost:8000/health
+- For a quick public demo: **Hugging Face Spaces** (Gradio).
+- For real production with WebSocket streaming: **Railway** or a **GPU VPS**.
+- For maximum control or custom hardware: **your own Linux server**.
 
-# Test WebSocket
-# Use your frontend at http://localhost:5173 or https://frontend-one-henna-99jlsna6ki.vercel.app
+## Hugging Face Spaces (free demo)
+
+The `hf-space/` folder is a self-contained Gradio app for English↔Spanish
+speech and text translation. It is the only artifact you need for HF Spaces.
+
+### Option A: deploy in the browser
+
+1. Go to <https://huggingface.co/spaces> and create a new Space.
+2. Name: `anai-translator`. SDK: **Gradio**. Hardware: free CPU is fine.
+3. In the Files tab, upload everything in `hf-space/`:
+   - `app.py`
+   - `requirements.txt`
+   - `packages.txt`
+   - `README.md`
+4. Commit and wait for the build (first run downloads models — a few minutes).
+
+### Option B: deploy from this machine
+
+Create a Hugging Face write token at
+<https://huggingface.co/settings/tokens>, then run from the repo root:
+
+```powershell
+$env:HF_TOKEN = "hf_your_write_token_here"
+./deploy-hf-space.ps1 -SpaceId "YOUR_USERNAME/anai-translator"
 ```
 
-### Deploy to Production Server
+Add `-Private` to make the Space private.
 
-1. **Copy code to server:**
-   ```bash
-   scp -r . user@anai.wok:/opt/universal-translator
-   ssh user@anai.wok
-   ```
+### What the Space supports
 
-2. **Set up on server:**
-   ```bash
-   cd /opt/universal-translator
-   
-   # Create models directory for caching
-   mkdir -p models
-   
-   # Load environment variables
-   export $(cat .env.production | xargs)
-   
-   # Build and run with GPU support
-   docker-compose up -d
-   
-   # Check logs
-   docker-compose logs -f backend
-   ```
+- Record/upload audio, transcribe with `faster-whisper` (tiny, CPU).
+- Translate English↔Spanish via Helsinki-NLP OPUS-MT models.
+- Runs on the free CPU tier.
 
-3. **Configure Reverse Proxy (Nginx)**
-   
-   Create `/etc/nginx/sites-available/anai.wok`:
-   ```nginx
-   upstream backend {
-       server 127.0.0.1:8000;
-   }
-   
-   server {
-       listen 80;
-       server_name anai.wok;
-       
-       # Redirect HTTP to HTTPS
-       return 301 https://$server_name$request_uri;
-   }
-   
-   server {
-       listen 443 ssl http2;
-       server_name anai.wok;
-       
-       # SSL certificates (use Let's Encrypt via certbot)
-       ssl_certificate /etc/letsencrypt/live/anai.wok/fullchain.pem;
-       ssl_certificate_key /etc/letsencrypt/live/anai.wok/privkey.pem;
-       
-       # WebSocket support
-       proxy_set_header Upgrade $http_upgrade;
-       proxy_set_header Connection "upgrade";
-       proxy_set_header Host $host;
-       proxy_set_header X-Real-IP $remote_addr;
-       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-       proxy_set_header X-Forwarded-Proto $scheme;
-       
-       # API timeout for large audio files
-       proxy_read_timeout 300s;
-       proxy_connect_timeout 75s;
-       
-       location / {
-           proxy_pass http://backend;
-       }
-   }
-   ```
+### What the Space does NOT do
 
-4. **Enable Nginx:**
-   ```bash
-   sudo ln -s /etc/nginx/sites-available/anai.wok /etc/nginx/sites-enabled/
-   sudo nginx -t
-   sudo systemctl reload nginx
-   ```
+- No WebSocket streaming, no Piper TTS, no auth/quotas, no NAIA assistant.
+- Do not point the Vite frontend at the Gradio Space — the frontend expects
+  the FastAPI routes in `backend/api.py`.
 
-5. **Set up HTTPS with Let's Encrypt:**
-   ```bash
-   sudo apt-get install certbot python3-certbot-nginx
-   sudo certbot certonly --nginx -d anai.wok
-   ```
+## Railway (managed Docker host)
 
-## Option 2: Cloud Deployment (AWS ECS / Google Cloud Run)
+The repo's root `Dockerfile` is a multi-stage build that compiles
+`frontend/dist` and bakes it into the FastAPI image, so a single Railway
+service serves both the PWA and the API.
 
-### AWS ECS with GPU
-```bash
-# Push Docker image to ECR
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin YOUR_ECR_URI
-docker build -f Dockerfile.backend -t universal-translator-backend .
-docker tag universal-translator-backend:latest YOUR_ECR_URI/universal-translator-backend:latest
-docker push YOUR_ECR_URI/universal-translator-backend:latest
+1. Push the repo to GitHub (use `./Publish-To-GitHub.ps1 -RepoUrl …` if you
+   have not pushed yet).
+2. Open <https://railway.app>, create a project, and choose **Deploy from
+   GitHub repo**.
+3. After the first deploy, open **Settings → Networking → Generate Domain**.
 
-# Create ECS task definition with GPU support and deploy
-# (Use AWS Console or CLI)
+Railway injects `PORT`; the backend reads it and binds to `0.0.0.0`. No manual
+port wiring needed.
+
+### Required variables
+
+Generate variables with `./Get-Railway-Variables.ps1` and paste them into
+**Variables** in the Railway service.
+
+If you keep both the frontend and backend on the Railway URL, you can leave
+`ALLOWED_ORIGINS` unset. If you also deploy a separate Vercel/Netlify
+frontend, include its origin:
+
+```powershell
+./Get-Railway-Variables.ps1 -FrontendOrigin https://YOUR-VERCEL-APP.vercel.app
 ```
 
-### Google Cloud Run (CPU - no GPU, lower cost)
-```bash
-# For CPU-only version (slower, but runs on Cloud Run)
-gcloud builds submit --tag gcr.io/YOUR_PROJECT/universal-translator-backend
-gcloud run deploy universal-translator-backend \
-  --image gcr.io/YOUR_PROJECT/universal-translator-backend \
-  --platform managed \
-  --memory 4Gi \
-  --timeout 3600 \
-  --set-env-vars ENVIRONMENT=production,WHISPER_DEVICE=cpu,WHISPER_MODEL_SIZE=tiny
+### Pre-flight check
+
+Before pushing or deploying, run:
+
+```powershell
+./Test-DeploymentReady.ps1 -RunSmoke
 ```
 
-## Option 3: Docker Hub + VPS (Simple & Cheap)
+This validates git state, ignored secrets, Railway files, production frontend
+serving, same-origin `wss://` support, generated variables, and a local smoke
+run.
 
-1. Push to Docker Hub:
-   ```bash
-   docker build -f Dockerfile.backend -t YOUR_USERNAME/universal-translator:latest .
-   docker push YOUR_USERNAME/universal-translator:latest
-   ```
+### After deploy
 
-2. On VPS (Linode, DigitalOcean, Hetzner):
-   ```bash
-   # SSH into VPS
-   ssh root@anai.wok
-   
-   # Install Docker
-   curl -fsSL https://get.docker.com -o get-docker.sh
-   sh get-docker.sh
-   
-   # Run container
-   docker run -d \
-     -p 8000:8000 \
-     -e ENVIRONMENT=production \
-     -e USE_GPU=1 \
-     --gpus all \
-     --restart unless-stopped \
-     YOUR_USERNAME/universal-translator:latest
-   ```
-
-## Verify Deployment
-
-Once deployed, test these endpoints:
-
-```bash
-# Health check
-curl -X GET https://anai.wok/health
-
-# Swagger API docs
-curl -X GET https://anai.wok/docs
-
-# Test WebSocket (from your frontend)
-# The frontend will auto-connect to wss://anai.wok/ws/audio
+```powershell
+Invoke-WebRequest https://YOUR-RAILWAY-DOMAIN.up.railway.app/health
 ```
 
-## Performance Tuning
+If you also use a separate frontend host, update `frontend/vercel.json` with
+the Railway URL and redeploy the frontend; otherwise visit the Railway URL
+directly.
 
-### For High Concurrency
-```bash
-# Increase worker count and concurrency
-STT_MAX_CONCURRENCY=4      # Up from 2
-WHISPER_BEAM_SIZE=5        # Better accuracy, slower
-```
+## Your own Linux server
 
-### For Low Latency
-```bash
-WHISPER_MODEL_SIZE=tiny    # Fastest
-WHISPER_COMPUTE_TYPE=int8  # Quantized
-STT_MAX_CONCURRENCY=1      # Single request at a time
-```
-
-### For Cost Optimization (CPU-only)
-```bash
-WHISPER_DEVICE=cpu
-WHISPER_COMPUTE_TYPE=int8
-WHISPER_MODEL_SIZE=tiny
-```
-
-## Monitoring
+For a self-hosted deploy (DigitalOcean, Hetzner, Linode, bare metal — anything
+running Ubuntu 20.04+ or Debian), use the bundled `deploy.sh`.
 
 ```bash
-# Monitor CPU/GPU/Memory
-docker stats
+# 1. Copy the repo to the server
+scp -r anai-translator/ user@YOUR_SERVER_IP:/opt/
 
-# View logs
-docker-compose logs -f backend
+# 2. SSH in
+ssh user@YOUR_SERVER_IP
+cd /opt/anai-translator
 
-# Check WebSocket connections
-# Monitor /ws/audio endpoint via your frontend UI
+# 3. Run the deploy script
+chmod +x deploy.sh
+./deploy.sh
 ```
 
-## Security
+`deploy.sh` installs Docker, Nginx, and Certbot, builds the backend image,
+starts the service, configures the Nginx reverse proxy, and sets up
+auto-restart.
 
-- Always use HTTPS (configured above with Let's Encrypt)
-- Set `ALLOWED_ORIGINS` to only your frontend domain
-- Use environment variables for sensitive config (not in code)
-- Keep Docker images updated
+### Set up HTTPS
 
-## Next Steps
+Once the service is running and DNS resolves to your server:
 
-1. **Choose deployment option** (self-hosted, cloud, or VPS)
-2. **Set up domain** `anai.wok` to point to your server
-3. **Deploy** using the steps above
-4. **Test** from your frontend at https://frontend-one-henna-99jlsna6ki.vercel.app
-5. **Monitor** logs and metrics
+```bash
+chmod +x setup-https.sh
+./setup-https.sh your-domain.com
+```
 
-Questions? Check the backend API docs at `https://anai.wok/docs` once deployed.
+This requests a Let's Encrypt certificate, configures HTTPS on Nginx, and
+enables automatic renewal.
+
+### Update the frontend
+
+Point the frontend at your backend by setting `VITE_API_URL`:
+
+- **Vercel/Netlify:** add `VITE_API_URL=https://your-domain.com` in the
+  environment variables and redeploy.
+- **Local dev:** edit `frontend/vercel.local.json` and run
+  `npm run dev` in `frontend/`.
+
+### Configuration knobs
+
+Edit `deploy.sh` (or your service's environment variables) before deploy:
+
+```bash
+USE_GPU=0                  # 1 if the host has an NVIDIA GPU
+WHISPER_DEVICE=cpu         # or "cuda"
+WHISPER_MODEL_SIZE=tiny    # tiny | base | small | medium | large
+WHISPER_COMPUTE_TYPE=int8  # float16 on GPU, int8 on CPU
+STT_MAX_CONCURRENCY=1      # parallel STT requests
+WHISPER_BEAM_SIZE=1        # 1 (fast) — 5 (accurate)
+```
+
+## Google Cloud Run (serverless, CPU)
+
+CPU-only deploy that scales to zero. Good for low-volume demos

@@ -1,0 +1,81 @@
+# Axolotl configuration for LoRA fine-tuning of Qwen 2.5 3B
+# Usage: accelerate launch -m axolotl.cli.train axolotl_config.yaml
+
+base_model: Qwen/Qwen2.5-3B-Instruct
+model_type: AutoModelForCausalLM
+tokenizer_type: AutoTokenizer
+
+load_in_8bit: false
+load_in_4bit: true
+strict: false
+
+datasets:
+  # naia's prepared dataset: run `python training/prepare_dataset.py` first
+  # to produce this file from dataset/output/{single_shot,pipeline_aware}.jsonl
+  - path: dataset/output/combined_unsloth.json
+    type: json
+    field: text
+    validation_split: 0.1
+
+dataset_prepared_path: dataset/output/prepared_dataset
+
+output_dir: ./naia-student-3b-lora
+
+sequence_len: 4096
+sample_packing: true
+pad_to_sequence_len: true
+
+lora_r: 64
+lora_alpha: 16
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+lora_fan_in_fan_out: false
+
+wandb_project: naia-distillation
+wandb_entity: null
+wandb_watch: false
+wandb_run_id: null
+wandb_log_model: false
+
+gradient_accumulation_steps: 4
+micro_batch_size: 4
+num_epochs: 3
+warmup_steps: 100
+learning_rate: 2.0e-4
+optimizer: adamw_torch
+lr_scheduler: cosine
+weight_decay: 0.01
+max_grad_norm: 1.0
+
+train_on_inputs: false
+group_by_length: false
+
+bf16: auto
+fp16: false
+tf32: false
+
+gradient_checkpointing: true
+early_stopping_patience: 3
+
+logging_steps: 10
+save_steps: 500
+eval_steps: 500
+save_total_limit: 3
+
+resume_from_checkpoint:
+  auto_resume: from_last
+
+flash_attention: true
+
+sdp_attention: true
+
+debug:
+  overflow: false
+  underflow: false

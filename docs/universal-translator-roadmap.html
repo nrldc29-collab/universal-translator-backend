@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anai Translator Build Roadmap</title>
+  <style>
+    @page {
+      size: letter;
+      margin: 0.55in;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: #111827;
+      background: #ffffff;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      line-height: 1.42;
+    }
+
+    .cover {
+      padding: 26px 30px;
+      border-radius: 18px;
+      color: #f8fafc;
+      background:
+        linear-gradient(135deg, rgba(14, 165, 233, 0.95), rgba(20, 184, 166, 0.92)),
+        #0f172a;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+      opacity: 0.86;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 720px;
+      font-size: 34px;
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 12px 0 0;
+      max-width: 700px;
+      color: rgba(248, 250, 252, 0.88);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .summary-card {
+      min-height: 72px;
+      padding: 11px 12px;
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      border-radius: 10px;
+      background: rgba(15, 23, 42, 0.22);
+    }
+
+    .summary-card strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .summary-card span {
+      display: block;
+      color: rgba(248, 250, 252, 0.84);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    main {
+      padding-top: 22px;
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      color: #0f172a;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .section {
+      margin-bottom: 16px;
+      break-inside: avoid;
+    }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+      counter-reset: steps;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 12px;
+      padding: 13px;
+      border: 1px solid #dbe3ef;
+      border-radius: 10px;
+      background: #f8fafc;
+      counter-increment: steps;
+      break-inside: avoid;
+    }
+
+    .step::before {
+      content: counter(steps);
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      color: #ffffff;
+      background: #0ea5e9;
+      font-size: 15px;
+      font-weight: 900;
+    }
+
+    h3 {
+      margin: 0 0 5px;
+      color: #0f172a;
+      font-size: 14px;
+    }
+
+    p {
+      margin: 0 0 7px;
+      color: #334155;
+      font-size: 12px;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 16px;
+    }
+
+    li {
+      margin: 2px 0;
+      color: #475569;
+      font-size: 11.5px;
+    }
+
+    .goal {
+      margin: 2px 0 8px;
+      color: #0f766e;
+      font-size: 11.5px;
+      font-weight: 800;
+    }
+
+    .order {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .order span {
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid #dbe3ef;
+      border-radius: 999px;
+      color: #0f172a;
+      background: #ffffff;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .order b {
+      color: #0ea5e9;
+    }
+
+    .test-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+
+    .test-grid span {
+      min-height: 34px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      color: #134e4a;
+      background: #ccfbf1;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    footer {
+      margin-top: 18px;
+      padding-top: 10px;
+      border-top: 1px solid #e2e8f0;
+      color: #64748b;
+      font-size: 10px;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <p class="eyebrow">Anai Translator</p>
+    <h1>Step-by-Step Roadmap to Make the App Feel Truly Universal</h1>
+    <p class="subtitle">
+      Build the translator into a live interpreter that detects language, routes speakers, repairs uncertainty,
+      remembers context, and keeps working when the network is weak.
+    </p>
+    <div class="summary-grid">
+      <div class="summary-card">
+        <strong>Primary Goal</strong>
+        <span>Tap once, speak naturally, translate and voice continuously.</span>
+      </div>
+      <div class="summary-card">
+        <strong>Brain Role</strong>
+        <span>Use AI for decisions, confidence, repair, and context.</span>
+      </div>
+      <div class="summary-card">
+        <strong>Mobile Standard</strong>
+        <span>Clean live interpreter screen with no setup friction.</span>
+      </div>
+    </div>
+  </section>
+
+  <main>
+    <section class="section">
+      <h2>Build Steps</h2>
+      <div class="steps">
+        <article class="step">
+          <div>
+            <h3>True Streaming STT</h3>
+            <p class="goal">Goal: speech while talking becomes live words immediately.</p>
+            <ul>
+              <li>Add a provider such as Deepgram, AssemblyAI, Google Speech-to-Text streaming, or Azure Speech.</li>
+              <li>Stream microphone audio continuously instead of waiting for final clips.</li>
+              <li>Use backend Whisper/browser recognition only as fallback.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="step">
+          <div>
+            <h3>Language Auto-Detection</h3>
+            <p class="goal">Goal: user speaks English, Spanish, Haitian Creole, or another language and the app chooses the source language.</p>
+            <ul>
+              <li>Detect language from the live transcript.</li>
+              <li>Update the speaker profile with the detected language.</li>
+              <li>Switch translation direction automatically.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="step">
+          <div>
+            <h3>Speaker Routing</h3>
+            <p class="goal">Goal: the app knows who is talking and what language each person uses.</p>
+            <ul>
+              <li>Track each phone/device as a speaker identity.</li>
+              <li>Bind each speaker to a default language and target language.</li>
+              <li>Route every transcript through the correct speaker direction.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="step">
+          <div>
+            <h3>AI Comm Brain Decisions</h3>
+            <p class="goal">Goal: use the AI brain for conversation intelligence, not raw speech speed.</p>
+            <ul>
+              <li>Handle unclear meaning, interruptions, speaker changes, names, numbers, and emotional tone.</li>
+              <li>Decide whether to translate immediately or ask for clarification.</li>
+              <li>Use context from the current conversation before choosing the final phrasing.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="step">
+          <div>
+            <h3>Confidence Repair</h3>
+            <p class="goal">Goal: high confidence translates instantly; low confidence asks for repair.</p>
+            <ul>
+              <li>Score every transcript and translation.</li>
+              <li>Ask for exact repairs like: "Please repeat the name" or "Confirm the number."</li>
+              <li>Ask meaning repair when needed: "Did you mean this or that?"</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="step">
+          <div>
+            <h3>Voice Output Polish</h3>
+            <p class="goal">Goal: translated voice feels fast, natural, and consistent.</p>
+            <ul>
+              <li>Stream TTS chunks instead of waiting for one full audio file.</li>
+              <li>Cache common phrases and warm the voice engine before speech starts.</li>
+              <li>Keep a stable translated voice per speaker.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="step">
+          <div>
+            <h3>Weak-Network Fallbacks</h3>
+            <p class="goal">Goal: the app keeps working in bad network conditions.</p>
+            <ul>
+              <li>Best mode: live streaming STT plus live TTS.</li>
+              <li>Backup modes: browser speech recognition, backend Whisper partials, then text-only translation.</li>
+              <li>Show the active mode clearly in the mobile UI.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="step">
+          <div>
+            <h3>Conversation Memory</h3>
+            <p class="goal">Goal: the app remembers context during the conversation.</p>
+            <ul>
+              <li>Track names, places, numbers, speaker languages, recent turns, and corrections.</li>
+              <li>Feed memory into translation refinement and repair decisions.</li>
+              <li>Keep short-term memory fast and privacy-safe.</li>
+            </ul>
+          </div>
+        </article>
+
+        <article class="step">
+          <div>
+            <h3>Mobile UX Polish</h3>
+            <p class="goal">Goal: the phone screen shows only what matters.</p>
+            <ul>
+              <li>Keep language direction, big mic, live transcript, live translation, speaker name, and live status bar.</li>
+              <li>Hide diagnostics unless debug mode is intentionally opened.</li>
+              <li>Make one tap start continuous live interpreter mode, and tap again stop it.</li>
+            </ul>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Best Order to Build</h2>
+      <div class="order">
+        <span><b>1</b> True streaming STT</span>
+        <span><b>2</b> Language auto-detection</span>
+        <span><b>3</b> Speaker routing</span>
+        <span><b>4</b> AI comm brain decisions</span>
+        <span><b>5</b> Confidence repair</span>
+        <span><b>6</b> Streaming TTS polish</span>
+        <span><b>7</b> Offline/weak-network fallback</span>
+        <span><b>8</b> Mobile UX polish</span>
+        <span><b>9</b> Real-world testing</span>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Real Conversation Tests</h2>
+      <div class="test-grid">
+        <span>English to Spanish</span>
+        <span>Spanish to English</span>
+        <span>English to Haitian Creole</span>
+        <span>Noisy room</span>
+        <span>Two people talking</span>
+        <span>Interruptions</span>
+        <span>Names and numbers</span>
+        <span>Weak internet</span>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Anai Translator roadmap PDF - generated from the implementation plan.
+  </footer>
+</body>
+</html>

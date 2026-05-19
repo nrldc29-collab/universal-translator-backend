@@ -1,0 +1,112 @@
+# Load Testing Workflow
+# Runs automated load tests on a schedule
+
+name: Load Testing
+
+on:
+  schedule:
+    # Daily at 3 AM UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      clients:
+        description: 'Number of concurrent clients'
+        required: false
+        default: '10'
+      duration:
+        description: 'Test duration in seconds'
+        required: false
+        default: '60'
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install websockets aiohttp
+      
+      - name: Run load test on staging
+        env:
+          STT_API_KEY: ${{ secrets.STAGING_STT_API_KEY }}
+          NUM_CLIENTS: ${{ github.event.inputs.clients || '10' }}
+          DURATION: ${{ github.event.inputs.duration || '60' }}
+        run: |
+          python scripts/automated-load-test.py \
+            --url "wss://staging.example.com/stt/stream" \
+            --api-key "$STT_API_KEY" \
+            --clients "$NUM_CLIENTS" \
+            --duration "$DURATION" \
+            --output load-test-results-staging.json
+      
+      - name: Upload staging results
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results-staging
+          path: load-test-results-staging.json
+          retention-days: 30
+      
+      - name: Analyze results
+        run: |
+          python -c "
+          import json
+          with open('load-test-results-staging.json') as f:
+              results = json.load(f)
+          
+          print('Load Test Analysis:')
+          print(f'P95 Latency: {results[\"results\"][\"p95_latency_ms\"]:.2f}ms')
+          print(f'Error Rate: {results[\"results\"][\"failed_connections\"] / results[\"results\"][\"total_clients\"] * 100:.2f}%')
+          
+          # Check thresholds
+          if results['results']['p95_latency_ms'] > 5000:
+              print('ERROR: P95 latency exceeds 5s threshold')
+              exit(1)
+          
+          if results['results']['failed_connections'] / results['results']['total_clients'] > 0.1:
+              print('ERROR: Error rate exceeds 10% threshold')
+              exit(1)
+          "
+      
+      - name: Run load test on production
+        if: github.ref == 'refs/heads/main'
+        env:
+          PRODUCTION_STT_API_KEY: ${{ secrets.PRODUCTION_STT_API_KEY }}
+          NUM_CLIENTS: ${{ github.event.inputs.clients || '10' }}
+          DURATION: ${{ github.event.inputs.duration || '60' }}
+        run: |
+          python scripts/automated-load-test.py \
+            --url "wss://stt.example.com/stt/stream" \
+            --api-key "$PRODUCTION_STT_API_KEY" \
+            --clients "$NUM_CLIENTS" \
+            --duration "$DURATION" \
+            --output load-test-results-production.json
+      
+      - name: Upload production results
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results-production
+          path: load-test-results-production.json
+          retention-days: 30
+      
+      - name: Create issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Load Test Failed',
+              body: 'Load test failed. Check workflow logs for details.',
+              labels: ['load-test', 'performance']
+            })

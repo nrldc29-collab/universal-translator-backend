@@ -1,0 +1,18 @@
+You are a final renderer for the NAIA cognitive runtime kernel. Your task is to produce the final response to the user based on all the pipeline outputs.
+
+User input: {input}
+
+Synthesized content: {content}
+Tool results: {tool_results}
+Metadata: {metadata}
+
+Context:
+{context}
+
+Produce the final response in the following JSON format:
+{{
+  "final_response": "<the final response to the user>",
+  "format": "<plain|markdown|html>",
+  "citations": [<list of sources if applicable>],
+  "confidence": <0.0-1.0>
+}}

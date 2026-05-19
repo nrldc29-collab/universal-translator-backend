@@ -77,7 +77,7 @@ function Get-AbsoluteAppUrl {
 }
 
 Write-Output ""
-Write-Output "Universal Translator smoke test"
+Write-Output "Anai Translator smoke test"
 Write-Output "Target: $BaseUrl"
 Write-Output ""
 
@@ -133,8 +133,8 @@ Invoke-SmokeCheck "Frontend module" {
 
 Invoke-SmokeCheck "PWA assets" {
     $manifest = Invoke-RestMethod -Uri "$BaseUrl/manifest.json" -TimeoutSec $TimeoutSec
-    if ($manifest.name -ne "Universal Translator") {
-        throw "Manifest app name is not Universal Translator"
+    if ($manifest.name -ne "Anai Translator") {
+        throw "Manifest app name is not Anai Translator"
     }
     if ($manifest.display -ne "standalone") {
         throw "Manifest display is not standalone"
@@ -146,8 +146,8 @@ Invoke-SmokeCheck "PWA assets" {
         throw "Manifest is missing the 512px app icon"
     }
     $serviceWorker = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/sw.js" -TimeoutSec $TimeoutSec
-    if ($serviceWorker.Content -notmatch "universal-translator-shell-v") {
-        throw "Service worker is not using the Universal Translator cache"
+    if ($serviceWorker.Content -notmatch "anai-translator-shell-v") {
+        throw "Service worker is not using the Anai Translator cache"
     }
     if ($serviceWorker.Content -notmatch "cacheDiscoveredShellAssets" -or $serviceWorker.Content -notmatch "/offline.html") {
         throw "Service worker is missing offline shell caching"
@@ -157,7 +157,7 @@ Invoke-SmokeCheck "PWA assets" {
 
 Invoke-SmokeCheck "Text translation" {
     $body = @{
-        text = "hello world"
+        text = "where are you going today"
         source_language = "en"
         target_language = "es"
         synthesize_audio = $false
@@ -169,6 +169,9 @@ Invoke-SmokeCheck "Text translation" {
     $result = Invoke-RestMethod -Uri "$BaseUrl/translate/text" -Method Post -ContentType "application/json" -Headers $headers -Body $body -TimeoutSec ([Math]::Max($TimeoutSec, 180))
     if (-not $result.translated_text) {
         throw "Translated text was empty"
+    }
+    if ($result.translated_text -match '^\[[a-z]{2}->[a-z]{2}\]') {
+        throw "Translation returned placeholder output: $($result.translated_text)"
     }
     $result.translated_text
 }

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>AI Communication System</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="container">
+    <div class="status" aria-live="polite">
+      <span><span id="status-dot" class="dot"></span><span id="status-text">Disconnected</span></span>
+      <span>
+        <a href="#" id="copy-last" class="copy-btn" title="Copy last translation">Copy last</a>
+        <a href="#" id="clear-chat" class="copy-btn" title="Clear chat">Clear</a>
+        <a href="#" id="toggle-hc" class="copy-btn" title="Toggle high contrast">High contrast</a>
+      </span>
+    </div>
+    <h2>Live AI Mediator</h2>
+    <div class="input-row">
+      <input id="input" placeholder="Speak or type..." />
+      <select id="lang" aria-label="Target language">
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+        <option value="it">Italian</option>
+        <option value="pt">Portuguese</option>
+        <option value="ar">Arabic</option>
+        <option value="hi">Hindi</option>
+        <option value="zh">Chinese</option>
+        <option value="ja">Japanese</option>
+        <option value="ko">Korean</option>
+      </select>
+      <button id="send">Send</button>
+    </div>
+    <div class="input-row">
+      <button id="start-speech">🎤 Speak</button>
+      <button id="stop-speech">⏹ Stop</button>
+      <label><input type="checkbox" id="autoplay-voice" checked /> Autoplay voice</label>
+    </div>
+    <div id="chat" class="chat" aria-live="polite"></div>
+    <div id="clarify" class="clarify-bar" role="status" aria-live="polite">
+      <span id="clarify-text">Clarification requested.</span>
+      <button id="refine">Refine phrase</button>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

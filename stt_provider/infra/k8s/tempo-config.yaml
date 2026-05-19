@@ -1,0 +1,30 @@
+# Tempo Configuration for STT Platform
+# Configures Tempo for trace storage
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: stt
+data:
+  config.yaml: |
+    server:
+      http_listen_port: 3100
+
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /tmp/tempo/traces
+
+    metrics:
+      endpoint: http://prometheus:9090/api/v1/push
+
+# Apply with:
+# kubectl apply -f infra/k8s/tempo-config.yaml

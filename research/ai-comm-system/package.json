@@ -1,0 +1,22 @@
+{
+  "name": "ai-comm-system",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node backend/server.js",
+    "dev": "nodemon backend/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "openai": "^4.47.1",
+    "socket.io": "^4.7.5",
+    "prom-client": "^14.2.0",
+    "ioredis": "^5.4.1",
+    "@opentelemetry/sdk-node": "^0.53.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

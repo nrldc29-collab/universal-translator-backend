@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# Environment secrets
+.env
+server/.env
+
+# Logs
+logs/
+*.log
+*.jsonl
+
+# Audio/test files
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.webm
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Docker/cache
+*.pid
+.cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Model/cache directories
+models/
+server/models/
+server/audio/

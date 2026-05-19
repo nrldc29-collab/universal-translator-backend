@@ -77,7 +77,7 @@ class PiperTextToSpeech:
             try:
                 if self._load_voice(lang) is not None:
                     any_ok = True
-            except Exception:
+            except (OSError, RuntimeError, ImportError):
                 continue
         return any_ok
 
@@ -196,7 +196,7 @@ class PiperTextToSpeech:
             if self._use_cloud_tts(lang):
                 try:
                     return self._synthesize_google(text, out_path, lang)
-                except Exception:
+                except (requests.RequestException, ConnectionError, TimeoutError):
                     # If Google TTS fails for any reason, silently fall back to eSpeak
                     pass
             return self._synthesize_espeak(text, out_path, lang)
@@ -204,7 +204,7 @@ class PiperTextToSpeech:
         if self._use_cloud_tts(lang):
             try:
                 return self._synthesize_google(text, out_path, lang)
-            except Exception:
+            except (requests.RequestException, ConnectionError, TimeoutError):
                 # Keep speech reliable if the cloud provider is unavailable or a
                 # language is rejected; local Piper remains the durable fallback.
                 pass

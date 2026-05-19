@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.coverage
+htmlcov/
+*.sqlite
+*.sqlite3
+agents/*.state.json
+dataset/output/
+models/
+runtime/*.sqlite3
+governance/*.sqlite3
+memory/*.sqlite3

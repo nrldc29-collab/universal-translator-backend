@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "naia"
+version = "0.2.0"
+description = "Governed AI runtime prototype"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+exclude = [
+  ".git",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".venv",
+  "venv",
+  "dataset/output",
+  "models",
+  "__pycache__",
+  "kaggle_notebook.py",
+  "training",
+  "dataset",
+]
+
+[tool.ruff.lint]
+select = ["F"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["api", "agents", "cognition", "core", "governance", "memory", "runtime", "synthesis", "telemetry", "tools", "tests"]
+ignore_missing_imports = true
+warn_unused_ignores = false
+warn_redundant_casts = false
+check_untyped_defs = false
+follow_imports = "skip"
+exclude = [
+  "dataset/output",
+  "models",
+  ".venv",
+  "venv",
+]
+
+[[tool.mypy.overrides]]
+module = ["dataset.*", "training.*", "experiments.*", "memory.consolidation", "memory.rag_retrieval", "cognition.reflection", "cognition.router.reasoning", "cognition.router.llm_classifier", "agents.coordinator"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = ["synthesis.*", "runtime.*", "api.*", "agents.*", "memory.*", "telemetry.*"]
+ignore_errors = true

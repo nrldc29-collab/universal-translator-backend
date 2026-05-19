@@ -1,6 +1,15 @@
-# Universal Translator
+# Anai Translator
 
-A fully self-hosted real-time translation system designed to reduce language barriers without relying on external APIs or usage quotas.
+A futuristic, self-hosted real-time translation system designed to reduce language barriers without relying on external APIs or usage quotas.
+
+## Missing-files checklist
+
+This repo now includes the operational files needed for safer local setup and CI:
+
+- `.env.example` — copy to `.env` and customize local secrets/settings.
+- `pytest.ini` — standard test discovery config.
+- `models/**/.gitkeep` — keeps required model directories present without committing downloaded models.
+- `requirements.txt` — includes runtime dependencies plus `pytest` for local validation.
 
 ## Design Rule
 
@@ -14,6 +23,8 @@ Build a local pipeline that can:
 - Translate text into another language
 - Convert translated text into natural speech
 - Run locally or on your own server without API dependency
+
+The **NAIA Assistant** (bundled in `naia/`) provides an in-app conversational AI that can rephrase translations, explain idioms, and answer language questions. It is optional — the translator works fully without it, and the backend returns HTTP 503 for assistant endpoints when the naia kernel is unavailable.
 
 ## Architecture
 
@@ -32,16 +43,21 @@ Audio Output
 ## Project Structure
 
 ```text
-universal-translator/
-├── speech/          # Speech-to-text models and adapters
-├── translation/     # Translation models and adapters
-├── tts/             # Text-to-speech models and adapters
-├── llm/             # Optional context model integration
-├── backend/         # API and processing pipeline
-├── frontend/        # User interface
-├── models/          # Downloaded local model files
-├── scripts/         # Setup and utility scripts
-├── .env             # Local configuration
+anai-translator/
+├── backend/            # Production FastAPI backend and streaming pipeline
+├── speech/             # Speech-to-text models and adapters
+├── translation/        # Translation models and adapters
+├── tts/                # Text-to-speech models and adapters
+├── llm/                # Optional context model integration
+├── naia/               # NAIA AI assistant runtime (governed cognition, memory, tools)
+├── frontend/           # PWA user interface
+├── translator-mobile/  # Expo mobile app
+├── tests/              # Backend and integration checks
+├── scripts/            # Setup and utility scripts
+├── hf-space/           # Hugging Face Space deployment files
+├── research/           # Experimental code kept off the production import path
+├── archive/            # Legacy deploy/mobile artifacts kept out of production builds
+├── models/             # Downloaded local model files
 └── README.md
 ```
 
@@ -73,7 +89,7 @@ PiperTextToSpeech
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/universal-translator.git
+git clone https://github.com/nrldc29-collab/universal-translator-backend.git universal-translator
 cd universal-translator
 ```
 
@@ -107,6 +123,18 @@ venv\Scripts\activate
 
 ```bash
 pip install -r requirements.txt
+```
+
+Copy the environment template and edit values as needed:
+
+```bash
+copy .env.example .env
+```
+
+On macOS/Linux:
+
+```bash
+cp .env.example .env
 ```
 
 ### Step 4: Download Models
@@ -194,6 +222,46 @@ Then open:
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+## Validation
+
+Run backend checks:
+
+```bash
+pytest
+```
+
+Run frontend build:
+
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+Run mobile checks:
+
+```bash
+cd translator-mobile
+npm install
+npm run lint
+npm run build
+```
+
+More references:
+
+- `docs/ENVIRONMENT.md`
+- `docs/OPERATIONS.md`
+- `docs/TESTING.md`
+- `docs/LOCAL_DEVELOPMENT.md`
+- `docs/API.md`
+- `docs/ARCHITECTURE.md`
+- `docs/DEPLOYMENT_CHECKLIST.md`
+- `docs/BACKEND.md`
+- `docs/FRONTEND.md`
+- `docs/MOBILE.md`
+- `docs/TROUBLESHOOTING.md`
+- `docs/RELEASE_CHECKLIST.md`
 
 ## Frontend
 
@@ -696,14 +764,14 @@ GET /metrics/prometheus
 Example metrics:
 
 ```text
-universal_translator_translation_failures_total
-universal_translator_websocket_disconnects_total
-universal_translator_websocket_errors_total
-universal_translator_text_translation_latency_seconds_avg
-universal_translator_audio_translation_latency_seconds_avg
-universal_translator_streaming_segment_latency_seconds_avg
-universal_translator_gpu_memory_used_mb
-universal_translator_gpu_utilization_percent
+anai_translator_translation_failures_total
+anai_translator_websocket_disconnects_total
+anai_translator_websocket_errors_total
+anai_translator_text_translation_latency_seconds_avg
+anai_translator_audio_translation_latency_seconds_avg
+anai_translator_streaming_segment_latency_seconds_avg
+anai_translator_gpu_memory_used_mb
+anai_translator_gpu_utilization_percent
 ```
 
 GPU metrics can be supplied by the runtime environment:
@@ -816,7 +884,7 @@ The frontend includes product-focused improvements for real users.
 The project now includes a separate React Native mobile frontend in:
 
 ```text
-mobile/
+translator-mobile/
 ```
 
 This does not replace the backend or AI pipeline. The mobile app reuses the existing FastAPI backend for:
@@ -876,7 +944,7 @@ Production backend requirements:
 
 ## Phase 2: App Store Wrap
 
-After PWA testing stabilizes, use the Expo app in `mobile/` as the native shell.
+After PWA testing stabilizes, use the Expo app in `translator-mobile/` as the native shell.
 
 Reuse:
 
@@ -889,7 +957,7 @@ Reuse:
 Build:
 
 ```bash
-cd mobile
+cd translator-mobile
 npm install
 npm start
 ```
@@ -899,15 +967,15 @@ Later, use EAS Build for Android APK/AAB and iOS App Store packages.
 App store build files:
 
 ```text
-mobile/app.json
-mobile/eas.json
-mobile/.env.example
+translator-mobile/app.json
+translator-mobile/eas.json
+translator-mobile/.env.example
 ```
 
 Before production builds, replace these placeholders:
 
 ```text
-com.yourcompany.universaltranslator
+com.yourcompany.anaitranslator
 replace-with-eas-project-id
 https://your-backend.example.com
 ```
@@ -933,7 +1001,7 @@ https://your-backend.example.com -> wss://your-backend.example.com/ws/audio
 EAS build examples:
 
 ```bash
-cd mobile
+cd translator-mobile
 npm install
 npx eas login
 npx eas build:configure
@@ -952,7 +1020,7 @@ Important:
 
 - The backend is not rebuilt for app stores.
 - The backend must use HTTPS/WSS in production.
-- Microphone permission text is configured in `mobile/app.json`.
+- Microphone permission text is configured in `translator-mobile/app.json`.
 - Use the PWA testing phase to stabilize before submitting to stores.
 
 ### Run the mobile app
@@ -960,7 +1028,7 @@ Important:
 Install mobile dependencies:
 
 ```bash
-cd mobile
+cd translator-mobile
 npm install
 ```
 
@@ -1032,7 +1100,7 @@ The mobile audio pipeline is implemented in strict A to D order:
 #### Step A: Microphone streaming
 
 ```text
-mobile/services/audio.js
+translator-mobile/services/audio-stream.js
 ```
 
 Expo does not provide true low-level PCM streaming by default, so the app uses the prototype-safe approach:
@@ -1044,8 +1112,8 @@ Expo does not provide true low-level PCM streaming by default, so the app uses t
 #### Step B: Binary WebSocket frames
 
 ```text
-mobile/App.js
-mobile/services/ws.js
+translator-mobile/App.js
+translator-mobile/services/ws.js
 ```
 
 The app sends each audio chunk directly:
@@ -1069,7 +1137,7 @@ WebSocket bytes -> Silero VAD -> Whisper STT -> Translation
 #### Step D: TTS playback on phone
 
 ```text
-mobile/services/audio.js
+translator-mobile/services/audio-stream.js
 ```
 
 The app receives `tts_audio_chunk`, writes the base64 audio to a temporary file, and plays it with `expo-av`.
@@ -1198,7 +1266,7 @@ Implemented in:
 ```text
 backend/tts_pacing.py
 backend/streaming.py
-mobile/App.js
+translator-mobile/App.js
 ```
 
 Emotion detection is lightweight and rule-based for speed:
@@ -1415,3 +1483,17 @@ Test with full sentences, not only single words:
 - **Noisy background:** run a fan, music, or room noise while speaking.
 - **Language pairs:** test EN → ES, EN → FR, EN → DE, and another pair supported by the dropdown.
 - **UX states:** confirm the UI shows “Listening...”, “Processing...”, and “Playing...” at the right times.
+
+Additional references:
+
+- docs/ARCHITECTURE.md
+- docs/DEPLOYMENT_CHECKLIST.md
+
+## Governance and Support
+
+- `CONTRIBUTING.md`
+- `SECURITY.md`
+- `CODE_OF_CONDUCT.md`
+- `SUPPORT.md`
+- `LICENSE`
+- `CHANGELOG.md`

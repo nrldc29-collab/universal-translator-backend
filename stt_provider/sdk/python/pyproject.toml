@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "true-streaming-stt"
+version = "0.1.0"
+description = "Python SDK for the True Streaming STT Provider"
+readme = { text = "Python SDK for the True Streaming STT Provider", content-type = "text/markdown" }
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [
+    { name = "True Streaming STT Provider maintainers" },
+]
+keywords = ["speech-to-text", "stt", "websocket", "streaming", "sdk"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "websockets==14.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[project.urls]
+"Source" = "https://example.invalid/true-streaming-stt-provider"
+"Issues" = "https://example.invalid/true-streaming-stt-provider/issues"
+
+[tool.setuptools]
+package-dir = { "" = "." }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["true_streaming_stt*"]
+exclude = [".venv*", "logs*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "PL", "RUF"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

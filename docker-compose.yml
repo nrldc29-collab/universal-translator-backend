@@ -1,11 +1,41 @@
 version: '3.8'
 
 services:
+  stt_provider:
+    build:
+      context: ./stt_provider/server
+      dockerfile: Dockerfile
+    container_name: stt-provider
+    ports:
+      - "8002:8002"
+    environment:
+      - ENV=prod
+      - STT_API_KEY=${STT_API_KEY}
+      - STT_API_KEYS=translator:${STT_PROVIDER_API_KEY}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - WHISPER_MODEL_SIZE=base
+      - WHISPER_DEVICE=cpu
+      - WHISPER_COMPUTE_TYPE=int8
+      - TRANSCRIPTION_LANGUAGE=en
+      - MAX_ACTIVE_CONNECTIONS=10
+      - MAX_CONNECTIONS_PER_KEY=3
+      - PORT=8002
+    volumes:
+      - ./stt_provider/models:/app/models  # Cache downloaded Whisper models
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: universal-translator-backend
+    container_name: anai-translator-backend
     ports:
       - "8000:8000"
     environment:
@@ -29,9 +59,16 @@ services:
       - PARTIAL_STT_INTERVAL_MS=250
       - PIPELINE_STEP_TIMEOUT_SECONDS=10
       - TTS_CHUNK_CHARS=26
-      - ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,https://frontend-one-henna-99jlsna6ki.vercel.app,https://frontend-qftj8v2jh-nrldc29-9295s-projects.vercel.app,https://anai.wok
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - STT_PROVIDER=streaming
+      - STT_PROVIDER_URL=http://stt_provider:8002
+      - STT_PROVIDER_WS_URL=ws://stt_provider:8002/stt/stream
+      - STT_PROVIDER_API_KEY=${STT_PROVIDER_API_KEY}
     volumes:
       - ./models:/app/models  # Cache downloaded models
+    depends_on:
+      stt_provider:
+        condition: service_healthy
     deploy:
       resources:
         reservations:

@@ -1,0 +1,27 @@
+You are a planning module for the NAIA cognitive runtime kernel. Your task is to break down the user's request into a sequence of executable steps.
+
+User input: {input}
+
+Intent: {intent}
+Complexity: {complexity}
+Context: {context}
+
+Available tools:
+{tools}
+
+Generate a plan in the following JSON format:
+{{
+  "steps": [
+    {{
+      "step_id": "1",
+      "description": "<brief description of what this step does>",
+      "tool": "<tool_name>",
+      "arguments": {{
+        "<arg_name>": "<arg_value>"
+      }},
+      "expected_output": "<what you expect this step to produce>"
+    }}
+  ],
+  "reasoning": "<overall reasoning about the plan>",
+  "estimated_steps": <number of steps>
+}}

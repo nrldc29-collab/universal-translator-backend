@@ -1,0 +1,64 @@
+# OpenTelemetry Collector Configuration for STT Platform
+# Configures OTEL Collector to receive traces and forward to Jaeger/Tempo
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: stt
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 10000
+
+      memory_limiter:
+        limit_mib: 512
+        spike_limit_mib: 128
+        check_interval: 5s
+
+    exporters:
+      # Export traces to Tempo (or Jaeger)
+      otlp:
+        endpoint: tempo:4317
+        tls:
+          insecure: true
+
+      # Export metrics to Prometheus
+      prometheusremotewrite:
+        endpoint: http://prometheus:9090/api/v1/write
+        tls:
+          insecure: true
+
+      # Export logs to Loki
+      loki:
+        endpoint: http://loki:3100/loki/api/v1/push
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp]
+
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [prometheusremotewrite]
+
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [loki]
+
+# Apply with:
+# kubectl apply -f infra/k8s/otel-collector-config.yaml

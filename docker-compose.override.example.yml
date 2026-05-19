@@ -1,0 +1,10 @@
+services:
+  backend:
+    environment:
+      ENVIRONMENT: development
+      FRONTEND_URL: http://127.0.0.1:5173
+      SERVE_FRONTEND_DIST: "0"
+      PRELOAD_MODELS: "0"
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs

@@ -2,10 +2,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 from llm import PassthroughContextLayer
-from speech import WhisperSpeechToText
 from translation import HybridTranslator, LightweightTranslator, MarianTranslator
 from tts import PiperTextToSpeech
-from backend.config import get_translation_backend, get_whisper_compute_type, get_whisper_device, get_whisper_model_size
+from backend.config import get_translation_backend
+from backend.stt_bridge import STTBridge
 
 
 @dataclass
@@ -16,24 +16,23 @@ class TranslationResult:
     audio_output_path: Optional[str]
 
 
-class UniversalTranslatorPipeline:
+class AnaiTranslatorPipeline:
     def __init__(
         self,
-        stt: WhisperSpeechToText | None = None,
+        stt: object | None = None,
         translator: HybridTranslator | MarianTranslator | LightweightTranslator | None = None,
         tts: PiperTextToSpeech | None = None,
         context_layer: PassthroughContextLayer | None = None,
     ):
-        self.stt = stt or WhisperSpeechToText(
-            model_size=get_whisper_model_size(),
-            device=get_whisper_device(),
-            compute_type=get_whisper_compute_type(),
-        )
+        if stt is not None:
+            self.stt = stt
+        else:
+            self.stt = STTBridge()
         translation_backend = get_translation_backend()
         if translator:
             self.translator = translator
         elif translation_backend == "lightweight":
-            self.translator = HybridTranslator()
+            self.translator = LightweightTranslator()
         elif translation_backend == "hybrid":
             self.translator = HybridTranslator()
         else:

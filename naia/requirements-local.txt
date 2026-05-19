@@ -1,0 +1,10 @@
+# Optional: install ONLY if you want NAIA's pipeline to call a local model.
+# The base requirements.txt stays minimal so tests and API-only deployments
+# don't pull a 200MB+ native build.
+#
+# Install with: pip install -r requirements-local.txt
+#
+# On Windows + CPU, the prebuilt wheel works out of the box. If pip tries to
+# build from source and fails, install the CMake-based wheel via:
+#   pip install llama-cpp-python --prefer-binary
+llama-cpp-python==0.3.2

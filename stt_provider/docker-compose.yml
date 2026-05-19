@@ -1,0 +1,35 @@
+# Docker Compose configuration for True Streaming STT Provider
+# This file defines a multi-container environment for local development with
+# the STT server and a simple HTTP client for testing.
+
+services:
+  # STT Server service - runs the FastAPI transcription service
+  stt-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: true-streaming-stt-server
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/app/logs
+      - hf-cache:/root/.cache/huggingface
+
+  # STT Client service - simple HTTP server for client development
+  stt-client:
+    image: python:3.11-slim
+    container_name: true-streaming-stt-client
+    working_dir: /client
+    volumes:
+      - ./client:/client
+    command: python -m http.server 5173
+    ports:
+      - "5173:5173"
+    depends_on:
+      - stt-server
+
+volumes:
+  # Persistent volume for Hugging Face model cache
+  hf-cache:

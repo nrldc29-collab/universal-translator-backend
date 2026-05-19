@@ -1,16 +1,16 @@
 ---
-title: Universal Translator
+title: Anai Translator
 sdk: gradio
 app_file: app.py
 license: mit
 pinned: false
 ---
 
-# Universal Translator
+# Anai Translator
 
 Speech-to-text and English-Spanish translation demo for Hugging Face Spaces.
 
-This Space is the lightweight demo version of the full Universal Translator
+This Space is the lightweight demo version of the full Anai Translator
 project. It uses:
 
 - faster-whisper with the tiny CPU model for transcription
