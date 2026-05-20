@@ -84,6 +84,8 @@ import {
   uniqueStrings,
   extractBrainPlan,
   compactRepairLabel,
+  languageName as languageNameUtil,
+  shareRoomUrl,
 } from './utils';
 
 // Resolve API URL up-front from env + host.
@@ -255,10 +257,8 @@ function App() {
 
   // copyToClipboard + copiedKey come from useCopyToClipboard above.
 
-  function languageName(code) {
-    if (!code) return '';
-    return languages[code] || TARGET_LANGUAGE_OPTIONS.find((option) => option.code === code)?.label || String(code).toUpperCase();
-  }
+  // Bind languageName/shareRoomUrl to the current state so call sites stay terse.
+  const languageName = (code) => languageNameUtil(code, languages);
 
   function applyBrainPayload(payload = {}, origin = 'translation') {
     const { plan, hints, repairOptions } = extractBrainPlan(payload);
@@ -1251,28 +1251,8 @@ function App() {
   }
 
   async function shareConversationRoom() {
-    const shareUrl = new URL(window.location.origin);
-    shareUrl.searchParams.set('session', sessionId);
-    const url = shareUrl.toString();
-    const payload = {
-      title: 'Anai Translator',
-      text: 'Join my live translator room.',
-      url,
-    };
-    try {
-      if (navigator.share) {
-        await navigator.share(payload);
-        setStatus('Room link shared');
-      } else {
-        await copyToClipboard(url, 'room');
-        setStatus('Room link copied');
-      }
-    } catch (error) {
-      if (error?.name !== 'AbortError') {
-        await copyToClipboard(url, 'room');
-        setStatus('Room link copied');
-      }
-    }
+    const mechanism = await shareRoomUrl({ sessionId, copyToClipboard });
+    setStatus(mechanism === 'share' ? 'Room link shared' : 'Room link copied');
   }
 
   function rememberSpeaker(data = {}) {

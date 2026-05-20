@@ -345,6 +345,50 @@ export function compactRepairLabel(option = {}) {
   return option.label || 'Repair';
 }
 
+/**
+ * Look up a human-readable language name from a code, falling back
+ * through the backend's `languages` map, the local
+ * TARGET_LANGUAGE_OPTIONS table, and finally the uppercased code.
+ */
+export function languageName(code, languages = {}) {
+  if (!code) return '';
+  return (
+    languages[code] ||
+    TARGET_LANGUAGE_OPTIONS.find((option) => option.code === code)?.label ||
+    String(code).toUpperCase()
+  );
+}
+
+/**
+ * Build a shareable room URL embedding the active session id, then
+ * either pop the native share sheet (mobile) or fall back to
+ * clipboard copy. Returns the chosen mechanism ("share" | "copy") so
+ * the caller can update its status text.
+ */
+export async function shareRoomUrl({ sessionId, copyToClipboard }) {
+  const shareUrl = new URL(window.location.origin);
+  shareUrl.searchParams.set('session', sessionId);
+  const url = shareUrl.toString();
+  const payload = {
+    title: 'Anai Translator',
+    text: 'Join my live translator room.',
+    url,
+  };
+  try {
+    if (navigator.share) {
+      await navigator.share(payload);
+      return 'share';
+    }
+    await copyToClipboard(url, 'room');
+    return 'copy';
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      await copyToClipboard(url, 'room');
+    }
+    return 'copy';
+  }
+}
+
 export function logAudioStream(stream, debugLog) {
   debugLog('AUDIO STREAM:', stream);
   debugLog('AUDIO TRACKS:', stream.getAudioTracks());
