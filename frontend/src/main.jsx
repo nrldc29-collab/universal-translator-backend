@@ -20,6 +20,7 @@ import useConversationHistory from './hooks/useConversationHistory';
 import useSelfTest from './hooks/useSelfTest';
 import useMicPermission from './hooks/useMicPermission';
 import useServiceWorkerUpdate from './hooks/useServiceWorkerUpdate';
+import useInterpreterState from './hooks/useInterpreterState';
 import {
   // host detection + URL helpers
   isLocalHost,
@@ -147,12 +148,24 @@ function App() {
   const { micPermission, setMicPermission, requestMicPermission } = useMicPermission({
     onStatus: (message) => setStatus(message),
   });
-  const [recording, setRecording] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [streaming, setStreaming] = useState(false);
-  const [instantListening, setInstantListening] = useState(false);
-  const [liveAssistActive, setLiveAssistActive] = useState(false);
+  // Pipeline-stage flags: one reducer, individual shim setters keep
+  // existing call sites unchanged. See hooks/useInterpreterState.js.
+  const {
+    recording,
+    streaming,
+    processing,
+    playing,
+    interpreterMode,
+    instantListening,
+    liveAssistActive,
+    setRecording,
+    setStreaming,
+    setProcessing,
+    setPlaying,
+    setInterpreterMode,
+    setInstantListening,
+    setLiveAssistActive,
+  } = useInterpreterState();
   const [partialTranscript, setPartialTranscript] = useState('');
   const [liveTranslation, setLiveTranslation] = useState('');
   const [pipelineStage, setPipelineStage] = useState('Idle');
@@ -176,7 +189,7 @@ function App() {
   const [ttsChunksBuffer, setTtsChunksBuffer] = useState([]);
   const [userRequestedPlayback, setUserRequestedPlayback] = useState(false);
   const [autoPlayFailed, setAutoPlayFailed] = useState(false);
-  const [interpreterMode, setInterpreterMode] = useState(false);
+  // interpreterMode is part of useInterpreterState (declared above).
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
   const [latencyStats, setLatencyStats] = useState(() => blankLatencyStats());
@@ -3183,7 +3196,7 @@ function App() {
             source_language: sourceLanguage,
             target_language: targetLanguage,
             source_text: result.source_text || result.original_text || '',
-            translated_text: result.translated_text || '',
+            translated_text:result.translated_text || '',
           };
         }}
       />
