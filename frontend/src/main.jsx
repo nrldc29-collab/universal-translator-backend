@@ -11,6 +11,10 @@ import AppHeader from './components/AppHeader';
 import DebugPanel from './components/DebugPanel';
 import MicPanel from './components/MicPanel';
 import TranslationStack from './components/TranslationStack';
+import useCopyToClipboard from './hooks/useCopyToClipboard';
+import useHaptic from './hooks/useHaptic';
+import useInstallPrompt from './hooks/useInstallPrompt';
+import useLatencyHistory from './hooks/useLatencyHistory';
 import {
   // host detection + URL helpers
   isLocalHost,
@@ -167,7 +171,7 @@ function App() {
   const [speakerMode, setSpeakerMode] = useState('auto');
   const [detectedSpeaker, setDetectedSpeaker] = useState('-');
   const [latencyStats, setLatencyStats] = useState(() => blankLatencyStats());
-  const [latencyHistory, setLatencyHistory] = useState(() => readLatencyHistory());
+  const [latencyHistory, setLatencyHistory, latencySummary] = useLatencyHistory();
   const [authToken, setAuthToken] = useState(INITIAL_TOKEN);
   const [username, setUsername] = useState('demo');
   const [password, setPassword] = useState('demo');
@@ -193,11 +197,27 @@ function App() {
     websocket: '-',
     message: 'Not run yet',
   });
-  const [installPrompt, setInstallPrompt] = useState(null);
-  const [pwaInstalled, setPwaInstalled] = useState(() => window.matchMedia?.('(display-mode: standalone)').matches || window.navigator?.standalone === true);
+  // Initial PWA-installed status (true if launched from the home screen).
+  const initialPwaInstalled =
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    window.navigator?.standalone === true;
   const [updateAvailable, setUpdateAvailable] = useState(null);
   const [micLevel, setMicLevel] = useState(0);
-  const [copiedKey, setCopiedKey] = useState(null);
+  const [copiedKey, copyToClipboard] = useCopyToClipboard();
+  const haptic = useHaptic();
+  const { installPrompt, pwaInstalled, installApp } = useInstallPrompt({
+    onStatus: (message) => setStatus(message),
+  });
+  // Initialize pwaInstalled from the launch context (home-screen install).
+  useEffect(() => {
+    if (initialPwaInstalled) {
+      // useInstallPrompt only flips pwaInstalled on `appinstalled`; we
+      // also want it true when the user opens an already-installed PWA.
+      // Use a one-shot synthetic event to surface that.
+      window.dispatchEvent(new Event('appinstalled'));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [cameraActive, setCameraActive] = useState(false);
   const [ocrText, setOcrText] = useState('');
   const [clarifyVisible, setClarifyVisible] = useState(false);
@@ -222,20 +242,13 @@ function App() {
     }
   }, [conversationTurns]);
 
+  // latencyHistory persistence + summary computation live inside
+  // useLatencyHistory; we only need to react to slow trends here.
   useEffect(() => {
-    try {
-      localStorage.setItem(LATENCY_HISTORY_KEY, JSON.stringify(latencyHistory.slice(-LATENCY_HISTORY_LIMIT)));
-    } catch {
-      /* ignore quota errors */
-    }
-  }, [latencyHistory]);
-
-  useEffect(() => {
-    const { average } = summarizeLatencyHistory(latencyHistory);
-    if (!average || average <= LATENCY_TARGET_MS) return;
+    if (!latencySummary.average || latencySummary.average <= LATENCY_TARGET_MS) return;
     if (connectionStatus !== 'online' || processing || playing || streaming) return;
     warmVoiceCache('slow_latency');
-  }, [connectionStatus, latencyHistory, playing, processing, streaming]);
+  }, [connectionStatus, latencySummary.average, playing, processing, streaming]);
 
   useEffect(() => {
     if (connectionStatus !== 'online' || processing || playing || streaming) return undefined;
@@ -245,27 +258,7 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [connectionStatus, playing, processing, streaming, targetLanguage]);
 
-  async function copyToClipboard(text, key) {
-    if (!text) return;
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
-      setCopiedKey(key);
-      window.setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1400);
-    } catch (err) {
-      console.warn('copy failed', err);
-    }
-  }
+  // copyToClipboard + copiedKey come from useCopyToClipboard above.
 
   function languageName(code) {
     if (!code) return '';
@@ -470,9 +463,7 @@ function App() {
     appStateRef.current = { interpreterMode, speakerMode, recording, processing, playing, streaming };
   }, [interpreterMode, speakerMode, recording, processing, playing, streaming]);
 
-  function haptic(pattern = 12) {
-    window.navigator?.vibrate?.(pattern);
-  }
+  // haptic comes from useHaptic() above.
 
   async function ensureAudioContext() {
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
@@ -619,34 +610,7 @@ function App() {
       .catch(() => setMicPermission('available'));
   }, []);
 
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (event) => {
-      event.preventDefault();
-      setInstallPrompt(event);
-    };
-    const handleInstalled = () => {
-      setPwaInstalled(true);
-      setInstallPrompt(null);
-      setStatus('App installed');
-    };
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleInstalled);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleInstalled);
-    };
-  }, []);
-
-  async function installApp() {
-    if (!installPrompt) {
-      window.location.href = '/install.html';
-      return;
-    }
-    installPrompt.prompt();
-    const choice = await installPrompt.userChoice;
-    setInstallPrompt(null);
-    setStatus(choice.outcome === 'accepted' ? 'Installing app' : 'Install dismissed');
-  }
+  // PWA install lifecycle is in useInstallPrompt above.
 
   async function requestMicPermission() {
     try {
