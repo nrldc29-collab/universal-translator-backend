@@ -15,6 +15,11 @@ import useCopyToClipboard from './hooks/useCopyToClipboard';
 import useHaptic from './hooks/useHaptic';
 import useInstallPrompt from './hooks/useInstallPrompt';
 import useLatencyHistory from './hooks/useLatencyHistory';
+import useDiagnostics from './hooks/useDiagnostics';
+import useConversationHistory from './hooks/useConversationHistory';
+import useSelfTest from './hooks/useSelfTest';
+import useMicPermission from './hooks/useMicPermission';
+import useServiceWorkerUpdate from './hooks/useServiceWorkerUpdate';
 import {
   // host detection + URL helpers
   isLocalHost,
@@ -137,7 +142,9 @@ function App() {
   const [result, setResult] = useState(null);
   const [status, setStatus] = useState('Ready');
   const [connectionStatus, setConnectionStatus] = useState('checking');
-  const [micPermission, setMicPermission] = useState('checking');
+  const { micPermission, setMicPermission, requestMicPermission } = useMicPermission({
+    onStatus: (message) => setStatus(message),
+  });
   const [recording, setRecording] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [playing, setPlaying] = useState(false);
@@ -173,35 +180,29 @@ function App() {
   const [latencyStats, setLatencyStats] = useState(() => blankLatencyStats());
   const [latencyHistory, setLatencyHistory, latencySummary] = useLatencyHistory();
   const [authToken, setAuthToken] = useState(INITIAL_TOKEN);
+  const { selfTest, runSelfTest } = useSelfTest({
+    apiUrl: API_URL,
+    wsAudioUrl: WS_AUDIO_URL,
+    authToken,
+    onStatus: (message) => setStatus(message),
+  });
   const [username, setUsername] = useState('demo');
   const [password, setPassword] = useState('demo');
   const [sessionId, setSessionId] = useState(INITIAL_SESSION_ID);
   const [sharedSession, setSharedSession] = useState(null);
-  const [conversationTurns, setConversationTurns] = useState(() => {
-    try {
-      const raw = localStorage.getItem('translator_conversation_turns');
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.slice(-50) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [conversationTurns, setConversationTurns] = useConversationHistory();
   const [analytics, setAnalytics] = useState(null);
-  const [diagnostics, setDiagnostics] = useState(null);
-  const [diagnosticsStatus, setDiagnosticsStatus] = useState('checking');
+  const { diagnostics, diagnosticsStatus, loadDiagnostics } = useDiagnostics(API_URL);
   const [wsDebug, setWsDebug] = useState({ url: WS_AUDIO_URL, close: '-', error: '-' });
-  const [selfTest, setSelfTest] = useState({
-    status: 'idle',
-    translation: '-',
-    websocket: '-',
-    message: 'Not run yet',
-  });
+  // selfTest + runSelfTest come from useSelfTest below (after authToken is declared).
   // Initial PWA-installed status (true if launched from the home screen).
   const initialPwaInstalled =
     window.matchMedia?.('(display-mode: standalone)').matches ||
     window.navigator?.standalone === true;
-  const [updateAvailable, setUpdateAvailable] = useState(null);
+  const updateAvailable = useServiceWorkerUpdate({
+    apiUrl: API_URL,
+    expectedRelease: EXPECTED_BACKEND_RELEASE,
+  });
   const [micLevel, setMicLevel] = useState(0);
   const [copiedKey, copyToClipboard] = useCopyToClipboard();
   const haptic = useHaptic();
@@ -234,13 +235,7 @@ function App() {
   });
   const [reconnectToastVisible, setReconnectToastVisible] = useState(false);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('translator_conversation_turns', JSON.stringify(conversationTurns.slice(-50)));
-    } catch {
-      /* ignore quota errors */
-    }
-  }, [conversationTurns]);
+  // conversation history persistence is in useConversationHistory above.
 
   // latencyHistory persistence + summary computation live inside
   // useLatencyHistory; we only need to react to slow trends here.
@@ -500,29 +495,7 @@ function App() {
     }
   }
 
-  useEffect(() => {
-    let cancelled = false;
-    async function checkRelease() {
-      try {
-        const response = await fetch(`${API_URL}/debug/version?cb=${Date.now()}`, { cache: 'no-store' });
-        if (!response.ok) return;
-        const data = await response.json();
-        if (cancelled) return;
-        const live = String(data && data.release || '');
-        if (live && live !== EXPECTED_BACKEND_RELEASE) {
-          console.warn('Frontend/backend release mismatch', { frontend: EXPECTED_BACKEND_RELEASE, backend: live });
-          setUpdateAvailable({ frontend: EXPECTED_BACKEND_RELEASE, backend: live });
-        } else if (live) {
-          setUpdateAvailable(null);
-        }
-      } catch {
-        // ignore network errors
-      }
-    }
-    checkRelease();
-    const interval = window.setInterval(checkRelease, 60000);
-    return () => { cancelled = true; window.clearInterval(interval); };
-  }, []);
+  // backend/frontend release polling lives in useServiceWorkerUpdate above.
 
   useEffect(() => {
     return () => {
@@ -576,9 +549,7 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    loadDiagnostics();
-  }, []);
+  // First diagnostics fetch happens inside useDiagnostics on mount.
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -593,36 +564,8 @@ function App() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [streaming, instantListening]);
 
-  useEffect(() => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setMicPermission('unavailable');
-      return;
-    }
-
-    setMicPermission('available');
-    navigator.permissions?.query?.({ name: 'microphone' })
-      .then((permission) => {
-        setMicPermission(permission.state === 'denied' ? 'denied' : 'available');
-        permission.onchange = () => {
-          setMicPermission(permission.state === 'denied' ? 'denied' : 'available');
-        };
-      })
-      .catch(() => setMicPermission('available'));
-  }, []);
-
+  // mic permission lifecycle is in useMicPermission above.
   // PWA install lifecycle is in useInstallPrompt above.
-
-  async function requestMicPermission() {
-    try {
-      const stream = await requestAudioStream();
-      stream.getTracks().forEach((track) => track.stop());
-      setMicPermission('available');
-      setStatus('Microphone ready');
-    } catch {
-      setMicPermission('denied');
-      setStatus('Microphone permission blocked');
-    }
-  }
 
   function createPersistentAudio() {
     if (persistentAudioRef.current) return persistentAudioRef.current;
@@ -1291,88 +1234,9 @@ function App() {
     setStatus('Analytics refreshed');
   }
 
-  async function loadDiagnostics() {
-    setDiagnosticsStatus('checking');
-    try {
-      const response = await fetch(`${API_URL}/diagnostics`);
-      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Diagnostics unavailable'));
-      const data = await response.json();
-      setDiagnostics(data);
-      setDiagnosticsStatus(data.ready ? 'online' : 'checking');
-    } catch {
-      setDiagnosticsStatus('offline');
-    }
-  }
+  // diagnostics + loadDiagnostics come from useDiagnostics(API_URL) above.
 
-  function testAudioSocket() {
-    return new Promise((resolve, reject) => {
-      const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, authToken));
-      const timeout = window.setTimeout(() => {
-        socket.close();
-        reject(new Error('Audio socket timed out'));
-      }, 6000);
-
-      socket.onopen = () => {
-        socket.send(JSON.stringify({ type: 'ping' }));
-      };
-      socket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type !== 'pong') return;
-        window.clearTimeout(timeout);
-        socket.close();
-        resolve('pong');
-      };
-      socket.onerror = () => {
-        window.clearTimeout(timeout);
-        reject(new Error('Audio socket failed'));
-      };
-    });
-  }
-
-  async function runSelfTest() {
-    setSelfTest({ status: 'running', translation: 'checking', websocket: 'checking', message: 'Running checks...' });
-    setStatus('Running self test...');
-
-    const next = {
-      status: 'online',
-      translation: '-',
-      websocket: '-',
-      message: 'Self-test passed',
-    };
-    const failures = [];
-
-    try {
-      const response = await fetch(`${API_URL}/translate/text`, {
-        method: 'POST',
-        headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ text: 'hello world', source_language: 'en', target_language: 'es', synthesize_audio: false }),
-      });
-      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Translation test failed'));
-      const data = await response.json();
-      if (!data.translated_text?.trim()) throw new Error('Translation returned empty text');
-      next.translation = data.translated_text;
-    } catch (error) {
-      next.translation = 'failed';
-      failures.push(error.message || 'Translation test failed');
-    }
-
-    try {
-      next.websocket = await testAudioSocket();
-    } catch (error) {
-      next.websocket = 'failed';
-      failures.push(error.message || 'Audio socket test failed');
-    }
-
-    if (failures.length) {
-      next.status = 'offline';
-      next.message = failures.join(' / ');
-      setStatus('Self-test failed');
-    } else {
-      setStatus('Self-test passed');
-    }
-
-    setSelfTest(next);
-  }
+  // selfTest + runSelfTest are in useSelfTest above.
 
   function logout() {
     localStorage.removeItem('translator_token');
