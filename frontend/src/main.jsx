@@ -5,6 +5,12 @@ import './styles.css';
 import { registerServiceWorker } from './pwa';
 import Assistant from './Assistant';
 import ErrorBoundary from './ErrorBoundary';
+import LanguageDock from './components/LanguageDock';
+import SystemBanners from './components/SystemBanners';
+import AppHeader from './components/AppHeader';
+import DebugPanel from './components/DebugPanel';
+import MicPanel from './components/MicPanel';
+import TranslationStack from './components/TranslationStack';
 import {
   // host detection + URL helpers
   isLocalHost,
@@ -3252,421 +3258,111 @@ function App() {
 
   return (
     <main className="app-shell">
-      {updateAvailable && (
-        <div className="system-banner" role="alert">
-          <span>Update available <code>{updateAvailable.backend}</code></span>
-          <button type="button" onClick={async () => {
-            try {
-              const regs = await (navigator.serviceWorker && navigator.serviceWorker.getRegistrations && navigator.serviceWorker.getRegistrations());
-              if (regs) { regs.forEach((r) => r.waiting && r.waiting.postMessage({ type: 'SKIP_WAITING' })); }
-              const cacheNames = await caches.keys();
-              await Promise.all(cacheNames.map((name) => caches.delete(name)));
-            } catch (err) { console.warn('cache clear failed', err); }
-            window.location.reload();
-          }}>Reload</button>
-        </div>
-      )}
-      {reconnectToastVisible && (
-        <div className="system-banner danger" role="alert">
-          <span>Connection lost. Retry?</span>
-          <button type="button" onClick={() => {
-            setReconnectToastVisible(false);
-            haptic(30);
-            try { handleMicClick(); } catch {}
-          }}>Retry</button>
-        </div>
-      )}
+      <SystemBanners
+        updateAvailable={updateAvailable}
+        reconnectToastVisible={reconnectToastVisible}
+        onDismissReconnect={() => {
+          setReconnectToastVisible(false);
+          haptic(30);
+        }}
+        onReconnectRetry={() => {
+          try { handleMicClick(); } catch {}
+        }}
+      />
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
-        <header className="clean-header">
-          <div className="header-actions">
-            <button className="icon-action" type="button" onClick={shareConversationRoom} aria-label="Share speaker room" title="Share speaker room">
-              <Share2 size={17} strokeWidth={2.4} aria-hidden="true" />
-              <span className="sr-only">{copiedKey === 'room' ? 'Room link copied' : 'Share speaker room'}</span>
-            </button>
-            {showInstallAction && (
-              <button className="icon-action install-action" type="button" onClick={installApp} aria-label="Install App" title="Install App">
-                <Download size={17} strokeWidth={2.4} aria-hidden="true" />
-                <span className="sr-only">Install App</span>
-              </button>
-            )}
-          </div>
-          <div className="brand-cluster">
-            <h1 className="app-title">
-              <span className="brand-mark">Anai</span>
-              <sub>nrldc</sub>
-            </h1>
-            <div className="connection-indicator" data-status={connectionStatus}>
-              <span className="connection-dot" />
-              <span className="connection-label">{connectionStatus}</span>
-            </div>
-          </div>
-        </header>
+        <AppHeader
+          connectionStatus={connectionStatus}
+          shareConversationRoom={shareConversationRoom}
+          copiedKey={copiedKey}
+          showInstallAction={showInstallAction}
+          installApp={installApp}
+        />
 
-        <section className="mic-panel">
-          <button
-            className={`mic-orb ${micState} ${perceivedListening ? 'listening-pulse' : ''}`}
-            style={{ '--voice-level': Math.max(0.02, Math.min(1, micLevel || 0)) }}
-            onClick={handleMicClick}
-            onPointerDown={handleMicPointerDown}
-            onPointerUp={handleMicPointerUp}
-            onPointerCancel={handleMicPointerUp}
-            onContextMenu={(event) => event.preventDefault()}
-            disabled={playing || (processing && !streaming)}
-            aria-label={micLabel}
-            aria-live="polite"
-          >
-            <span className="voice-field" aria-hidden="true" />
-            <span className="energy-rim" aria-hidden="true" />
-            <span className="orb-ring" />
-            <span className="orb-spin" />
-            <span className="mic-grille" aria-hidden="true">
-              {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => {
-                const centerBoost = 1 - Math.abs(4 - i) * 0.1;
-                const height = 22 + Math.max(0.02, micLevel || 0) * 70 * centerBoost;
-                return <span key={i} style={{ height: `${Math.min(92, height)}%`, '--delay': `${i * 38}ms` }} />;
-              })}
-            </span>
-            <Mic className="mic-icon" size={62} strokeWidth={2.3} aria-hidden="true" />
-            <span className="sr-only">{micLabel}</span>
-            <span className="rec-led">
-              <svg width="28" height="28" viewBox="0 0 28 28">
-                <circle cx="14" cy="14" r="12" fill="#ef4444" filter="drop-shadow(0 0 6px rgba(239,68,68,.7))" />
-                <circle cx="14" cy="14" r="5" fill="#ffffff" opacity="0.9" />
-              </svg>
-            </span>
-          </button>
-          <p className="mic-hint">{micHint}</p>
-          <p className="mic-label">{micLabel}</p>
-          <div className="live-hud" data-mode={liveHudMode.toLowerCase()} aria-label="Live interpreter state">
-            <span className="live-mode-chip">{liveHudMode}</span>
-            <div className="live-flow" aria-hidden="true">
-              {liveHudItems.map((item) => (
-                <span
-                  key={item.key}
-                  className={`live-flow-step ${item.active ? 'active' : ''}`}
-                  style={item.key === 'listen' ? { '--level': Math.max(0.08, Math.min(1, item.level || 0)) } : undefined}
-                >
-                  <item.Icon size={12} strokeWidth={2.6} aria-hidden="true" />
-                  <b>{item.label}</b>
-                </span>
-              ))}
-            </div>
-          </div>
-          {(streaming || recording) && (
-            <div className="voice-meter" aria-hidden="true">
-              {[0, 1, 2, 3, 4, 5, 6].map((i) => {
-                const threshold = (i + 1) / 8;
-                const active = micLevel >= threshold * 0.6;
-                const heightPx = Math.max(6, Math.min(28, 6 + micLevel * 28 * (i === 3 ? 1 : 0.65 + Math.abs(3 - i) * 0.08)));
-                return (
-                  <span key={i} className={active ? 'active' : ''} style={{ height: heightPx }} />
-                );
-              })}
-            </div>
-          )}
-          <div className="status-panel" data-tone={statusTone} aria-live="polite">
-            <div className="status-primary">
-              <Activity size={14} strokeWidth={2.6} aria-hidden="true" />
-              <span>{statusText}</span>
-            </div>
-            {(speakerSummary || timingLabel) && (
-              <div className="status-meta" aria-label="Interpreter details">
-                {speakerSummary && <span><UserRound size={12} strokeWidth={2.5} aria-hidden="true" />{speakerSummary}</span>}
-                {timingLabel && <span><Clock3 size={12} strokeWidth={2.5} aria-hidden="true" />{timingLabel}</span>}
-              </div>
-            )}
-          </div>
-          {audioReplayAvailable && autoPlayFailed && (
-            <button className="play-voice-button compact-voice-action" type="button" onClick={playTranslationAudio} disabled={playing}>
-              Play Voice
-            </button>
-          )}
-          {processing && !streaming && !playing && <p className="thinking">Translating...</p>}
-        </section>
+        <MicPanel
+          micState={micState}
+          micLevel={micLevel}
+          perceivedListening={perceivedListening}
+          micLabel={micLabel}
+          micHint={micHint}
+          handleMicClick={handleMicClick}
+          handleMicPointerDown={handleMicPointerDown}
+          handleMicPointerUp={handleMicPointerUp}
+          playing={playing}
+          processing={processing}
+          streaming={streaming}
+          recording={recording}
+          liveHudMode={liveHudMode}
+          liveHudItems={liveHudItems}
+          statusTone={statusTone}
+          statusText={statusText}
+          speakerSummary={speakerSummary}
+          timingLabel={timingLabel}
+          audioReplayAvailable={audioReplayAvailable}
+          autoPlayFailed={autoPlayFailed}
+          playTranslationAudio={playTranslationAudio}
+        />
 
-        <section className="language-dock" aria-label="Target language">
-          <div className="language-direction" aria-hidden="true">
-            <span className="route-pill">
-              <small>From</small>
-              <strong>{sourceLanguageLabel}</strong>
-            </span>
-            <span className="route-switch">
-              <ArrowLeftRight size={15} strokeWidth={2.4} />
-            </span>
-            <span className="route-pill target">
-              <small>To</small>
-              <strong>{targetLanguageLabel}</strong>
-            </span>
-          </div>
-          {brainUi.hints?.language_auto_repaired && (
-            <div className="language-repair-line" role="status">
-              <Check size={14} strokeWidth={2.6} />
-              <span>{brainUi.message || `Source set to ${sourceLanguageLabel}`}</span>
-            </div>
-          )}
-          <div className="language-options" role="radiogroup" aria-label="Target language">
-            {TARGET_LANGUAGE_OPTIONS.map((opt) => {
-              const active = targetLanguage === opt.code;
-              return (
-                <button
-                  key={opt.code}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => setTargetLanguage(opt.code)}
-                  disabled={recording || processing}
-                  className={active ? 'active' : ''}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
-          <div className="quick-actions" aria-label="Quick interpreter actions">
-            {quickActions.map((action) => (
-              <button
-                key={action.key}
-                type="button"
-                onClick={action.onClick}
-                disabled={action.disabled}
-                aria-label={action.label}
-                title={action.label}
-              >
-                <action.Icon size={14} strokeWidth={2.5} aria-hidden="true" />
-                <span>{action.label}</span>
-              </button>
-            ))}
-          </div>
-        </section>
+        <LanguageDock
+          sourceLanguageLabel={sourceLanguageLabel}
+          targetLanguageLabel={targetLanguageLabel}
+          targetLanguage={targetLanguage}
+          setTargetLanguage={setTargetLanguage}
+          recording={recording}
+          processing={processing}
+          brainUi={brainUi}
+          quickActions={quickActions}
+        />
 
-        <section className="translation-stack">
-          {brainUi.visible && (
-            <section className={`ai-recovery ${brainUi.hints?.language_auto_repaired ? 'success' : brainUi.hints?.ask_before_speaking || brainUi.skipTts ? 'guarded' : ''} ${brainUi.speakerShift ? 'shift' : ''}`} aria-label="AI recovery">
-              <div className="ai-recovery-main">
-                <span>{brainUi.message || brainModeLabel || 'Ready'}</span>
-                {brainModeLabel && <strong>{brainModeLabel}</strong>}
-              </div>
-              {brainUi.speakerShift && brainUi.activeSpeakerLabel && (
-                <div className="speaker-shift-line" role="status">
-                  <span>Active speaker</span>
-                  <strong>{brainUi.activeSpeakerLabel}</strong>
-                </div>
-              )}
-              {(visibleRepairOptions.length > 0 || visibleHighlightTerms.length > 0) && (
-                <div className="repair-chip-row">
-                  {visibleRepairOptions.map((option, index) => (
-                    <button
-                      type="button"
-                      key={`${option.type || 'repair'}-${option.word || option.language || index}`}
-                      className={option.applied ? 'applied' : ''}
-                      onClick={() => runRepairOption(option)}
-                    >
-                      {option.applied && <Check size={13} strokeWidth={2.8} />}
-                      <span>{compactRepairLabel(option)}</span>
-                    </button>
-                  ))}
-                  {visibleHighlightTerms.map((term) => (
-                    <span className="term-chip" key={term}>{term}</span>
-                  ))}
-                </div>
-              )}
-            </section>
-          )}
-          <article className={`transcript-card ${hasSourceText ? 'has-text' : ''}`} data-state={transcriptState}>
-            <span className="card-kicker"><Radio size={13} strokeWidth={2.5} aria-hidden="true" />{sourceLanguageLabel}</span>
-            <p className="transcript-text fade-in" key={sourceText}>
-              {sourceText}
-              {transcriptState === 'live' && <span className="live-cursor" aria-hidden="true" />}
-            </p>
-            {visibleHighlightTerms.length > 0 && (
-              <div className="term-row" aria-label="Exact terms">
-                {visibleHighlightTerms.map((term) => <span key={term}>{term}</span>)}
-              </div>
-            )}
-            {hasSourceText && (
-              <button
-                type="button"
-                onClick={() => copyToClipboard(sourceText, 'src')}
-                aria-label="Copy transcript"
-                className={`copy-action ${copiedKey === 'src' ? 'copied' : ''}`}
-              >
-                {copiedKey === 'src' ? <Check size={15} strokeWidth={2.6} /> : <Copy size={15} strokeWidth={2.4} />}
-                <span className="sr-only">{copiedKey === 'src' ? 'Copied transcript' : 'Copy transcript'}</span>
-              </button>
-            )}
-          </article>
-          <article className={`translation-card ${hasTranslatedText ? 'has-text' : ''}`} data-state={translationState}>
-            <span className="card-kicker"><Languages size={13} strokeWidth={2.5} aria-hidden="true" />{targetLanguageLabel}</span>
-            <p className="translation-text fade-in" key={translatedText}>
-              {translatedText}
-              {translationState === 'speaking' && <span className="live-cursor voice" aria-hidden="true" />}
-            </p>
-            {cameraActive && (
-              <div className="camera-preview">
-                <video ref={videoRef} muted playsInline />
-                {ocrText && <p className="transcript-text ocr-text">OCR: {ocrText}</p>}
-              </div>
-            )}
-            {hasTranslatedText && (
-              <button
-                type="button"
-                onClick={() => copyToClipboard(translatedText, 'tr')}
-                aria-label="Copy translation"
-                className={`copy-action ${copiedKey === 'tr' ? 'copied' : ''}`}
-              >
-                {copiedKey === 'tr' ? <Check size={15} strokeWidth={2.6} /> : <Copy size={15} strokeWidth={2.4} />}
-                <span className="sr-only">{copiedKey === 'tr' ? 'Copied translation' : 'Copy translation'}</span>
-              </button>
-            )}
-          </article>
-          {recentConversationTurns.length > 0 && (
-            <section className="conversation-timeline" aria-label="Recent conversation">
-              {recentConversationTurns.map((turn) => (
-                <article className="conversation-turn" key={turn.id}>
-                  <strong>{turn.speaker_label}</strong>
-                  <span>{turn.source_text}</span>
-                  <em>{turn.translated_text}</em>
-                </article>
-              ))}
-            </section>
-          )}
-          {(clarifyVisible || result?.clarify || (result?.cip_decision?.type === 'clarification')) && (
-            <div className="clarify-pill" role="status" aria-live="polite">
-              <span>{clarifyMessage || result?.clarify_message || 'Clarification requested'}</span>
-              <button type="button" onClick={() => {
-                setClarifyVisible(false);
-                haptic(20);
-                setPipelineStage('Refine requested');
-                setStatus('Please rephrase your request');
-                if (!streaming && !processing) {
-                  // Prompt new input via mic if idle
-                  try { handleMicClick(); } catch {}
-                }
-              }}>Refine phrase</button>
-            </div>
-          )}
-        </section>
+        <TranslationStack
+          brainUi={brainUi}
+          brainModeLabel={brainModeLabel}
+          visibleRepairOptions={visibleRepairOptions}
+          visibleHighlightTerms={visibleHighlightTerms}
+          runRepairOption={runRepairOption}
+          hasSourceText={hasSourceText}
+          transcriptState={transcriptState}
+          sourceLanguageLabel={sourceLanguageLabel}
+          sourceText={sourceText}
+          hasTranslatedText={hasTranslatedText}
+          translationState={translationState}
+          targetLanguageLabel={targetLanguageLabel}
+          translatedText={translatedText}
+          copyToClipboard={copyToClipboard}
+          copiedKey={copiedKey}
+          cameraActive={cameraActive}
+          videoRef={videoRef}
+          ocrText={ocrText}
+          recentConversationTurns={recentConversationTurns}
+          clarifyVisible={clarifyVisible}
+          clarifyMessage={clarifyMessage}
+          result={result}
+          setClarifyVisible={setClarifyVisible}
+          setPipelineStage={setPipelineStage}
+          setStatus={setStatus}
+          haptic={haptic}
+          streaming={streaming}
+          processing={processing}
+          handleMicClick={handleMicClick}
+        />
 
         {false && showDebugPanel && (
-          <section className="debug-panel">
-            <div className="debug-header">
-              <h3>Debug Panel</h3>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <button type="button" onClick={loadDiagnostics}>Refresh</button>
-                <button type="button" onClick={() => setShowDebugPanel(false)}>×</button>
-              </div>
-            </div>
-            <div className="debug-grid">
-              <div className="debug-item">
-                <span className="debug-label">Connection:</span>
-                <span className="debug-value">{connectionStatus}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">Mic Permission:</span>
-                <span className="debug-value">{micPermission}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">Audio Context:</span>
-                <span className="debug-value">{audioContextState}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">Audio Unlocked:</span>
-                <span className="debug-value">{mobileAudioUnlocked ? 'Yes' : 'No'}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">Audio Replay:</span>
-                <span className="debug-value">{audioReplayAvailable ? 'Yes' : 'No'}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">TTS Queue:</span>
-                <span className="debug-value">{ttsQueueLength}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">TTS Playing:</span>
-                <span className="debug-value">{ttsPlaying ? 'Yes' : 'No'}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">Pipeline Stage:</span>
-                <span className="debug-value">{pipelineStage}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">Status:</span>
-                <span className="debug-value">{status}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">Backend Diagnostics:</span>
-                <span className="debug-value">{diagnosticsStatus}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">CIP Mode:</span>
-                <span className="debug-value">{diagnostics?.cip?.mode || '-'}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">CIP Reachable:</span>
-                <span className="debug-value" style={{ color: diagnostics?.cip?.reachable ? '#86efac' : '#fca5a5' }}>
-                  {diagnostics?.cip ? (diagnostics.cip.reachable ? 'Yes' : 'No') : '-'}
-                </span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">CIP Latency:</span>
-                <span className="debug-value">{diagnostics?.cip?.latency_ms ?? '-'}{diagnostics?.cip?.latency_ms != null ? ' ms' : ''}</span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">CIP OpenAI:</span>
-                <span className="debug-value" style={{ color: diagnostics?.cip?.openai?.translator?.configured ? '#86efac' : '#fca5a5' }}>
-                  {diagnostics?.cip?.openai?.translator ? (diagnostics.cip.openai.translator.configured ? 'Configured' : 'Not configured') : '-'}
-                </span>
-              </div>
-              <div className="debug-item">
-                <span className="debug-label">CIP Translator:</span>
-                <span className="debug-value">{diagnostics?.cip?.openai?.translator?.last || diagnostics?.cip?.openai?.error || '-'}</span>
-              </div>
-              <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
-                <span className="debug-label">CIP URL:</span>
-                <span className="debug-value" style={{ color: diagnostics?.cip?.process_url ? '#93c5fd' : undefined }}>
-                  {diagnostics?.cip?.process_url || '-'}
-                </span>
-              </div>
-              {diagnostics?.cip?.error && (
-                <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
-                  <span className="debug-label">CIP Error:</span>
-                  <span className="debug-value" style={{ color: '#fca5a5' }}>{diagnostics.cip.error}</span>
-                </div>
-              )}
-              {result?.translated_by && (
-                <div className="debug-item">
-                  <span className="debug-label">Translated by:</span>
-                  <span className="debug-value">{result.translated_by}</span>
-                </div>
-              )}
-              {result?.cip_decision && (
-                <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
-                  <span className="debug-label">CIP Decision:</span>
-                  <span className="debug-value" style={{ color: '#93c5fd' }}>
-                    {JSON.stringify(result.cip_decision)}
-                  </span>
-                </div>
-              )}
-              {lastAudioError && (
-                <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
-                  <span className="debug-label">Last Error:</span>
-                  <span className="debug-value" style={{ color: '#fca5a5' }}>
-                    {lastAudioError.type}: {lastAudioError.name || ''} {lastAudioError.message || ''}
-                  </span>
-                </div>
-              )}
-              <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
-                <span className="debug-label">Build:</span>
-                <span className="debug-value" style={{ color: '#86efac' }}>ios-audio-fix-v3</span>
-              </div>
-              <div className="debug-item" style={{ gridColumn: '1 / -1' }}>
-                <span className="debug-label">iOS path:</span>
-                <span className="debug-value">
-                  {isIosOrSafariRecorder() ? (EXPERIMENTAL_IOS_STREAMING ? 'WebSocket streaming (experimental)' : 'HTTP record-and-upload (no chunked WS)') : 'WebSocket streaming'}
-                </span>
-              </div>
-            </div>
-          </section>
+          <DebugPanel
+            onClose={() => setShowDebugPanel(false)}
+            loadDiagnostics={loadDiagnostics}
+            connectionStatus={connectionStatus}
+            micPermission={micPermission}
+            audioContextState={audioContextState}
+            mobileAudioUnlocked={mobileAudioUnlocked}
+            audioReplayAvailable={audioReplayAvailable}
+            ttsQueueLength={ttsQueueLength}
+            ttsPlaying={ttsPlaying}
+            pipelineStage={pipelineStage}
+            status={status}
+            diagnosticsStatus={diagnosticsStatus}
+            diagnostics={diagnostics}
+            result={result}
+            lastAudioError={lastAudioError}
+          />
         )}
 
       </section>
