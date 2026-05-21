@@ -924,6 +924,7 @@ async def websocket_assistant(websocket: WebSocket):
     ok, identity = await authenticate_websocket(websocket)
     if not ok:
         return
+    await websocket.accept()
     metrics["websocket_connections"] += 1
     logger.info("assistant_websocket_connected identity=%s", identity)
     if not naia_assistant.is_available():
@@ -976,4 +977,4 @@ def frontend_dev_asset(full_path: str, request: Request):
     embedded_frontend = _embedded_frontend_response(full_path)
     if embedded_frontend:
         return embedded_frontend
-    return _proxy_frontend(request, full_path)
+    return _proxy_
