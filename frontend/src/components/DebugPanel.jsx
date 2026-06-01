@@ -32,6 +32,7 @@ export default function DebugPanel({
   const cip = diagnostics?.cip;
   const ailang = diagnostics?.ailang;
   const ailangConfig = ailang?.config;
+  const ailangHealth = diagnostics?.ailang_health;
   return (
     <section className="debug-panel">
       <div className="debug-header">
@@ -106,6 +107,35 @@ export default function DebugPanel({
           value={ailang?.bridge_stats ? 'Loaded' : 'Not loaded'}
           color={ailang?.bridge_stats ? '#86efac' : '#fca5a5'}
         />
+        <DebugItem
+          label="AILang Health:"
+          value={ailangHealth?.overall_status || '-'}
+          color={
+            ailangHealth?.overall_status === 'healthy' ? '#86efac' :
+            ailangHealth?.overall_status === 'degraded' ? '#fcd34d' :
+            ailangHealth?.overall_status === 'critical' ? '#fca5a5' :
+            undefined
+          }
+        />
+        {ailangHealth && (
+          <>
+            <DebugItem
+              label="AILang Alerts:"
+              value={ailangHealth.total_alerts}
+              color={ailangHealth.total_alerts > 0 ? '#fca5a5' : '#86efac'}
+            />
+            <DebugItem
+              label="AILang Critical:"
+              value={ailangHealth.critical_alerts}
+              color={ailangHealth.critical_alerts > 0 ? '#fca5a5' : '#86efac'}
+            />
+            <DebugItem
+              label="AILang Warnings:"
+              value={ailangHealth.warning_alerts}
+              color={ailangHealth.warning_alerts > 0 ? '#fcd34d' : '#86efac'}
+            />
+          </>
+        )}
         {result?.translated_by && (
           <DebugItem label="Translated by:" value={result.translated_by} />
         )}

@@ -268,6 +268,11 @@ def diagnostics(request: Request):
     from backend.config import ailang_diagnostics
     ailang_config = ailang_diagnostics()
     
+    # Get AILang health status
+    ailang_health = None
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        ailang_health = pipeline.ailang_pipeline.get_health_status()
+    
     return {
         "status": "ok",
         "ready": runtime_state["ready"],
@@ -278,7 +283,7 @@ def diagnostics(request: Request):
         "voice_warmup": runtime_state.get("voice_warmup"),
         "cip": cip_health_snapshot(),
         "stt_provider": stt_provider,
-        "ailang": {**ailang_stats, "config": ailang_config},
+        "ailang": {**ailang_stats, "config": ailang_config, "health": ailang_health},
         "service_health": service_health_manager.get_all_health_summaries(),
         "streaming": {
             "websocket_path": "/ws/audio",
