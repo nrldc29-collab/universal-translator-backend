@@ -21,6 +21,22 @@ Example usage:
         if event.type == "transcript":
             print(event.text)
 """
-from backend.stt_client.client import STTEvent, StreamingSTTClient
+from backend.stt_client.client import (
+    STTError,
+    STTConnectionError,
+    STTAuthenticationError,
+    STTTranscriptionError,
+    STTTimeoutError,
+    STTEvent,
+    StreamingSTTClient,
+)
 
-__all__ = ["STTEvent", "StreamingSTTClient"]
+__all__ = [
+    "STTError",
+    "STTConnectionError",
+    "STTAuthenticationError",
+    "STTTranscriptionError",
+    "STTTimeoutError",
+    "STTEvent",
+    "StreamingSTTClient",
+]

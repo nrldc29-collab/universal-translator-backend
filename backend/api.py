@@ -48,8 +48,10 @@ from backend.config import (
     get_whisper_compute_type,
     get_whisper_device,
     get_whisper_model_size,
+    get_google_tts_api_key,
 )
 from backend.service_health import get_service_health_manager
+from translation import HybridTranslator, LightweightTranslator, MarianTranslator
 from backend.pipeline import AnaiTranslatorPipeline
 from backend.observability import observability
 from backend.security import WEBSOCKET_AUTH_RELEASE, authenticate_http, authenticate_user, authenticate_websocket, usage_limiter
@@ -102,6 +104,22 @@ from backend.api_health import (
 )
 
 
+def _translator_for_request(mode: str | None, provider: str | None):
+    """Return a fresh translator instance based on per-request mode/provider hints.
+    Falls back to the global pipeline translator when no override is requested."""
+    if not mode and not provider:
+        return None
+    p = (provider or "").lower()
+    m = (mode or "").lower()
+    if p in ("marian", "local") or m == "accurate":
+        return MarianTranslator()
+    if p in ("lightweight",) or m == "fast":
+        return LightweightTranslator()
+    if p in ("hybrid",) or m == "balanced":
+        return HybridTranslator()
+    return None
+
+
 VOICE_WARMUP_TEXTS = {
     "es": ["Hola, ¿cómo estás?"],
     "ht": ["Bonjou, kijan ou ye?"],
@@ -147,6 +165,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# AILang integration (gracefully degrades if not installed)
+try:
+    from ailang_integration.runtime.api_routes import register_ailang_routes, check_ailang_available
+    if check_ailang_available():
+        register_ailang_routes(app)
+        logger.info("AILang integration routes registered")
+    else:
+        logger.info("AILang not installed — integration disabled (graceful degradation)")
+except ImportError:
+    logger.info("AILang integration not available (optional dependency)")
+
 pipeline = AnaiTranslatorPipeline()
 vad = SileroVoiceActivityDetector()
 conversation_brain = ConversationBrain()
@@ -315,7 +345,7 @@ def _normalize_audio_response_format(response_format: str | None) -> str:
     return normalized
 
 
-def _cached_tts_payload(text: str, language: str, response_format: str) -> dict:
+def _cached_tts_payload(text: str, language: str, response_format: str, google_api_key: str | None = None) -> dict:
     cache_dir = Path("models/tts/cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_key = hashlib.sha256(f"{language}\0{text}".encode("utf-8")).hexdigest()
@@ -327,7 +357,7 @@ def _cached_tts_payload(text: str, language: str, response_format: str) -> dict:
     if not cache_hit:
         temp_path = Path("models/tts") / f"{uuid4()}.wav"
         temp_path.parent.mkdir(parents=True, exist_ok=True)
-        rendered_path = Path(pipeline.tts.synthesize(text, str(temp_path), language=language) or temp_path)
+        rendered_path = Path(pipeline.tts.synthesize(text, str(temp_path), language=language, google_api_key=google_api_key) or temp_path)
         audio_bytes = rendered_path.read_bytes()
         if len(audio_bytes) < 100:
             raise RuntimeError("TTS returned empty audio.")
@@ -432,21 +462,38 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
     usage_limiter.track(identity, "text_translations")
     request.source_language = _normalize_language(request.source_language, "en")
     request.target_language = _normalize_language(request.target_language, "es")
-    logger.info("text_translation identity=%s source=%s target=%s", identity, request.source_language, request.target_language)
+    logger.info(
+        "text_translation identity=%s source=%s target=%s mode=%s provider=%s",
+        identity, request.source_language, request.target_language,
+        request.translation_mode or "default", request.translation_provider or "default",
+    )
     audio_response_format = _normalize_audio_response_format(request.audio_response_format) if request.synthesize_audio else "base64"
+    _google_key = (request.google_tts_api_key or "").strip() or None
     try:
         # Run pipeline up to translation (no synth), then refine, then optionally TTS
         # Register default speaker 'A' and lock/request language
         speaker_id = "A"
         if not speaker_memory.get_language(speaker_id):
             speaker_memory.register(speaker_id, language=request.source_language or detect_language_heuristic(request.text))
-        interim = pipeline.translate_text(
-            text=request.text,
-            source_language=request.source_language,
-            target_language=request.target_language,
-            tone=request.tone,
-            synthesize_audio=False,
-        )
+        # Use a per-request translator if mode/provider was specified by the client
+        req_translator = _translator_for_request(request.translation_mode, request.translation_provider)
+        if req_translator:
+            interim = pipeline.translate_text_with(
+                req_translator,
+                text=request.text,
+                source_language=request.source_language,
+                target_language=request.target_language,
+                tone=request.tone,
+                synthesize_audio=False,
+            )
+        else:
+            interim = pipeline.translate_text(
+                text=request.text,
+                source_language=request.source_language,
+                target_language=request.target_language,
+                tone=request.tone,
+                synthesize_audio=False,
+            )
         user_profile = profiles.get(identity)
         # Let the UT pipeline produce the translation first, then let CIP make
         # confidence, clarification, and conversation-routing decisions.
@@ -484,7 +531,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         audio_path = None
         audio_payload = None
         if request.synthesize_audio and final_text and not cip_clarify:
-            audio_payload = _cached_tts_payload(final_text, request.target_language, audio_response_format)
+            audio_payload = _cached_tts_payload(final_text, request.target_language, audio_response_format, google_api_key=_google_key)
             audio_path = audio_payload["audio_output_path"]
         result = type(interim)(
             source_text=request.text,
@@ -502,7 +549,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "text", "source": request.text, "translated": result.translated_text}]
         profiles.save(identity, user_profile)
         speaker_memory.add_message(speaker_id, request.text)
-        response_dict = result.__dict__
+        response_dict = dict(result.__dict__)
         apply_cip_decision(response_dict, cip)
         if conf_score < 0.4 and not response_dict.get("clarify"):
             response_dict["clarify"] = True
@@ -520,7 +567,15 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
             except (OSError, IOError) as exc:
                 logger.warning("failed_to_embed_text_audio identity=%s error=%s", identity, exc)
         if request.session_id and not response_dict.get("clarify"):
-            semantic_context["cip"] = cip.get("analysis") if isinstance(cip, dict) else None
+            if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
+                _a = cip["analysis"]
+                semantic_context["cip"] = {
+                    "intent": _a.get("intent"),
+                    "tone": _a.get("tone"),
+                    "confidence": _a.get("confidence"),
+                }
+            else:
+                semantic_context["cip"] = None
             speaker_profile = session_registry.resolve_auto_speaker(
                 request.session_id,
                 identity,
@@ -539,14 +594,18 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 device_id=speaker_profile["device_id"],
                 speaker_label=speaker_profile["speaker_label"],
             )
+            session_payload = {
+                k: v for k, v in shared_session.items() if k != "history"
+            }
+            session_payload["history"] = shared_session.get("history", [])[-10:]
             response_dict.update({
                 "speaker": speaker_profile["speaker"],
                 "speaker_label": speaker_profile["speaker_label"],
                 "speaker_index": speaker_profile["speaker_index"],
                 "device_id": speaker_profile["device_id"],
                 "detection": speaker_profile["detection"],
-                "semantic_context": semantic_context,
-                "session": shared_session,
+                "semantic_context": dict(semantic_context),
+                "session": session_payload,
             })
         return response_dict
     except (RuntimeError, ValueError, ConnectionError, TimeoutError):
@@ -648,7 +707,7 @@ async def translate_audio(
         observability.observe_latency("audio_translation", time() - started_at)
         observability.record_event("audio_translation", identity=identity, latency_seconds=time() - started_at)
         usage_limiter.track_audio(identity, estimated_seconds, "audio_translations")
-        response_dict = result.__dict__
+        response_dict = dict(result.__dict__)
         apply_cip_decision(response_dict, cip)
         if conf_score < 0.4 and not response_dict.get("clarify"):
             response_dict["clarify"] = True
@@ -977,4 +1036,4 @@ def frontend_dev_asset(full_path: str, request: Request):
     embedded_frontend = _embedded_frontend_response(full_path)
     if embedded_frontend:
         return embedded_frontend
-    return _proxy_
+    return _proxy_frontend(request, full_path)

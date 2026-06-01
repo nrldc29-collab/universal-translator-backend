@@ -11,6 +11,7 @@ can share a single source of truth.
 
 from __future__ import annotations
 
+import json
 from time import time
 from urllib.error import URLError
 from urllib.request import Request as UrlRequest, urlopen
@@ -41,7 +42,12 @@ metrics: dict = {
 
 
 def stt_provider_health_snapshot(timeout_seconds: float = 1.5) -> dict:
-    """Probe the configured STT provider and return a structured snapshot."""
+    """Probe the configured STT provider and return a structured snapshot.
+
+    Uses the provider's ``/health`` endpoint (which returns connection stats
+    in the updated v0.2 server) and falls back gracefully to ``/health/live``
+    if the richer endpoint is unavailable.
+    """
 
     mode = get_stt_provider()
     snapshot = {
@@ -64,7 +70,14 @@ def stt_provider_health_snapshot(timeout_seconds: float = 1.5) -> dict:
             snapshot["reachable"] = 200 <= resp.status < 500
             snapshot["status_code"] = resp.status
             snapshot["latency_ms"] = round((time() - started_at) * 1000)
-    except (URLError, TimeoutError, ConnectionError) as exc:
+            try:
+                body = json.loads(resp.read().decode("utf-8"))
+                snapshot["active_connections"] = body.get("active_connections")
+                snapshot["max_active_connections"] = body.get("max_active_connections")
+                snapshot["provider_app"] = body.get("app")
+            except Exception:
+                pass
+    except (URLError, TimeoutError, ConnectionError, OSError) as exc:
         snapshot["reachable"] = False
         snapshot["error"] = exc.__class__.__name__
         snapshot["latency_ms"] = round((time() - started_at) * 1000)

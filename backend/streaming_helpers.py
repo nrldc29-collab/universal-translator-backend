@@ -11,6 +11,7 @@ Each helper is small, pure, and side-effect-free except for
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import unicodedata
 
@@ -151,6 +152,34 @@ def extract_client_voice_active(payload: dict):
     return payload.get("voice_active", payload.get("client_voice_active"))
 
 
+def parse_provider_event(raw_message) -> dict | None:
+    """Parse a raw STT provider WebSocket message into a normalised event dict.
+
+    Bytes are decoded to UTF-8. The ``type`` field is normalised:
+    ``transcript`` events are promoted to ``transcript.final`` or
+    ``transcript.partial`` based on their ``is_final`` flag so that callers
+    can use a simple string match without re-implementing that logic.
+
+    Returns ``None`` for messages that cannot be decoded or parsed.
+    """
+
+    if isinstance(raw_message, bytes):
+        raw_message = raw_message.decode("utf-8", errors="ignore")
+    try:
+        event = json.loads(raw_message)
+    except (TypeError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(event, dict):
+        return None
+    event_type = event.get("type", "unknown")
+    if event_type == "transcript":
+        if event.get("is_final") is True:
+            event["type"] = "transcript.final"
+        else:
+            event["type"] = "transcript.partial"
+    return event
+
+
 class PipelineStepTimeout(RuntimeError):
     """Raised when a single pipeline step exceeds its budget."""
 
@@ -182,6 +211,7 @@ __all__ = [
     "is_speakable_live_delta",
     "audio_suffix_for_mime",
     "extract_client_voice_active",
+    "parse_provider_event",
     "PipelineStepTimeout",
     "run_pipeline_step",
     "call_cip_brain",

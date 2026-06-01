@@ -1,4 +1,27 @@
 import os
+from pathlib import Path
+
+
+def _load_dotenv_file() -> None:
+    """Load key=value pairs from .env into os.environ (existing env vars win)."""
+    env_file = Path(__file__).parent.parent / ".env"
+    if not env_file.exists():
+        return
+    try:
+        for raw_line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        pass
+
+
+_load_dotenv_file()
 
 
 def _to_int(name: str, default: int, minimum: int | None = None, maximum: int | None = None) -> int:
@@ -237,7 +260,7 @@ def get_partial_translation_min_words() -> int:
 
 
 def get_partial_tts_mode() -> bool:
-    return _to_bool("PARTIAL_TTS_MODE", True)
+    return _to_bool("PARTIAL_TTS_MODE", False)
 
 
 def get_vad_recent_chunks() -> int:
@@ -331,3 +354,28 @@ def get_stt_provider_ws_url() -> str:
 
 def get_stt_provider_api_key() -> str:
     return os.getenv("STT_PROVIDER_API_KEY", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Google Cloud Text-to-Speech
+# ---------------------------------------------------------------------------
+
+
+def get_google_tts_api_key() -> str:
+    return os.getenv("GOOGLE_TTS_API_KEY", "").strip()
+
+
+def get_prefer_cloud_tts() -> bool:
+    return _to_bool("PREFER_CLOUD_TTS", True)
+
+
+def google_tts_diagnostics() -> dict:
+    """Return Google TTS configuration status without exposing the API key."""
+    api_key = get_google_tts_api_key()
+    has_key = bool(api_key) and not api_key.startswith("your_api")
+    prefer_cloud = get_prefer_cloud_tts()
+    return {
+        "configured": has_key,
+        "prefer_cloud": prefer_cloud,
+        "enabled": has_key and prefer_cloud,
+    }

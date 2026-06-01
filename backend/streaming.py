@@ -16,6 +16,7 @@ from backend.memory import ConversationMemory
 from backend.speakers import SpeakerMemory, detect_language_heuristic
 from backend.refine import refine_translation
 from backend.latency import LatencyEngine
+from backend.stream_session import StreamSessionState
 from backend.audio import process_wav_for_stt, compute_rms
 from backend.cip_bridge import choose_translation, get_cip_confidence, get_cip_decision, is_cip_clarification
 from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
@@ -29,6 +30,7 @@ from backend.config import (
     get_partial_tts_mode,
     get_partial_stt_interval_ms,
     get_partial_stt_min_bytes,
+    get_partial_translation_min_words,
     get_speech_merge_ms,
     get_stream_buffer_max_mb,
     get_tts_chunk_chars,
@@ -47,6 +49,54 @@ from starlette.websockets import WebSocketDisconnect
 
 from backend.pipeline import AnaiTranslatorPipeline
 from speech import SileroVoiceActivityDetector
+
+# Circuit breaker for resilient service calls
+class CircuitBreaker:
+    def __init__(self, failure_threshold=5, recovery_timeout=30.0, half_open_max_calls=3):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.half_open_max_calls = half_open_max_calls
+        self.failures = 0
+        self.last_failure_time = 0.0
+        self.state = 'closed'  # closed, open, half_open
+        self.half_open_calls = 0
+        self._lock = asyncio.Lock()
+    
+    async def call(self, func, *args, **kwargs):
+        async with self._lock:
+            if self.state == 'open':
+                if time() - self.last_failure_time >= self.recovery_timeout:
+                    self.state = 'half_open'
+                    self.half_open_calls = 0
+                else:
+                    raise Exception(f"Circuit breaker open - service temporarily unavailable")
+            
+            if self.state == 'half_open' and self.half_open_calls >= self.half_open_max_calls:
+                raise Exception(f"Circuit breaker half-open limit reached")
+            
+            if self.state == 'half_open':
+                self.half_open_calls += 1
+        
+        try:
+            result = await func(*args, **kwargs)
+            async with self._lock:
+                if self.state == 'half_open':
+                    self.state = 'closed'
+                    self.failures = 0
+                    self.half_open_calls = 0
+            return result
+        except Exception as e:
+            async with self._lock:
+                self.failures += 1
+                self.last_failure_time = time()
+                if self.failures >= self.failure_threshold:
+                    self.state = 'open'
+            raise e
+
+# Global circuit breakers for critical services
+tts_circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=15.0)
+translation_circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=10.0)
+stt_circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=5.0)
 from speech.audio_decode import transcode_to_wav
 
 # Pure helpers + pipeline-step plumbing live in a sibling module so this
@@ -62,6 +112,7 @@ from backend.streaming_helpers import (
     live_translation_delta,
     normalize_live_text,
     normalized_word,
+    parse_provider_event,
     run_pipeline_step,
     should_translate_partial,
     stream_debug_log,
@@ -105,6 +156,7 @@ async def websocket_audio_translation(
 ):
     await websocket.accept()
     observability.increment("websocket_connects_total")
+    logger.info("websocket_audio_connected partial_tts_mode=%s", get_partial_tts_mode())
     await websocket.send_json({"type": "ready", "message": "Audio streaming connected."})
     memory = memory or ConversationMemory()
     speaker_memory = speaker_memory or SpeakerMemory()
@@ -145,11 +197,18 @@ async def websocket_audio_translation(
     confidence_engine = ConfidenceEngine()
     pipeline_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
     tts_active = False
+    partial_tts_active = False
+    last_partial_tts_at = 0.0
+    phrase_accumulation_buffer = ""
+    phrase_accumulation_start = 0.0   # when accumulation began (never reset mid-speech)
+    PARTIAL_TTS_MIN_INTERVAL = 0.8    # fire at most every 800ms
+    PARTIAL_TTS_MIN_WORDS = 2         # need at least 2 words before speaking
+    PARTIAL_TTS_MAX_WORDS = 15        # cap phrase length
     turn_announced_for_segment = False
     active_speaker_notice_at = 0.0
 
     def reset_segment_state() -> None:
-        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count, partial_text, partial_buffer, partial_tts_text, last_partial_at, last_sent_translation, last_active_speaker, turn_announced_for_segment, segment_generation
+        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count, partial_text, partial_buffer, partial_tts_text, last_partial_at, last_sent_translation, last_active_speaker, turn_announced_for_segment, segment_generation, phrase_accumulation_buffer, phrase_accumulation_start
         audio_chunks = bytearray()
         recent_chunks = []
         speech_started = False
@@ -164,6 +223,8 @@ async def websocket_audio_translation(
         last_active_speaker = None
         turn_announced_for_segment = False
         segment_generation += 1
+        phrase_accumulation_buffer = ""
+        phrase_accumulation_start = 0.0
 
     async def announce_active_speaker(reason: str, audio_level: float | None = None) -> bool:
         nonlocal turn_announced_for_segment, active_speaker_notice_at
@@ -277,7 +338,7 @@ async def websocket_audio_translation(
         partial_generation: int,
         partial_started_at: float,
     ) -> None:
-        nonlocal partial_text, partial_buffer, partial_tts_text, last_sent_translation, last_active_speaker, tts_active
+        nonlocal partial_text, partial_buffer, partial_tts_text, last_sent_translation, last_active_speaker, tts_active, partial_tts_active
         upload_dir = Path("models/uploads")
         upload_dir.mkdir(parents=True, exist_ok=True)
         partial_audio_path = upload_dir / f"{uuid4()}-partial{partial_suffix}"
@@ -349,24 +410,25 @@ async def websocket_audio_translation(
                 await websocket.send_json({"type": "partial_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": refined_partial})
                 await websocket.send_json({"type": "live_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": refined_partial})
             live_tts_delta = live_translation_delta(partial_tts_text, refined_partial)
-            if get_partial_tts_mode() and fast_system and is_speakable_live_delta(live_tts_delta):
+            tts_text_to_speak = live_tts_delta if is_speakable_live_delta(live_tts_delta) else (refined_partial if refined_partial != partial_tts_text else "")
+            if get_partial_tts_mode() and is_speakable_live_delta(tts_text_to_speak):
                 try:
                     partial_tts_path = await run_pipeline_step(
                         "partial TTS",
                         lambda: pipeline.tts.synthesize(
-                            live_tts_delta,
+                            tts_text_to_speak,
                             f"models/tts/{uuid4()}-partial.wav",
                             language=partial_target_language,
                         ),
                     )
-                except (OSError, RuntimeError, ValueError) as exc:
+                except Exception as exc:
                     logger.debug("partial_tts_failed error=%s", exc)
                     partial_tts_path = None
                 if partial_tts_path:
                     try:
                         if partial_generation == segment_generation:
                             partial_tts_text = refined_partial
-                            tts_active = True
+                            partial_tts_active = True
                             partial_tts_audio = Path(partial_tts_path).read_bytes()
                             await websocket.send_json({"type": "tts_start", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "chunks": 1, "partial": True})
                             await websocket.send_json({
@@ -375,7 +437,7 @@ async def websocket_audio_translation(
                                 "speaker_label": partial_speaker_label,
                                 "index": 1,
                                 "total": 1,
-                                "text": live_tts_delta,
+                                "text": tts_text_to_speak,
                                 "live_translation_text": refined_partial,
                                 "audio_base64": base64.b64encode(partial_tts_audio).decode("ascii"),
                                 "mime_type": "audio/wav",
@@ -383,7 +445,7 @@ async def websocket_audio_translation(
                             })
                             await websocket.send_json({"type": "tts_end", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "partial": True})
                     finally:
-                        tts_active = False
+                        partial_tts_active = False
                         Path(partial_tts_path).unlink(missing_ok=True)
             observability.record_event("near_zero_partial", identity=identity, speaker=partial_speaker, latency_seconds=time() - partial_started_at)
 
@@ -426,10 +488,13 @@ async def websocket_audio_translation(
         while live_text_pending is not None:
             payload = live_text_pending
             live_text_pending = None
-            await run_live_text_pipeline(payload)
+            try:
+                await run_live_text_pipeline(payload)
+            except Exception as exc:
+                logger.warning("live_text_queue_error error=%s", exc)
 
     async def run_live_text_pipeline(payload: dict) -> None:
-        nonlocal last_sent_translation, partial_tts_text, tts_active
+        nonlocal last_sent_translation, partial_tts_text, tts_active, partial_tts_active, last_partial_tts_at, phrase_accumulation_buffer, phrase_accumulation_start
         text_value = payload["text"]
         payload_revision = payload["revision"]
         live_source_language = payload["source_language"]
@@ -448,11 +513,8 @@ async def websocket_audio_translation(
             if payload_revision == live_text_revision:
                 await websocket.send_json({"type": "stage", "stage": "live_text_timeout", "message": str(exc)})
             return
-        except (RuntimeError, ValueError, KeyError, ConnectionError) as exc:
-            logger.debug("live_text_processing_failed error=%s", exc)
-            return
-
-        if payload_revision < live_text_revision and live_text_pending is not None:
+        except Exception as exc:
+            logger.warning("live_text_translation_failed error=%s", exc)
             return
 
         if not speaker_memory.get_language(live_speaker):
@@ -480,29 +542,68 @@ async def websocket_audio_translation(
             })
 
         live_tts_delta = live_translation_delta(partial_tts_text, refined)
+        # Only speak new words (real delta). Never fall back to full sentence —
+        # that causes repeating from the start when translation rewrites itself.
         if not get_partial_tts_mode() or not is_speakable_live_delta(live_tts_delta):
             return
+        candidate = live_tts_delta
 
-        try:
-            live_tts_path = await run_pipeline_step(
-                "live text TTS",
-                lambda: pipeline.tts.synthesize(
-                    live_tts_delta,
-                    f"models/tts/{uuid4()}-live-text.wav",
-                    language=live_target_language,
-                ),
-            )
-        except (OSError, RuntimeError, ValueError) as exc:
-            logger.debug("live_tts_failed error=%s", exc)
-            live_tts_path = None
+        # Accumulate into buffer — only start the clock on first text, never reset mid-speech
+        now = time()
+        if not phrase_accumulation_buffer:
+            phrase_accumulation_start = now
+        phrase_accumulation_buffer = candidate
+
+        # Fire when: interval elapsed OR enough words accumulated
+        elapsed = now - last_partial_tts_at
+        word_count = len(phrase_accumulation_buffer.split())
+        time_accumulating = now - phrase_accumulation_start
+
+        too_soon = elapsed < PARTIAL_TTS_MIN_INTERVAL
+        too_short = word_count < PARTIAL_TTS_MIN_WORDS
+        # Force fire if we've been accumulating > 2s regardless of word count
+        force = time_accumulating >= 1.5 and word_count >= 2
+
+        if too_soon and not force:
+            return
+        if too_short and not force:
+            return
+
+        words = phrase_accumulation_buffer.split()
+        live_tts_to_speak = " ".join(words[:PARTIAL_TTS_MAX_WORDS])
+        logger.info("live_tts_firing words=%d elapsed=%.1fs text=%r", word_count, elapsed, live_tts_to_speak[:60])
+        phrase_accumulation_buffer = ""
+        phrase_accumulation_start = 0.0
+
+        # TTS with circuit breaker and retry logic
+        live_tts_path = None
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                live_tts_path = await tts_circuit_breaker.call(
+                    run_pipeline_step,
+                    "live text TTS",
+                    lambda: pipeline.tts.synthesize(
+                        live_tts_to_speak,
+                        f"models/tts/{uuid4()}-live-text.wav",
+                        language=live_target_language,
+                    ),
+                )
+                break  # Success - exit retry loop
+            except Exception as exc:
+                logger.warning("live_tts_failed attempt=%d/%d error=%s", attempt + 1, max_retries, exc)
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.1 * (2 ** attempt))  # Exponential backoff: 100ms, 200ms
+                else:
+                    logger.error("live_tts_failed_all_attempts error=%s", exc)
+                    live_tts_path = None
         if not live_tts_path:
             return
 
         try:
-            if payload_revision < live_text_revision and live_text_pending is not None:
-                return
             partial_tts_text = refined
-            tts_active = True
+            last_partial_tts_at = time()
+            partial_tts_active = True
             audio_bytes = Path(live_tts_path).read_bytes()
             if len(audio_bytes) < 100:
                 return
@@ -520,7 +621,7 @@ async def websocket_audio_translation(
                 "speaker_label": live_speaker_label,
                 "index": 1,
                 "total": 1,
-                "text": live_tts_delta,
+                "text": live_tts_to_speak,
                 "live_translation_text": refined,
                 "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
                 "mime_type": "audio/wav",
@@ -540,7 +641,7 @@ async def websocket_audio_translation(
                 "ms": round((time() - payload["started_at"]) * 1000),
             })
         finally:
-            tts_active = False
+            partial_tts_active = False
             Path(live_tts_path).unlink(missing_ok=True)
 
     async def finalize_segment(segment: dict):

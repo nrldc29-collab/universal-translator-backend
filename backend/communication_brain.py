@@ -155,6 +155,20 @@ def extract_protected_terms(text: str) -> list[dict[str, str]]:
     protected: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
 
+    # Common words that are capitalized at sentence start but aren't names/places
+    COMMON_SENTENCE_STARTERS = {
+        "hello", "hi", "hey", "good", "morning", "afternoon", "evening", "night",
+        "where", "what", "when", "why", "how", "who", "which", "whose",
+        "thank", "thanks", "please", "yes", "no", "ok", "okay",
+        "i", "you", "he", "she", "it", "we", "they",
+        "my", "your", "his", "her", "its", "our", "their",
+        "the", "a", "an", "this", "that", "these", "those",
+        "and", "but", "or", "so", "if", "then", "than",
+        "is", "are", "was", "were", "be", "been", "being",
+        "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
+        "can", "may", "might", "must", "shall", "very", "really", "just", "now", "here",
+    }
+
     def add(kind: str, value: str) -> None:
         cleaned = value.strip(" ,.;:!?()[]{}")
         if not cleaned:
@@ -169,7 +183,9 @@ def extract_protected_terms(text: str) -> list[dict[str, str]]:
     for match in re.finditer(r"\b\d+(?:[.,]\d+)?\b", text or ""):
         add("number", match.group(0))
     for match in re.finditer(r"\b[A-Z][a-z]{2,}\b", text or ""):
-        add("name_or_place", match.group(0))
+        word = match.group(0)
+        if word.lower() not in COMMON_SENTENCE_STARTERS:
+            add("name_or_place", word)
     for match in re.finditer(r"\b[A-Z]{2,}\b", text or ""):
         add("acronym", match.group(0))
     return protected[:12]

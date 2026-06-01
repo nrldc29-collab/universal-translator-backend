@@ -153,18 +153,18 @@ class STTBridge:
             raise RuntimeError(f"Streaming STT provider error: {exc}") from exc
 
     def _check_streaming_health(self) -> bool:
-        """Verify the streaming STT provider is reachable."""
+        """Verify the streaming STT provider is reachable via /health/live."""
         import urllib.request
-        import urllib.error
+        from urllib.error import URLError
 
-        url = get_stt_provider_url() + "/health"
+        url = get_stt_provider_url() + "/health/live"
         try:
             req = urllib.request.Request(url, method="GET")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
                     logger.info("Streaming STT provider health check: OK")
                     return True
-        except (URLError, TimeoutError, ConnectionError) as exc:
+        except (URLError, TimeoutError, ConnectionError, OSError) as exc:
             logger.warning("Streaming STT provider health check failed: %s", exc)
         return False
 

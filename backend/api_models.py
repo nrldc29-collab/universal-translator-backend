@@ -20,6 +20,9 @@ class TextTranslationRequest(BaseModel):
     device_id: str | None = None
     speaker_name: str | None = None
     speaker_mode: str = "auto"
+    translation_mode: str | None = None
+    translation_provider: str | None = None
+    google_tts_api_key: str | None = None
 
 
 class TextToSpeechRequest(BaseModel):

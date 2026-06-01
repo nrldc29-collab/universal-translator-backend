@@ -77,6 +77,36 @@ class AnaiTranslatorPipeline:
             audio_output_path=audio_output_path,
         )
 
+    def translate_text_with(
+        self,
+        translator,
+        text: str,
+        source_language: str = "en",
+        target_language: str = "es",
+        tone: str | None = None,
+        synthesize_audio: bool = False,
+        output_audio_path: str = "models/output.wav",
+    ) -> TranslationResult:
+        """Run translate_text using a caller-supplied translator instead of self.translator."""
+        if not text.strip():
+            return TranslationResult(
+                source_text=text,
+                improved_text="",
+                translated_text="",
+                audio_output_path=None,
+            )
+        improved_text = self.context_layer.improve(text, source_language, target_language, tone)
+        translated_text = translator.translate(improved_text, source_language, target_language)
+        audio_output_path = None
+        if synthesize_audio:
+            audio_output_path = self.tts.synthesize(translated_text, output_audio_path, language=target_language)
+        return TranslationResult(
+            source_text=text,
+            improved_text=improved_text,
+            translated_text=translated_text,
+            audio_output_path=audio_output_path,
+        )
+
     def translate_audio(
         self,
         audio_path: str,
