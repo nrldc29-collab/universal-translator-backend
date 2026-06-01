@@ -66,8 +66,9 @@ export default function App() {
   } = useMobileStreamState();
   const { semanticContext, setSemanticContext, emotionInfo, setEmotionInfo, conversationBrain, setConversationBrain } = useMobileBrainContext();
 
-  const { ttsQueue, isPlayingTts, setIsPlayingTts, ttsQueueRef, isPlayingTtsRef, handleTtsChunk } = useMobileTts();
+  const { ttsQueue, isPlayingTts, setIsPlayingTts, ttsQueueRef, isPlayingTtsRef, handleTtsChunk, volume, setVolume, playbackSpeed, setPlaybackSpeed, stopTtsPlayback } = useMobileTts();
   const toggleStreamingRef = useRef(null);
+  const [debugMode, setDebugMode] = useState(false);
   const {
     token, setToken, username, setUsername, password, setPassword,
     wsUrl, setWsUrl, recentUrls, showRecentUrls, setShowRecentUrls,
@@ -231,6 +232,7 @@ export default function App() {
       stopAudioStream();
       setIsStreaming(false);
     }
+    stopTtsPlayback();
     setIsConnected(false);
     setStatus("Disconnected");
     setStatusType("idle");
@@ -289,7 +291,7 @@ export default function App() {
 
   toggleStreamingRef.current = toggleStreaming;
 
-  const { startRecording, stopRecording } = useMobileRecording({
+  const { startRecording, stopRecording, audioQuality, setAudioQuality, isUploading, uploadProgress, AUDIO_QUALITIES } = useMobileRecording({
     isConnected, sourceLanguage, targetLanguage, wsUrl, token,
     recording, setRecording, setStatus, setStatusType,
     setResult, isPlayingTtsRef, setIsPlayingTts,
@@ -501,6 +503,15 @@ export default function App() {
             setStatus("All data cleared");
             setStatusType("idle");
           }}
+          volume={volume}
+          setVolume={setVolume}
+          playbackSpeed={playbackSpeed}
+          setPlaybackSpeed={setPlaybackSpeed}
+          audioQuality={audioQuality}
+          setAudioQuality={setAudioQuality}
+          AUDIO_QUALITIES={AUDIO_QUALITIES}
+          debugMode={debugMode}
+          setDebugMode={setDebugMode}
         />
       ) : (
         <>

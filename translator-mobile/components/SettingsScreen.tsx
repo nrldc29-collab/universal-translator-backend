@@ -1,4 +1,5 @@
 import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
+import { useState } from "react";
 
 interface SettingsScreenProps {
   wsUrl: string;
@@ -8,6 +9,15 @@ interface SettingsScreenProps {
   targetLanguage: string;
   setTargetLanguage: (lang: string) => void;
   onClearData: () => void;
+  volume?: number;
+  setVolume?: (vol: number) => void;
+  playbackSpeed?: number;
+  setPlaybackSpeed?: (speed: number) => void;
+  audioQuality?: string;
+  setAudioQuality?: (quality: string) => void;
+  AUDIO_QUALITIES?: Record<string, { preset: any; label: string; description: string }>;
+  debugMode?: boolean;
+  setDebugMode?: (enabled: boolean) => void;
 }
 
 const LANGUAGES = [
@@ -33,7 +43,39 @@ export default function SettingsScreen({
   targetLanguage,
   setTargetLanguage,
   onClearData,
+  volume = 0.8,
+  setVolume,
+  playbackSpeed = 1.0,
+  setPlaybackSpeed,
+  audioQuality = "HIGH",
+  setAudioQuality,
+  AUDIO_QUALITIES,
+  debugMode = false,
+  setDebugMode,
 }: SettingsScreenProps) {
+  const [localVolume, setLocalVolume] = useState(volume);
+  const [localSpeed, setLocalSpeed] = useState(playbackSpeed);
+
+  const handleVolumeChange = (value: number) => {
+    setLocalVolume(value);
+    setVolume?.(value);
+  };
+
+  const handleSpeedChange = (value: number) => {
+    setLocalSpeed(value);
+    setPlaybackSpeed?.(value);
+  };
+
+  const adjustVolume = (delta: number) => {
+    const newValue = Math.max(0, Math.min(1, localVolume + delta));
+    handleVolumeChange(newValue);
+  };
+
+  const adjustSpeed = (delta: number) => {
+    const newValue = Math.max(0.5, Math.min(2.0, localSpeed + delta));
+    handleSpeedChange(newValue);
+  };
+
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.title}>Settings</Text>
@@ -45,6 +87,59 @@ export default function SettingsScreen({
           <Text style={styles.label}>Backend URL</Text>
           <Text style={styles.value}>{wsUrl}</Text>
         </View>
+      </View>
+      
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Audio Settings</Text>
+        
+        <View style={styles.settingRow}>
+          <Text style={styles.label}>Volume</Text>
+          <Text style={styles.value}>{Math.round(localVolume * 100)}%</Text>
+        </View>
+        <View style={styles.buttonRow}>
+          <Pressable style={styles.adjustButton} onPress={() => adjustVolume(-0.1)}>
+            <Text style={styles.adjustButtonText}>-</Text>
+          </Pressable>
+          <Pressable style={styles.adjustButton} onPress={() => adjustVolume(0.1)}>
+            <Text style={styles.adjustButtonText}>+</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.settingRow}>
+          <Text style={styles.label}>TTS Speed</Text>
+          <Text style={styles.value}>{localSpeed.toFixed(1)}x</Text>
+        </View>
+        <View style={styles.buttonRow}>
+          <Pressable style={styles.adjustButton} onPress={() => adjustSpeed(-0.1)}>
+            <Text style={styles.adjustButtonText}>-</Text>
+          </Pressable>
+          <Pressable style={styles.adjustButton} onPress={() => adjustSpeed(0.1)}>
+            <Text style={styles.adjustButtonText}>+</Text>
+          </Pressable>
+        </View>
+
+        {AUDIO_QUALITIES && (
+          <>
+            <View style={styles.settingRow}>
+              <Text style={styles.label}>Audio Quality</Text>
+              <Text style={styles.value}>{AUDIO_QUALITIES[audioQuality]?.label || audioQuality}</Text>
+            </View>
+            <View style={styles.chipRow}>
+              {Object.entries(AUDIO_QUALITIES).map(([key, quality]) => (
+                <Pressable
+                  key={key}
+                  style={[styles.chip, audioQuality === key && styles.chipActive]}
+                  onPress={() => setAudioQuality?.(key)}
+                >
+                  <Text style={[styles.chipText, audioQuality === key && styles.chipTextActive]}>
+                    {quality.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.settingDescription}>{AUDIO_QUALITIES[audioQuality]?.description}</Text>
+          </>
+        )}
       </View>
       
       <View style={styles.section}>
@@ -84,6 +179,26 @@ export default function SettingsScreen({
           ))}
         </View>
       </View>
+
+      {setDebugMode && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Developer Options</Text>
+          <View style={styles.settingRow}>
+            <Text style={styles.label}>Debug Mode</Text>
+            <Pressable
+              style={[styles.toggle, debugMode && styles.toggleActive]}
+              onPress={() => setDebugMode(!debugMode)}
+            >
+              <Text style={[styles.toggleText, debugMode && styles.toggleTextActive]}>
+                {debugMode ? "ON" : "OFF"}
+              </Text>
+            </Pressable>
+          </View>
+          <Text style={styles.settingDescription}>
+            Enable detailed logging and debug information
+          </Text>
+        </View>
+      )}
       
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>About</Text>
@@ -116,11 +231,19 @@ const styles = StyleSheet.create({
   settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(148, 163, 184, 0.12)' },
   label: { color: '#93a4bd', fontSize: 14 },
   value: { color: '#e5ecff', fontSize: 14, fontWeight: '900', flexShrink: 1, textAlign: 'right' },
+  settingDescription: { color: '#64748b', fontSize: 12, marginTop: 8, marginBottom: 4 },
+  buttonRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  adjustButton: { width: 44, height: 44, borderRadius: 999, backgroundColor: 'rgba(20, 184, 166, 0.26)', borderWidth: 1, borderColor: 'rgba(45, 212, 191, 0.46)', alignItems: 'center', justifyContent: 'center' },
+  adjustButtonText: { color: '#ccfbf1', fontSize: 20, fontWeight: '900' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10, marginBottom: 6 },
   chip: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(15, 23, 42, 0.78)', borderWidth: 1, borderColor: 'rgba(148, 163, 184, 0.16)' },
   chipActive: { backgroundColor: 'rgba(20, 184, 166, 0.26)', borderColor: 'rgba(45, 212, 191, 0.46)' },
   chipText: { color: '#94a3b8', fontSize: 12, fontWeight: '800' },
   chipTextActive: { color: '#ccfbf1' },
+  toggle: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(15, 23, 42, 0.78)', borderWidth: 1, borderColor: 'rgba(148, 163, 184, 0.16)' },
+  toggleActive: { backgroundColor: 'rgba(20, 184, 166, 0.26)', borderColor: 'rgba(45, 212, 191, 0.46)' },
+  toggleText: { color: '#94a3b8', fontSize: 12, fontWeight: '800' },
+  toggleTextActive: { color: '#ccfbf1' },
   dangerZone: { backgroundColor: '#160b13', padding: 15, borderRadius: 22, marginBottom: 15, borderWidth: 1, borderColor: 'rgba(248, 113, 113, 0.45)' },
   dangerTitle: { color: '#f87171', fontSize: 13, fontWeight: '900', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.7 },
   button: { backgroundColor: '#dc2626', padding: 13, borderRadius: 999, alignItems: 'center', marginTop: 10 },

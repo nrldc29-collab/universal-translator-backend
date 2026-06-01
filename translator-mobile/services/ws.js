@@ -5,6 +5,8 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000]; // Exponential backoff
 const HEARTBEAT_INTERVAL = 15000; // 15 seconds
 const CONNECTION_TIMEOUT = 10000; // 10 seconds
+const PING_TIMEOUT = 5000; // 5 seconds for pong response
+const MAX_RECONNECT_ATTEMPTS = 10;
 const DEBUG_LOGS = Boolean(__DEV__ || process.env.EXPO_PUBLIC_DEBUG_LOGS === '1');
 
 const debugLog = (...args) => {
@@ -24,10 +26,13 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
   let reconnectTimer = null;
   let heartbeatTimer = null;
   let connectionTimeout = null;
+  let pingTimeout = null;
   let intentionallyClosed = false;
   let currentUrl = url;
   let currentOnMessage = onMessage;
   let currentSetStatus = setStatus;
+  let lastPongTime = Date.now();
+  let connectionStartTime = Date.now();
 
   const clearTimers = () => {
     if (reconnectTimer) {
@@ -42,6 +47,10 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
       clearTimeout(connectionTimeout);
       connectionTimeout = null;
     }
+    if (pingTimeout) {
+      clearTimeout(pingTimeout);
+      pingTimeout = null;
+    }
   };
 
   const startHeartbeat = () => {
@@ -49,7 +58,17 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     heartbeatTimer = setInterval(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         try {
+          lastPongTime = Date.now();
           ws.send(JSON.stringify({ type: 'ping' }));
+          
+          // Set timeout for pong response
+          pingTimeout = setTimeout(() => {
+            const timeSincePong = Date.now() - lastPongTime;
+            if (timeSincePong > PING_TIMEOUT) {
+              debugLog('Ping timeout - no pong received');
+              ws.close(1000, 'Ping timeout');
+            }
+          }, PING_TIMEOUT);
         } catch (e) {
           console.error('Heartbeat send error:', e);
         }
@@ -59,12 +78,12 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
 
   const scheduleReconnect = () => {
     if (intentionallyClosed) return;
-    if (reconnectAttempts >= RECONNECT_DELAYS.length) {
+    if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       currentSetStatus?.('Connection failed - max retries reached');
       return;
     }
     
-    const delay = RECONNECT_DELAYS[reconnectAttempts];
+    const delay = RECONNECT_DELAYS[Math.min(reconnectAttempts, RECONNECT_DELAYS.length - 1)];
     reconnectAttempts++;
     currentSetStatus?.(`Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts})`);
     
@@ -78,10 +97,12 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
 
   const createWebSocket = (url, onMessage, setStatus) => {
     clearTimers();
+    connectionStartTime = Date.now();
+    
     connectionTimeout = setTimeout(() => {
       if (ws && ws.readyState !== WebSocket.OPEN) {
         debugLog('Connection timeout');
-        ws.close();
+        ws.close(1000, 'Connection timeout');
         setStatus?.('Connection timeout');
         scheduleReconnect();
       }
@@ -92,7 +113,8 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     newWs.onopen = () => {
       clearTimers();
       reconnectAttempts = 0; // Reset on successful connection
-      debugLog("WebSocket connected:", url);
+      const connectionTime = Date.now() - connectionStartTime;
+      debugLog(`WebSocket connected in ${connectionTime}ms:`, url);
       currentSetStatus?.("Connected");
       startHeartbeat();
     };
@@ -102,6 +124,11 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
         const data = JSON.parse(event.data);
         // Handle pong responses for heartbeat
         if (data.type === 'pong') {
+          lastPongTime = Date.now();
+          if (pingTimeout) {
+            clearTimeout(pingTimeout);
+            pingTimeout = null;
+          }
           return; // Don't forward pong to message handler
         }
         currentOnMessage(data);
@@ -117,11 +144,17 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     
     newWs.onclose = (event) => {
       clearTimers();
-      debugLog("WebSocket closed:", event.code, event.reason);
+      const connectionDuration = Date.now() - connectionStartTime;
+      debugLog(`WebSocket closed after ${connectionDuration}ms:`, event.code, event.reason);
 
       if (!intentionallyClosed) {
-        currentSetStatus?.(`Disconnected (${event.code})`);
-        scheduleReconnect();
+        // Don't reconnect on normal closure (1000) or if explicitly closed by server
+        if (event.code === 1000 || event.code === 1001) {
+          currentSetStatus?.('Disconnected');
+        } else {
+          currentSetStatus?.(`Disconnected (${event.code})`);
+          scheduleReconnect();
+        }
       } else {
         currentSetStatus?.('Disconnected');
       }
@@ -136,25 +169,39 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
   return {
     get readyState() { return ws?.readyState; },
     get isConnected() { return ws?.readyState === WebSocket.OPEN; },
+    get reconnectAttempts() { return reconnectAttempts; },
+    get connectionDuration() { return Date.now() - connectionStartTime; },
     send: (data) => {
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
-        return true;
+        try {
+          ws.send(data);
+          return true;
+        } catch (e) {
+          console.error('Send error:', e);
+          return false;
+        }
       }
       return false;
     },
-    close: () => {
+    close: (code = 1000, reason = '') => {
       intentionallyClosed = true;
       clearTimers();
       reconnectAttempts = 0;
       if (ws) {
-        ws.close();
+        ws.close(code, reason);
         ws = null;
       }
     },
     updateHandlers: (newOnMessage, newSetStatus) => {
       currentOnMessage = newOnMessage;
       currentSetStatus = newSetStatus;
+    },
+    forceReconnect: () => {
+      if (ws) {
+        ws.close(1000, 'Manual reconnect');
+      }
+      reconnectAttempts = 0;
+      scheduleReconnect();
     }
   };
 };
