@@ -1,0 +1,59 @@
+# Multi-Agent Debate — two translators propose, a judge picks the best
+# Like constitutional AI for translations
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+agent TranslatorA(claude) {
+    instructions: "You are Translator A. You produce natural, fluent translations that prioritize readability and cultural naturalness over literal accuracy."
+    tools: translate_natural
+
+    fn translate_natural(text: string, source_lang: string, target_lang: string, context: dict): dict {
+        domain = get_value(context, "domain")
+        prompt = f"Translate naturally from {source_lang} to {target_lang}. Prioritize fluency and cultural naturalness. Domain: {domain}. Text: {text}"
+        result = ask claude: prompt
+        return {"translation": result, "strategy": "natural_fluency", "translator": "A"}
+    }
+}
+
+agent TranslatorB(claude) {
+    instructions: "You are Translator B. You produce precise, accurate translations that preserve every nuance and detail of the original."
+    tools: translate_precise
+
+    fn translate_precise(text: string, source_lang: string, target_lang: string, context: dict): dict {
+        domain = get_value(context, "domain")
+        prompt = f"Translate precisely from {source_lang} to {target_lang}. Preserve every nuance, number, and detail exactly. Domain: {domain}. Text: {text}"
+        result = ask claude: prompt
+        return {"translation": result, "strategy": "precise_accuracy", "translator": "B"}
+    }
+}
+
+agent TranslationJudge(claude) {
+    instructions: "You are a translation judge. Given two competing translations, you evaluate which is better for the given context and explain why. You consider accuracy, fluency, cultural appropriateness, and domain correctness."
+    tools: judge, merge_best
+
+    fn judge(original: string, translation_a: dict, translation_b: dict, source_lang: string, target_lang: string, context: dict): dict {
+        text_a = get_value(translation_a, "translation")
+        text_b = get_value(translation_b, "translation")
+        domain = get_value(context, "domain")
+        prompt = f"Judge these two translations. Original ({source_lang}): {original} | A (natural): {text_a} | B (precise): {text_b} | Domain: {domain}. Reply JSON: winner (A or B), score_a (1-10), score_b (1-10), reasoning, final_translation (the best one, or a merge of both)."
+        return extract_json(ask claude: prompt)
+    }
+
+    fn merge_best(original: string, translation_a: string, translation_b: string, source_lang: string, target_lang: string): string {
+        prompt = f"Combine the best parts of these two translations into one optimal version. Original ({source_lang}): {original} | Version A: {translation_a} | Version B: {translation_b}. Reply with ONLY the merged translation."
+        return ask claude: prompt
+    }
+}
+
+fn debate_translate(text: string, source_lang: string, target_lang: string, context: dict): dict {
+    result_a = TranslatorA.translate_natural(text, source_lang, target_lang, context)
+    result_b = TranslatorB.translate_precise(text, source_lang, target_lang, context)
+    verdict = TranslationJudge.judge(text, result_a, result_b, source_lang, target_lang, context)
+    return {"final_translation": get_value(verdict, "final_translation"), "winner": get_value(verdict, "winner"), "score_a": get_value(verdict, "score_a"), "score_b": get_value(verdict, "score_b"), "reasoning": get_value(verdict, "reasoning"), "translation_a": get_value(result_a, "translation"), "translation_b": get_value(result_b, "translation")}
+}
+
+fn main() {
+    ctx = {"domain": "medical", "urgency": "normal"}
+    result = debate_translate("The patient presents with acute myocardial infarction and requires immediate intervention", "en", "es", ctx)
+    print(result)
+}

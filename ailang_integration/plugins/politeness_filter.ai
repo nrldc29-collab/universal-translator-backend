@@ -1,0 +1,44 @@
+# Plugin: Politeness Filter — adjusts formality per culture
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+const PLUGIN_NAME = "politeness_filter"
+const PLUGIN_VERSION = "1.0.0"
+const PLUGIN_HOOKS = ["post_translate"]
+
+const FORMAL_SWITCH_LANGUAGES = ["es", "fr", "de", "pt", "it"]
+
+fn detect_relationship(context: dict): string {
+    turn_count = get_value(context, "turn_count")
+    if !turn_count { turn_count = 0 }
+    domain = get_value(context, "domain")
+    if !domain { domain = "general" }
+    if domain == "medical" || domain == "legal" { return "professional" }
+    if turn_count > 20 { return "acquaintance" }
+    return "stranger"
+}
+
+fn post_translate(original: string, translated: string, source_lang: string, target_lang: string, context: dict): string {
+    is_formal = false
+    for lang in FORMAL_SWITCH_LANGUAGES {
+        if target_lang == lang { is_formal = true }
+    }
+    if !is_formal { return translated }
+    relationship = detect_relationship(context)
+    if relationship == "professional" || relationship == "stranger" {
+        if target_lang == "es" {
+            prompt = f"Ensure this Spanish uses usted (formal). Keep meaning: {translated}"
+            return ask fast: prompt
+        }
+        if target_lang == "fr" {
+            prompt = f"Ensure this French uses vous (formal). Keep meaning: {translated}"
+            return ask fast: prompt
+        }
+    }
+    return translated
+}
+
+fn main() {
+    ctx = {"turn_count": 2, "domain": "medical"}
+    result = post_translate("Can you tell me?", "Puedes decirme?", "en", "es", ctx)
+    print(result)
+}

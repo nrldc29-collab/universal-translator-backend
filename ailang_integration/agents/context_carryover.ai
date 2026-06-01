@@ -1,0 +1,87 @@
+# Context Carry-Over — infinite conversation memory via compression
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+
+const MAX_RECENT_TURNS = 8
+const COMPRESS_THRESHOLD = 15
+const CRITICAL_PATTERNS = ["allerg", "medication", "name is", "my name", "phone", "address", "appointment", "dosage", "blood type", "pregnant", "surgery", "deadline", "flight", "passport"]
+
+agent ContextCarryOver(fast) {
+    instructions: "You compress long conversations into concise summaries preserving all critical context: identities, medical info, agreements, unresolved questions, and emotional state."
+    tools: should_compress, compress_context, build_hybrid_context, extract_critical_facts, merge_summaries
+
+    fn should_compress(history: list): bool {
+        return length(history) > COMPRESS_THRESHOLD
+    }
+
+    fn extract_critical_facts(history: list): list {
+        facts = []
+        for item in history {
+            orig = lower(get_value(item, "original"))
+            for pattern in CRITICAL_PATTERNS {
+                if contains(orig, pattern) {
+                    spk = get_value(item, "speaker")
+                    original_text = get_value(item, "original")
+                    facts = facts + [f"{spk}: {original_text}"]
+                    break
+                }
+            }
+        }
+        return facts
+    }
+
+    fn compress_context(history: list): dict {
+        lines = []
+        speaker_set = []
+        lang_set = []
+        for item in history {
+            spk = get_value(item, "speaker")
+            orig = get_value(item, "original")
+            lang = get_value(item, "source_lang")
+            lines = lines + [f"{spk} ({lang}): {orig}"]
+            found_spk = false
+            for s in speaker_set { if s == spk { found_spk = true } }
+            if !found_spk { speaker_set = speaker_set + [spk] }
+            found_lang = false
+            for l in lang_set { if l == lang { found_lang = true } }
+            if !found_lang { lang_set = lang_set + [lang] }
+        }
+        full_text = join(lines, " | ")
+        prompt = f"Compress this conversation preserving: speaker names/languages, key topics, unresolved questions, important numbers/names/medical info, emotional tone. Max 4 sentences: {full_text}"
+        summary = ask fast: prompt
+        facts = extract_critical_facts(history)
+        return {"summary": summary, "critical_facts": facts, "turns_compressed": length(history), "speakers": speaker_set, "languages": lang_set}
+    }
+
+    fn build_hybrid_context(history: list, compressed: dict): dict {
+        if length(history) <= MAX_RECENT_TURNS {
+            return {"mode": "full", "recent_turns": history, "compressed": null, "total_turns": length(history)}
+        }
+        recent = []
+        start = length(history) - MAX_RECENT_TURNS
+        idx = 0
+        for item in history {
+            if idx >= start { recent = recent + [item] }
+            idx = idx + 1
+        }
+        return {"mode": "hybrid", "recent_turns": recent, "compressed": compressed, "total_turns": length(history)}
+    }
+
+    fn merge_summaries(old_summary: string, new_summary: string): string {
+        prompt = f"Merge these two conversation summaries into one concise summary (max 4 sentences). Keep all critical facts. Old: {old_summary} | New: {new_summary}"
+        return ask fast: prompt
+    }
+}
+
+fn main() {
+    history = [
+        {"speaker": "Doctor", "original": "What is your name?", "source_lang": "en"},
+        {"speaker": "Patient", "original": "Me llamo Maria, soy alergica a la penicilina", "source_lang": "es"},
+        {"speaker": "Doctor", "original": "When did symptoms start?", "source_lang": "en"},
+        {"speaker": "Patient", "original": "Hace tres dias, tengo fiebre y dolor de cabeza", "source_lang": "es"}
+    ]
+    compressed = ContextCarryOver.compress_context(history)
+    print(compressed)
+    facts = ContextCarryOver.extract_critical_facts(history)
+    print(f"Critical facts: {to_json(facts)}")
+}

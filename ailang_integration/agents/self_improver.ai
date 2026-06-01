@@ -1,0 +1,64 @@
+# Self-Improving Pipeline — learns from corrections and feedback
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+
+const FEEDBACK_LOG = "translation_feedback.jsonl"
+const LEARNED_RULES_FILE = "learned_rules.json"
+
+agent SelfImprover(claude) {
+    instructions: "You analyze translation corrections to extract patterns and generate rules that improve future translations."
+    tools: log_correction, analyze_patterns, generate_rules, apply_learned_rules
+
+    fn log_correction(original: string, bad_translation: string, corrected: string, source_lang: string, target_lang: string, domain: string): dict {
+        entry = to_json({"original": original, "bad": bad_translation, "corrected": corrected, "source_lang": source_lang, "target_lang": target_lang, "domain": domain})
+        append_file(FEEDBACK_LOG, entry)
+        return {"logged": true}
+    }
+
+    fn analyze_patterns(feedback_entries: list): dict {
+        if length(feedback_entries) < 3 {
+            return {"patterns": [], "sufficient_data": false}
+        }
+        entries_text = to_json(feedback_entries)
+        prompt = f"Analyze these translation corrections for recurring patterns. What mistakes keep happening? Reply JSON with patterns array containing pattern, frequency, rule, example fields: {entries_text}"
+        return extract_json(ask claude: prompt)
+    }
+
+    fn generate_rules(patterns: list): list {
+        if length(patterns) == 0 { return [] }
+        patterns_text = to_json(patterns)
+        prompt = f"Convert these patterns into translation rules. Each rule: id, condition, action, priority 1-10, lang_pair. Reply JSON array: {patterns_text}"
+        return extract_json(ask claude: prompt)
+    }
+
+    fn apply_learned_rules(text: string, source_lang: string, target_lang: string): list {
+        if !file_exists(LEARNED_RULES_FILE) { return [] }
+        content = read_file(LEARNED_RULES_FILE)
+        if length(content) < 5 { return [] }
+        rules = parse_json(content)
+        applicable = []
+        lang_pair = f"{source_lang}_{target_lang}"
+        for rule in rules {
+            rule_pair = get_value(rule, "lang_pair")
+            if rule_pair == lang_pair || rule_pair == "any" {
+                applicable = applicable + [rule]
+            }
+        }
+        return applicable
+    }
+}
+
+agent FeedbackCollector(fast) {
+    instructions: "You detect when a user is correcting a previous translation."
+    tools: detect_feedback
+
+    fn detect_feedback(text: string, last_translation: string): dict {
+        prompt = f"Is the user correcting a translation? Previous: {last_translation} | User says: {text}. Reply JSON: is_correction (bool), corrected_text, correction_type."
+        return extract_json(ask fast: prompt)
+    }
+}
+
+fn main() {
+    SelfImprover.log_correction("blood pressure", "presion de sangre", "presion arterial", "en", "es", "medical")
+    print("Correction logged")
+}

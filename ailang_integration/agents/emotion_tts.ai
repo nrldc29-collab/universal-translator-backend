@@ -1,0 +1,105 @@
+# Emotion-Aware TTS — sentiment analysis drives speech synthesis params
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+const EMOTION_PROFILES = {
+    "neutral": {"speed": 1.0, "pitch": 0, "volume": 1.0, "pause_ms": 200, "voice_style": "default"},
+    "urgent": {"speed": 1.15, "pitch": 2, "volume": 1.1, "pause_ms": 100, "voice_style": "assertive"},
+    "calm": {"speed": 0.9, "pitch": -1, "volume": 0.9, "pause_ms": 300, "voice_style": "gentle"},
+    "excited": {"speed": 1.1, "pitch": 3, "volume": 1.05, "pause_ms": 150, "voice_style": "energetic"},
+    "sad": {"speed": 0.85, "pitch": -2, "volume": 0.85, "pause_ms": 350, "voice_style": "soft"},
+    "angry": {"speed": 1.05, "pitch": 2, "volume": 1.15, "pause_ms": 120, "voice_style": "firm"},
+    "fearful": {"speed": 1.1, "pitch": 1, "volume": 0.95, "pause_ms": 180, "voice_style": "tense"},
+    "warm": {"speed": 0.95, "pitch": 0, "volume": 0.95, "pause_ms": 250, "voice_style": "friendly"},
+    "professional": {"speed": 0.95, "pitch": 0, "volume": 1.0, "pause_ms": 220, "voice_style": "clear"},
+    "empathetic": {"speed": 0.9, "pitch": -1, "volume": 0.9, "pause_ms": 280, "voice_style": "gentle"}
+}
+
+const EMOTION_KEYWORDS = {
+    "urgent": ["emergency", "hurry", "quick", "help", "danger", "urgent", "immediately", "now", "dying", "bleeding", "fire", "accident", "poison"],
+    "sad": ["sorry", "lost", "miss", "sad", "unfortunately", "regret", "grief", "condolence", "passed away", "funeral", "mourn"],
+    "angry": ["angry", "furious", "unacceptable", "outraged", "terrible", "horrible", "disgusting", "ridiculous"],
+    "excited": ["amazing", "wonderful", "fantastic", "great", "awesome", "love", "excellent", "incredible", "congratulations", "celebrate"],
+    "fearful": ["scared", "afraid", "worried", "nervous", "anxious", "panic", "terrified", "threat"],
+    "warm": ["welcome", "thank", "grateful", "appreciate", "kind", "pleased", "happy", "glad", "enjoy"]
+}
+
+const DOMAIN_EMOTION_DEFAULTS = {
+    "medical": "calm",
+    "legal": "professional",
+    "financial": "professional",
+    "general": "neutral"
+}
+
+agent EmotionTTS(fast) {
+    instructions: "You analyze text sentiment and generate TTS configuration that conveys the right emotion through speech — speed, pitch, volume, pauses, emphasis, and voice style."
+    tools: analyze_emotion, get_tts_config, detect_emphasis_words, get_ssml_hints
+
+    fn analyze_emotion(text: string, context: dict): dict {
+        lowered = lower(text)
+        detected = "neutral"
+        max_score = 0
+        all_scores = {}
+        for emotion in keys(EMOTION_KEYWORDS) {
+            kws = dict_get(EMOTION_KEYWORDS, emotion)
+            score = 0
+            for kw in kws {
+                if contains(lowered, kw) { score = score + 1 }
+            }
+            all_scores = dict_set(all_scores, emotion, score)
+            if score > max_score { max_score = score detected = emotion }
+        }
+        if max_score == 0 {
+            domain = get_value(context, "domain")
+            if domain {
+                default_emotion = dict_get(DOMAIN_EMOTION_DEFAULTS, domain)
+                if default_emotion { detected = default_emotion }
+            }
+        }
+        has_exclamation = contains(text, "!")
+        has_question = contains(text, "?")
+        has_ellipsis = contains(text, "...")
+        if has_exclamation && detected == "neutral" { detected = "excited" }
+        if has_ellipsis && detected == "neutral" { detected = "sad" }
+        confidence = 0.5
+        if max_score >= 3 { confidence = 0.95 }
+        if max_score == 2 { confidence = 0.85 }
+        if max_score == 1 { confidence = 0.7 }
+        return {"emotion": detected, "confidence": confidence, "keyword_hits": max_score, "scores": all_scores, "punctuation": {"exclamation": has_exclamation, "question": has_question, "ellipsis": has_ellipsis}}
+    }
+
+    fn get_tts_config(text: string, emotion: string, target_lang: string): dict {
+        profile = dict_get(EMOTION_PROFILES, emotion)
+        if !profile { profile = dict_get(EMOTION_PROFILES, "neutral") }
+        emphasis = detect_emphasis_words(text, emotion)
+        return {"text": text, "language": target_lang, "speed": get_value(profile, "speed"), "pitch_shift": get_value(profile, "pitch"), "volume": get_value(profile, "volume"), "pause_between_sentences_ms": get_value(profile, "pause_ms"), "voice_style": get_value(profile, "voice_style"), "emotion": emotion, "emphasis_words": emphasis}
+    }
+
+    fn detect_emphasis_words(text: string, emotion: string): list {
+        if emotion == "neutral" || emotion == "calm" || emotion == "professional" { return [] }
+        prompt = f"Which 1-3 words should be emphasized when spoken with {emotion} emotion? Reply JSON array of strings only: {text}"
+        result = extract_json(ask fast: prompt)
+        if !result { return [] }
+        return result
+    }
+
+    fn get_ssml_hints(text: string, emotion: string): dict {
+        profile = dict_get(EMOTION_PROFILES, emotion)
+        if !profile { profile = dict_get(EMOTION_PROFILES, "neutral") }
+        rate = get_value(profile, "speed")
+        rate_label = "medium"
+        if rate > 1.05 { rate_label = "fast" }
+        if rate < 0.95 { rate_label = "slow" }
+        pitch_val = get_value(profile, "pitch")
+        pitch_label = "medium"
+        if pitch_val > 1 { pitch_label = "high" }
+        if pitch_val < -1 { pitch_label = "low" }
+        return {"rate": rate_label, "pitch": pitch_label, "volume": get_value(profile, "voice_style"), "break_time": f"{get_value(profile, 'pause_ms')}ms"}
+    }
+}
+
+fn main() {
+    analysis = EmotionTTS.analyze_emotion("Help! I need a doctor immediately! I'm bleeding!", {"domain": "medical"})
+    print(analysis)
+    config = EmotionTTS.get_tts_config("Necesito un doctor inmediatamente", "urgent", "es")
+    print(config)
+}

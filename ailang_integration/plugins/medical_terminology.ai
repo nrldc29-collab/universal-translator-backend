@@ -1,0 +1,36 @@
+# Plugin: Medical Terminology — precise medical translations
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+const PLUGIN_NAME = "medical_terminology"
+const PLUGIN_VERSION = "1.0.0"
+const PLUGIN_HOOKS = ["pre_translate", "post_translate", "on_domain_detected"]
+
+const DO_NOT_TRANSLATE = ["ibuprofen", "acetaminophen", "amoxicillin", "metformin", "lisinopril", "atorvastatin", "omeprazole", "COVID-19", "MRI", "CT scan", "ECG"]
+
+fn pre_translate(text: string, source_lang: string, target_lang: string, context: dict): string {
+    result = text
+    for term in DO_NOT_TRANSLATE {
+        if contains(lower(result), lower(term)) {
+            result = replace(result, term, f"[KEEP]{term}[/KEEP]")
+        }
+    }
+    return result
+}
+
+fn post_translate(original: string, translated: string, source_lang: string, target_lang: string, context: dict): string {
+    result = replace(replace(translated, "[KEEP]", ""), "[/KEEP]", "")
+    return result
+}
+
+fn on_domain_detected(domain: string, text: string, context: dict): dict {
+    if domain == "medical" {
+        return dict_set(dict_set(context, "strict_medical_mode", true), "quality_threshold", 0.95)
+    }
+    return context
+}
+
+fn main() {
+    text = "Patient needs 500mg ibuprofen for blood pressure"
+    processed = pre_translate(text, "en", "es", {})
+    print(processed)
+}

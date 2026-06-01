@@ -1,0 +1,20 @@
+# Plugin: Conversation Logger — logs translations as JSONL
+const PLUGIN_NAME = "conversation_logger"
+const PLUGIN_VERSION = "1.0.0"
+const PLUGIN_HOOKS = ["post_translate"]
+const LOG_FILE = "translation_log.jsonl"
+
+fn post_translate(original: string, translated: string, source_lang: string, target_lang: string, context: dict): string {
+    speaker = get_value(context, "current_speaker")
+    domain = get_value(context, "domain")
+    session = get_value(context, "session_id")
+    entry = to_json({"speaker": speaker, "source_lang": source_lang, "target_lang": target_lang, "original": original, "translated": translated, "domain": domain, "session_id": session})
+    append_file(LOG_FILE, entry)
+    return translated
+}
+
+fn main() {
+    ctx = {"current_speaker": "Patient", "domain": "medical", "session_id": "abc123"}
+    post_translate("Hello doctor", "Hola doctor", "en", "es", ctx)
+    print("Logged")
+}

@@ -1,0 +1,21 @@
+# =============================================================================
+# AILang Plugin System for Universal Translator
+# Drop .ai files into the plugins/ directory to extend translator behavior.
+# =============================================================================
+
+# Plugin Interface:
+# Each plugin must export:
+#   - PLUGIN_NAME: string
+#   - PLUGIN_VERSION: string
+#   - PLUGIN_HOOKS: list of hook names this plugin handles
+#   - One or more hook functions (see hooks below)
+#
+# Available Hooks:
+#   - pre_translate(text, source_lang, target_lang, context) -> text
+#   - post_translate(original, translated, source_lang, target_lang, context) -> translated
+#   - on_speaker_change(old_speaker, new_speaker, context) -> context
+#   - on_domain_detected(domain, text, context) -> context
+#   - on_error(error_type, error_message, context) -> recovery_action
+#   - custom_step(input, context) -> input (for pipeline injection)
+
+const PLUGIN_API_VERSION = "1.0.0"

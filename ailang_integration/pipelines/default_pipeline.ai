@@ -1,0 +1,91 @@
+# Default Translation Pipeline — hot-swappable steps
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+fn step_stt(audio_data: dict, context: dict): dict {
+    text = get_value(audio_data, "transcribed_text")
+    lang = get_value(audio_data, "detected_language")
+    conf = get_value(audio_data, "stt_confidence")
+    return {"text": text, "source_lang": lang, "confidence": conf}
+}
+
+fn step_speaker_detection(input: dict, context: dict): dict {
+    tgt = get_value(context, "target_lang")
+    return dict_set(dict_set(input, "target_lang", tgt), "speaker_info", {"new_speaker": false, "confidence": 0.8})
+}
+
+fn step_context_resolution(input: dict, context: dict): dict {
+    text = get_value(input, "text")
+    return dict_set(dict_set(input, "resolved_text", text), "references", [])
+}
+
+fn step_terminology(input: dict, context: dict): dict {
+    return dict_set(input, "terminology_overrides", [])
+}
+
+fn step_brain_analysis(input: dict, context: dict): dict {
+    text = get_value(input, "resolved_text")
+    # Simple keyword matching for medical domain
+    has_emergency = contains(text, "emergency")
+    has_hospital = contains(text, "hospital")
+    has_doctor = contains(text, "doctor")
+    has_medication = contains(text, "medication")
+    has_pain = contains(text, "pain")
+    if has_emergency or has_hospital or has_doctor or has_medication or has_pain {
+        analysis = {"domain": "medical", "formality": "formal", "model": "claude", "instructions": ["Use precise medical terminology", "Do not paraphrase drug names", "Preserve dosage numbers exactly"], "require_confirmation": true}
+    } else {
+        analysis = {"domain": "general", "formality": "neutral", "model": "fast", "instructions": [], "require_confirmation": false}
+    }
+    return dict_set(input, "analysis", analysis)
+}
+
+fn step_idiom_detection(input: dict, context: dict): dict {
+    text = get_value(input, "resolved_text")
+    return dict_set(dict_set(input, "pre_translated_text", text), "idioms_detected", [])
+}
+
+fn step_translate(input: dict, context: dict): dict {
+    text = get_value(input, "pre_translated_text")
+    source = get_value(input, "source_lang")
+    target = get_value(input, "target_lang")
+    result = f"[{source}->{target}] {text}"
+    return dict_set(input, "translated_text", result)
+}
+
+fn step_quality_check(input: dict, context: dict): dict {
+    return dict_set(input, "quality_review", {"pass": true, "score": 7, "issues": []})
+}
+
+fn step_tone_check(input: dict, context: dict): dict {
+    return dict_set(input, "tone_check", {"consistent": true})
+}
+
+fn step_cultural_review(input: dict, context: dict): dict {
+    return dict_set(input, "cultural_review", {"culturally_appropriate": true, "issues": []})
+}
+
+fn step_memory_update(input: dict, context: dict): dict {
+    return dict_set(dict_set(input, "store_in_history", true), "topics", [])
+}
+
+fn step_tts_prepare(input: dict, context: dict): dict {
+    translated = get_value(input, "translated_text")
+    target = get_value(input, "target_lang")
+    tts = {"text": translated, "language": target, "speed": 1.0, "emotion": "neutral"}
+    return dict_set(input, "tts_config", tts)
+}
+
+const DEFAULT_STEPS = ["step_stt", "step_speaker_detection", "step_context_resolution", "step_terminology", "step_brain_analysis", "step_idiom_detection", "step_translate", "step_quality_check", "step_tone_check", "step_cultural_review", "step_memory_update", "step_tts_prepare"]
+const FAST_STEPS = ["step_stt", "step_context_resolution", "step_translate", "step_tts_prepare"]
+const MEDICAL_STEPS = ["step_stt", "step_speaker_detection", "step_context_resolution", "step_terminology", "step_brain_analysis", "step_translate", "step_quality_check", "step_quality_check", "step_cultural_review", "step_memory_update", "step_tts_prepare"]
+
+fn main() {
+    data = {"transcribed_text": "Where is the hospital?", "detected_language": "en", "stt_confidence": 0.95}
+    ctx = {"target_lang": "es"}
+    result = step_stt(data, ctx)
+    result = step_context_resolution(result, ctx)
+    result = dict_set(result, "target_lang", "es")
+    result = dict_set(result, "pre_translated_text", get_value(result, "resolved_text"))
+    result = step_translate(result, ctx)
+    result = step_tts_prepare(result, ctx)
+    print(get_value(result, "tts_config"))
+}

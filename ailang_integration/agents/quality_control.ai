@@ -1,0 +1,63 @@
+# Quality Control Agent
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+agent QualityGuard(claude) {
+    instructions: "You review translation quality and flag issues."
+    tools: quick_check, full_review, suggest_improvement
+
+    fn quick_check(original: string, translated: string, source_lang: string, target_lang: string, domain: string): dict {
+        if domain == "general" {
+            prompt = f"Rate translation 1-10. Original ({source_lang}): {original} | Translation ({target_lang}): {translated}. Reply JSON: pass, score, issues, suggestions, critical."
+            return extract_json(ask fast: prompt)
+        }
+        return full_review(original, translated, source_lang, target_lang, domain)
+    }
+
+    fn full_review(original: string, translated: string, source_lang: string, target_lang: string, domain: string): dict {
+        prompt = f"Review translation. Source ({source_lang}): {original} | Translation ({target_lang}): {translated} | Domain: {domain}. Check accuracy, fluency, tone, cultural fit. Reply JSON: score, pass, issues, suggestions, critical."
+        return extract_json(ask claude: prompt)
+    }
+
+    fn suggest_improvement(original: string, translated: string, source_lang: string, target_lang: string, issues: list): string {
+        issues_text = join(issues, "; ")
+        prompt = f"Fix issues: {issues_text}. Original ({source_lang}): {original}. Current ({target_lang}): {translated}. Reply with ONLY the improved translation."
+        return ask claude: prompt
+    }
+}
+
+agent ToneGuard(fast) {
+    instructions: "You ensure translations maintain consistent tone."
+    tools: check_tone_consistency
+
+    fn check_tone_consistency(current_translation: string, conversation_history: list, target_lang: string): dict {
+        if length(conversation_history) == 0 {
+            return {"consistent": true, "tone": "neutral", "shift_detected": false}
+        }
+        recent = []
+        count = 0
+        for item in conversation_history {
+            if count >= 3 { break }
+            recent = recent + [get_value(item, "translated")]
+            count = count + 1
+        }
+        recent_text = join(recent, " | ")
+        prompt = f"Compare tone. Recent ({target_lang}): {recent_text} | New: {current_translation}. Reply JSON: consistent, previous_tone, current_tone, shift_detected, recommendation."
+        return extract_json(ask fast: prompt)
+    }
+}
+
+agent CulturalGuard(claude) {
+    instructions: "You detect cultural sensitivities in translations."
+    tools: review_cultural_fit
+
+    fn review_cultural_fit(translated: string, target_lang: string, target_culture: string): dict {
+        prompt = f"Review cultural appropriateness for {target_culture} ({target_lang}): {translated}. Check taboos, formality, offensive expressions. Reply JSON: culturally_appropriate, issues, adaptation_needed, suggested_adaptation."
+        return extract_json(ask claude: prompt)
+    }
+}
+
+fn main() {
+    review = QualityGuard.full_review("Take two pills every 8 hours", "Tome dos pastillas cada 8 horas", "en", "es", "medical")
+    print(review)
+}

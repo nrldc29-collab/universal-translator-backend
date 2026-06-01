@@ -1,0 +1,94 @@
+# Live Dialect Adapter — detects and adapts to regional language variants
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+
+const DIALECT_MARKERS = {
+    "es-MX": ["andale", "orale", "mande", "chido", "neta", "guey", "chamba", "padre", "cuate", "chamaco", "fresa", "naco"],
+    "es-ES": ["vale", "tio", "mola", "guay", "currar", "chaval", "piso", "coche", "movil", "ordenador", "gilipollas", "flipar"],
+    "es-AR": ["che", "boludo", "pibe", "mina", "laburo", "bondi", "remera", "vos", "dale", "birra", "afanar", "morfar"],
+    "es-CO": ["parcero", "chevere", "bacano", "parce", "chimba", "berraco", "vaina", "tinto"],
+    "pt-BR": ["voce", "legal", "cara", "gente", "onibus", "celular", "trem", "beleza", "valeu", "tchau", "bala", "mano"],
+    "pt-PT": ["gajo", "fixe", "autocarro", "telemovel", "comboio", "miudo", "porreiro", "bue"],
+    "en-US": ["apartment", "elevator", "trunk", "sidewalk", "cookie", "gas", "truck", "faucet", "vacation", "check"],
+    "en-GB": ["flat", "lift", "boot", "pavement", "biscuit", "petrol", "lorry", "tap", "holiday", "bill"],
+    "en-AU": ["arvo", "barbie", "brekkie", "chunder", "crikey", "mate", "reckon", "servo", "sunnies", "thongs"],
+    "fr-FR": ["voiture", "portable", "petit-dejeuner", "boulot", "mec", "nana", "flic", "bagnole"],
+    "fr-CA": ["char", "cellulaire", "dejeuner", "job", "chum", "blonde", "boucane", "magasiner"],
+    "zh-CN": ["手机", "电脑", "网络", "出租车", "地铁"],
+    "zh-TW": ["手機", "電腦", "網路", "計程車", "捷運"],
+    "ar-EG": ["عامل", "كده", "خالص", "اوي", "يعني"],
+    "ar-SA": ["وش", "كيف", "حلو", "يالله", "زين"]
+}
+
+const VOCAB_MAPS = {
+    "es-MX_es-ES": {"carro": "coche", "computadora": "ordenador", "celular": "movil", "departamento": "piso", "platicar": "hablar", "enojado": "enfadado", "camion": "autobus", "lentes": "gafas"},
+    "es-ES_es-MX": {"coche": "carro", "ordenador": "computadora", "movil": "celular", "piso": "departamento", "hablar": "platicar", "enfadado": "enojado", "autobus": "camion", "gafas": "lentes"},
+    "en-US_en-GB": {"apartment": "flat", "elevator": "lift", "trunk": "boot", "sidewalk": "pavement", "cookie": "biscuit", "gas": "petrol", "truck": "lorry", "faucet": "tap", "vacation": "holiday"},
+    "en-GB_en-US": {"flat": "apartment", "lift": "elevator", "boot": "trunk", "pavement": "sidewalk", "biscuit": "cookie", "petrol": "gas", "lorry": "truck", "tap": "faucet", "holiday": "vacation"},
+    "pt-BR_pt-PT": {"onibus": "autocarro", "celular": "telemovel", "trem": "comboio", "legal": "fixe"},
+    "pt-PT_pt-BR": {"autocarro": "onibus", "telemovel": "celular", "comboio": "trem", "fixe": "legal"}
+}
+
+agent DialectAdapter(fast) {
+    instructions: "You detect regional dialect variants and adapt translations to match the target dialect precisely, changing vocabulary, slang, spelling conventions, and formality norms."
+    tools: detect_dialect, adapt_to_dialect, get_vocab_map
+
+    fn detect_dialect(text: string, language: string): dict {
+        lowered = lower(text)
+        best_dialect = language
+        best_score = 0
+        for dialect_key in keys(DIALECT_MARKERS) {
+            if starts_with(dialect_key, language) {
+                markers = dict_get(DIALECT_MARKERS, dialect_key)
+                score = 0
+                for marker in markers {
+                    if contains(lowered, marker) { score = score + 1 }
+                }
+                if score > best_score {
+                    best_score = score
+                    best_dialect = dialect_key
+                }
+            }
+        }
+        if best_score == 0 {
+            prompt = f"Detect the regional dialect of this {language} text. Reply ONLY with a dialect code like es-MX, en-GB, pt-BR etc: {text}"
+            detected = strip(ask fast: prompt)
+            return {"dialect": detected, "confidence": 0.6, "method": "ai", "markers_found": 0}
+        }
+        conf = 0.7
+        if best_score >= 3 { conf = 0.95 }
+        if best_score == 2 { conf = 0.85 }
+        return {"dialect": best_dialect, "confidence": conf, "method": "markers", "markers_found": best_score}
+    }
+
+    fn adapt_to_dialect(text: string, source_dialect: string, target_dialect: string): string {
+        if source_dialect == target_dialect { return text }
+        vocab_key = f"{source_dialect}_{target_dialect}"
+        vocab = dict_get(VOCAB_MAPS, vocab_key)
+        result = text
+        if vocab {
+            for source_word in keys(vocab) {
+                target_word = dict_get(vocab, source_word)
+                if contains(lower(result), source_word) {
+                    result = replace(result, source_word, target_word)
+                }
+            }
+        }
+        prompt = f"Adapt any remaining {source_dialect} expressions to {target_dialect}. Only change dialect-specific terms, keep meaning identical: {result}"
+        return ask fast: prompt
+    }
+
+    fn get_vocab_map(source_dialect: string, target_dialect: string): dict {
+        vocab_key = f"{source_dialect}_{target_dialect}"
+        vocab = dict_get(VOCAB_MAPS, vocab_key)
+        if vocab { return vocab }
+        return {}
+    }
+}
+
+fn main() {
+    result = DialectAdapter.detect_dialect("Orale guey, que chido esta este carro", "es")
+    print(result)
+    adapted = DialectAdapter.adapt_to_dialect("Voy a tomar el carro para ir al departamento", "es-MX", "es-ES")
+    print(adapted)
+}

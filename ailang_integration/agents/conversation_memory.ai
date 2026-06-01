@@ -1,0 +1,116 @@
+# Conversation Memory Agent
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+agent MemoryKeeper(fast) {
+    instructions: "You maintain conversation context for multi-party translation."
+    tools: extract_topics, resolve_references, build_context_window, summarize_conversation
+
+    fn extract_topics(text: string): list {
+        prompt = f"Extract 1-3 main topics as JSON array of strings: {text}"
+        result = ask fast: prompt
+        return extract_json(result)
+    }
+
+    fn resolve_references(text: string, history: list, speakers: dict): dict {
+        if length(history) == 0 {
+            return {"resolved_text": text, "references": [], "needs_resolution": false}
+        }
+        context_lines = []
+        count = 0
+        for item in history {
+            if count >= 5 { break }
+            spk = get_value(item, "speaker")
+            orig = get_value(item, "original")
+            context_lines = context_lines + [f"{spk}: {orig}"]
+            count = count + 1
+        }
+        context_text = join(context_lines, " | ")
+        prompt = f"Resolve pronouns. Context: {context_text} -- Text: {text}. Reply JSON with resolved_text, references, needs_resolution."
+        result = ask fast: prompt
+        return extract_json(result)
+    }
+
+    fn build_context_window(history: list, current_speaker: string, max_turns: int): dict {
+        relevant_turns = []
+        speaker_languages = {}
+        count = 0
+        for item in history {
+            if count >= max_turns { break }
+            spk = get_value(item, "speaker")
+            txt = get_value(item, "original")
+            lng = get_value(item, "source_lang")
+            relevant_turns = relevant_turns + [{"speaker": spk, "text": txt, "lang": lng}]
+            speaker_languages = dict_set(speaker_languages, spk, lng)
+            count = count + 1
+        }
+        return {"recent_turns": relevant_turns, "speaker_languages": speaker_languages, "current_speaker": current_speaker, "conversation_length": length(history)}
+    }
+
+    fn summarize_conversation(history: list): string {
+        if length(history) == 0 { return "No conversation history." }
+        lines = []
+        for item in history {
+            spk = get_value(item, "speaker")
+            orig = get_value(item, "original")
+            lines = lines + [f"{spk}: {orig}"]
+        }
+        prompt = f"Summarize in 2-3 sentences: {join(lines, ' | ')}"
+        return ask fast: prompt
+    }
+}
+
+agent TerminologyTracker(fast) {
+    instructions: "You learn how terms should be translated per speaker."
+    tools: learn_preference, recall_preferences, detect_correction
+
+    fn learn_preference(speaker_id: string, source_term: string, preferred: string, ctx: string, prefs: dict): dict {
+        key = f"{speaker_id}:{lower(source_term)}"
+        entry = {"source": source_term, "preferred": preferred, "context": ctx, "times_used": 1}
+        return dict_set(prefs, key, entry)
+    }
+
+    fn recall_preferences(speaker_id: string, text: string, prefs: dict): list {
+        matches = []
+        lowered = lower(text)
+        for key in keys(prefs) {
+            if starts_with(key, f"{speaker_id}:") {
+                pref = dict_get(prefs, key)
+                src = get_value(pref, "source")
+                if contains(lowered, lower(src)) { matches = matches + [pref] }
+            }
+        }
+        return matches
+    }
+
+    fn detect_correction(orig_trans: string, feedback: string, source: string): dict {
+        prompt = f"Is this a correction? Translation: {orig_trans} | Feedback: {feedback} | Source: {source}. Reply JSON: is_correction, corrected_term, preferred_translation."
+        return extract_json(ask fast: prompt)
+    }
+}
+
+agent TurnManager(fast) {
+    instructions: "You detect speaker changes in multi-party conversations."
+    tools: detect_speaker_change, get_translation_target
+
+    fn detect_speaker_change(current_text: string, last_speaker: string, history: list): dict {
+        if length(history) == 0 { return {"new_speaker": true, "confidence": 0.5} }
+        last_entry = last(history)
+        last_orig = get_value(last_entry, "original")
+        prompt = f"Different speaker? Previous ({last_speaker}): {last_orig} | Current: {current_text}. Reply JSON: new_speaker, confidence, reasoning."
+        return extract_json(ask fast: prompt)
+    }
+
+    fn get_translation_target(current_speaker: string, speaker_languages: dict, history: list): string {
+        for speaker in keys(speaker_languages) {
+            if speaker != current_speaker { return dict_get(speaker_languages, speaker) }
+        }
+        return "en"
+    }
+}
+
+fn main() {
+    history = [{"speaker": "Doctor", "original": "What symptoms?", "source_lang": "en"}]
+    ctx = MemoryKeeper.build_context_window(history, "Patient", 10)
+    print(ctx)
+}

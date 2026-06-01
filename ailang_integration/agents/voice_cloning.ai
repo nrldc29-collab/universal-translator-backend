@@ -1,0 +1,84 @@
+# Voice Cloning Agent — learns speaker voice profile for personalized TTS
+# Output sounds like the original speaker, just in another language
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+const VOICE_PROFILES_FILE = "voice_profiles.json"
+
+agent VoiceCloner(fast) {
+    instructions: "You analyze speech characteristics and build voice profiles that can be used to personalize TTS output so it resembles the original speaker."
+    tools: analyze_voice, build_profile, get_tts_params, save_profile, load_profile
+
+    fn analyze_voice(audio_features: dict): dict {
+        pitch_avg = get_value(audio_features, "pitch_avg")
+        pitch_range = get_value(audio_features, "pitch_range")
+        speed_wpm = get_value(audio_features, "speed_wpm")
+        energy = get_value(audio_features, "energy")
+        gender_hint = "neutral"
+        if pitch_avg {
+            if pitch_avg > 165 { gender_hint = "high" }
+            if pitch_avg < 130 { gender_hint = "low" }
+        }
+        speed_factor = 1.0
+        if speed_wpm {
+            if speed_wpm > 160 { speed_factor = 1.1 }
+            if speed_wpm < 120 { speed_factor = 0.9 }
+        }
+        return {"gender_hint": gender_hint, "pitch_category": gender_hint, "speed_factor": speed_factor, "energy_level": energy}
+    }
+
+    fn build_profile(speaker_id: string, voice_analyses: list): dict {
+        total_speed = 0.0
+        count = 0
+        for a in voice_analyses {
+            sf = get_value(a, "speed_factor")
+            total_speed = total_speed + sf
+            count = count + 1
+        }
+        avg_speed = 1.0
+        if count > 0 { avg_speed = total_speed / count }
+        last_analysis = last(voice_analyses)
+        return {"speaker_id": speaker_id, "avg_speed": avg_speed, "pitch_category": get_value(last_analysis, "pitch_category"), "energy_level": get_value(last_analysis, "energy_level"), "samples_analyzed": count}
+    }
+
+    fn get_tts_params(profile: dict, target_lang: string): dict {
+        speed = get_value(profile, "avg_speed")
+        pitch_cat = get_value(profile, "pitch_category")
+        pitch_shift = 0
+        if pitch_cat == "high" { pitch_shift = 3 }
+        if pitch_cat == "low" { pitch_shift = -3 }
+        voice_id = "default"
+        if pitch_cat == "high" { voice_id = "female_1" }
+        if pitch_cat == "low" { voice_id = "male_1" }
+        return {"voice_id": voice_id, "speed": speed, "pitch_shift": pitch_shift, "language": target_lang, "speaker_matched": true}
+    }
+
+    fn save_profile(profile: dict): bool {
+        profiles = {}
+        if file_exists(VOICE_PROFILES_FILE) {
+            content = read_file(VOICE_PROFILES_FILE)
+            if length(content) > 2 { profiles = parse_json(content) }
+        }
+        sid = get_value(profile, "speaker_id")
+        profiles = dict_set(profiles, sid, profile)
+        write_file(VOICE_PROFILES_FILE, to_json(profiles))
+        return true
+    }
+
+    fn load_profile(speaker_id: string): dict {
+        if !file_exists(VOICE_PROFILES_FILE) { return {} }
+        content = read_file(VOICE_PROFILES_FILE)
+        if length(content) < 3 { return {} }
+        profiles = parse_json(content)
+        return dict_get(profiles, speaker_id)
+    }
+}
+
+fn main() {
+    features = {"pitch_avg": 180, "pitch_range": 50, "speed_wpm": 145, "energy": 0.7}
+    analysis = VoiceCloner.analyze_voice(features)
+    print(analysis)
+    profile = VoiceCloner.build_profile("speaker_1", [analysis])
+    print(profile)
+    params = VoiceCloner.get_tts_params(profile, "es")
+    print(params)
+}

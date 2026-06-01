@@ -1,0 +1,56 @@
+# Plugin: Real-Time Glossary Sync — hot-loadable custom terminology
+# Users drop glossary .ai files and they're instantly active
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+const PLUGIN_NAME = "glossary_sync"
+const PLUGIN_VERSION = "1.0.0"
+const PLUGIN_HOOKS = ["pre_translate", "post_translate"]
+
+const GLOSSARY_FILE = "custom_glossary.json"
+
+fn load_glossary(): dict {
+    if file_exists(GLOSSARY_FILE) {
+        content = read_file(GLOSSARY_FILE)
+        if length(content) > 2 { return parse_json(content) }
+    }
+    return {"terms": {}, "version": "1.0"}
+}
+
+fn pre_translate(text: string, source_lang: string, target_lang: string, context: dict): string {
+    glossary = load_glossary()
+    terms = get_value(glossary, "terms")
+    result = text
+    for term_key in keys(terms) {
+        if contains(lower(result), lower(term_key)) {
+            entry = dict_get(terms, term_key)
+            preferred = get_value(entry, target_lang)
+            if preferred {
+                result = replace(result, term_key, f"[GLOSS:{preferred}]{term_key}[/GLOSS]")
+            }
+        }
+    }
+    return result
+}
+
+fn post_translate(original: string, translated: string, source_lang: string, target_lang: string, context: dict): string {
+    result = translated
+    glossary = load_glossary()
+    terms = get_value(glossary, "terms")
+    for term_key in keys(terms) {
+        if contains(lower(original), lower(term_key)) {
+            entry = dict_get(terms, term_key)
+            preferred = get_value(entry, target_lang)
+            if preferred {
+                prompt = f"In this translation, ensure '{term_key}' is translated as '{preferred}': {result}"
+                result = ask fast: prompt
+            }
+        }
+    }
+    return result
+}
+
+fn main() {
+    print("Glossary sync plugin loaded")
+    g = load_glossary()
+    print(g)
+}

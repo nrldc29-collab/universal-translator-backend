@@ -1,0 +1,70 @@
+# Plugin: AILang Marketplace — discover, install, and manage community plugins
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+const PLUGIN_NAME = "marketplace"
+const PLUGIN_VERSION = "1.0.0"
+const PLUGIN_HOOKS = []
+
+const MARKETPLACE_INDEX_FILE = "marketplace_index.json"
+const INSTALLED_PLUGINS_FILE = "installed_plugins.json"
+
+fn get_marketplace_index(): dict {
+    if file_exists(MARKETPLACE_INDEX_FILE) {
+        content = read_file(MARKETPLACE_INDEX_FILE)
+        if length(content) > 2 { return parse_json(content) }
+    }
+    return {"plugins": [
+        {"name": "medical_terminology", "version": "1.0.0", "description": "Precise medical translations with drug name protection", "author": "core", "category": "medical", "hooks": ["pre_translate", "post_translate"]},
+        {"name": "legal_terminology", "version": "1.0.0", "description": "Legal document translation with clause preservation", "author": "core", "category": "legal", "hooks": ["pre_translate", "post_translate"]},
+        {"name": "tourism_pack", "version": "1.0.0", "description": "Common travel phrases and cultural tips for tourists", "author": "community", "category": "travel", "hooks": ["post_translate"]},
+        {"name": "slang_filter", "version": "1.0.0", "description": "Detects and appropriately translates slang and colloquialisms", "author": "community", "category": "general", "hooks": ["pre_translate", "post_translate"]},
+        {"name": "politeness_filter", "version": "1.0.0", "description": "Adjusts formality level based on cultural norms", "author": "core", "category": "culture", "hooks": ["post_translate"]},
+        {"name": "sentiment_alerts", "version": "1.0.0", "description": "Alerts when translation may change emotional tone", "author": "community", "category": "safety", "hooks": ["post_translate"]}
+    ], "last_updated": "2025-01-01"}
+}
+
+fn search_plugins(query: string): list {
+    index = get_marketplace_index()
+    all_plugins = get_value(index, "plugins")
+    results = []
+    lowered = lower(query)
+    for plugin in all_plugins {
+        name = get_value(plugin, "name")
+        desc = get_value(plugin, "description")
+        cat = get_value(plugin, "category")
+        if contains(lower(name), lowered) || contains(lower(desc), lowered) || contains(lower(cat), lowered) {
+            results = results + [plugin]
+        }
+    }
+    return results
+}
+
+fn list_categories(): list {
+    index = get_marketplace_index()
+    all_plugins = get_value(index, "plugins")
+    cats = []
+    for plugin in all_plugins {
+        cat = get_value(plugin, "category")
+        found = false
+        for c in cats {
+            if c == cat { found = true }
+        }
+        if !found { cats = cats + [cat] }
+    }
+    return cats
+}
+
+fn get_installed(): list {
+    if file_exists(INSTALLED_PLUGINS_FILE) {
+        content = read_file(INSTALLED_PLUGINS_FILE)
+        if length(content) > 2 { return parse_json(content) }
+    }
+    return []
+}
+
+fn main() {
+    results = search_plugins("medical")
+    print(results)
+    cats = list_categories()
+    print(cats)
+}

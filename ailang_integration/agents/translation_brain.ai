@@ -1,0 +1,135 @@
+# Translation Brain — core intelligence that decides HOW to translate
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+const MEDICAL_TERMS = ["doctor", "hospital", "medication", "allergy", "pain", "blood", "emergency", "dose", "symptom", "diagnosis", "surgery", "prescription", "pharmacy", "nurse", "fever", "infection", "vaccine", "therapy", "clinic", "ambulance", "oxygen", "pulse", "fracture", "diabetes", "insulin", "antibiotic"]
+const LEGAL_TERMS = ["lawyer", "court", "contract", "rights", "judge", "arrest", "custody", "statute", "liability", "plaintiff", "defendant", "verdict", "testimony", "bail", "warrant", "appeal", "jurisdiction", "negligence", "settlement", "deposition"]
+const FINANCIAL_TERMS = ["money", "bank", "price", "cost", "invoice", "payment", "refund", "interest", "transfer", "mortgage", "deposit", "withdrawal", "balance", "credit", "debit", "exchange", "currency", "tax", "insurance", "loan"]
+const TECHNICAL_TERMS = ["server", "database", "API", "endpoint", "deploy", "container", "kubernetes", "module", "function", "variable", "compile", "runtime", "debug", "framework", "repository", "commit", "merge", "branch"]
+const TRAVEL_TERMS = ["passport", "visa", "airport", "flight", "hotel", "reservation", "check-in", "boarding", "customs", "luggage", "gate", "terminal", "taxi", "train", "bus", "ticket"]
+const EDUCATION_TERMS = ["school", "university", "professor", "student", "exam", "grade", "homework", "lecture", "degree", "scholarship", "campus", "tuition", "semester"]
+
+fn detect_domain(text: string): string {
+    lowered = lower(text)
+    scores = {"medical": 0, "legal": 0, "financial": 0, "technical": 0, "travel": 0, "education": 0}
+    for term in MEDICAL_TERMS {
+        if contains(lowered, term) { scores = dict_set(scores, "medical", dict_get(scores, "medical") + 1) }
+    }
+    for term in LEGAL_TERMS {
+        if contains(lowered, term) { scores = dict_set(scores, "legal", dict_get(scores, "legal") + 1) }
+    }
+    for term in FINANCIAL_TERMS {
+        if contains(lowered, term) { scores = dict_set(scores, "financial", dict_get(scores, "financial") + 1) }
+    }
+    for term in TECHNICAL_TERMS {
+        if contains(lowered, term) { scores = dict_set(scores, "technical", dict_get(scores, "technical") + 1) }
+    }
+    for term in TRAVEL_TERMS {
+        if contains(lowered, term) { scores = dict_set(scores, "travel", dict_get(scores, "travel") + 1) }
+    }
+    for term in EDUCATION_TERMS {
+        if contains(lowered, term) { scores = dict_set(scores, "education", dict_get(scores, "education") + 1) }
+    }
+    best = "general"
+    best_score = 0
+    for domain in keys(scores) {
+        s = dict_get(scores, domain)
+        if s > best_score { best_score = s best = domain }
+    }
+    return best
+}
+
+fn detect_formality(text: string, domain: string): string {
+    lowered = lower(text)
+    formal_markers = ["would you", "could you", "i would appreciate", "kindly", "sir", "madam", "regarding", "therefore", "furthermore", "pursuant"]
+    informal_markers = ["hey", "gonna", "wanna", "lol", "yo", "dude", "bro", "nah", "yeah", "cool", "stuff", "kinda", "gotta"]
+    formal_score = 0
+    informal_score = 0
+    for m in formal_markers { if contains(lowered, m) { formal_score = formal_score + 1 } }
+    for m in informal_markers { if contains(lowered, m) { informal_score = informal_score + 1 } }
+    if formal_score > informal_score { return "formal" }
+    if informal_score > formal_score { return "informal" }
+    if domain == "medical" || domain == "legal" || domain == "financial" { return "formal" }
+    return "neutral"
+}
+
+fn detect_urgency(text: string, context: dict): string {
+    lowered = lower(text)
+    urgent_terms = ["emergency", "urgent", "help", "immediately", "now", "hurry", "quick", "asap", "dying", "danger", "fire", "accident"]
+    for term in urgent_terms {
+        if contains(lowered, term) { return "urgent" }
+    }
+    ctx_urgency = get_value(context, "urgency")
+    if ctx_urgency { return ctx_urgency }
+    return "normal"
+}
+
+fn select_model(domain: string, urgency: string, text_length: int): string {
+    if domain == "medical" || domain == "legal" { return "claude" }
+    if urgency == "urgent" && text_length < 80 { return "fast" }
+    if text_length > 300 { return "claude" }
+    return "fast"
+}
+
+fn build_instructions(domain: string, formality: string, urgency: string): list {
+    instructions = []
+    if domain == "medical" { instructions = instructions + ["Use precise medical terminology", "Do not paraphrase drug names", "Preserve dosage numbers exactly", "Flag any ambiguous medical terms"] }
+    if domain == "legal" { instructions = instructions + ["Maintain legal precision", "Keep formal register", "Preserve clause structure", "Do not simplify legal terms"] }
+    if domain == "financial" { instructions = instructions + ["Preserve all numbers and currencies exactly", "Use standard financial terminology", "Keep decimal precision"] }
+    if domain == "technical" { instructions = instructions + ["Keep technical terms untranslated when standard", "Preserve code identifiers", "Maintain acronyms"] }
+    if domain == "travel" { instructions = instructions + ["Use locally common terms for places and transport", "Keep proper nouns untranslated"] }
+    if formality == "formal" { instructions = instructions + ["Use formal register and honorifics"] }
+    if formality == "informal" { instructions = instructions + ["Keep casual tone, use target language colloquialisms"] }
+    if urgency == "urgent" { instructions = instructions + ["Prioritize clarity and brevity over elegance"] }
+    return instructions
+}
+
+agent TranslationBrain(claude) {
+    instructions: "You are an expert translator adapting output based on domain, tone, formality, and cultural context. For medical/legal, prioritize precision. For casual, prioritize naturalness."
+    tools: detect_domain, detect_formality, detect_urgency, select_model, build_instructions
+
+    fn analyze(text: string, source_lang: string, target_lang: string, context: dict): dict {
+        domain = detect_domain(text)
+        formality = detect_formality(text, domain)
+        urgency = detect_urgency(text, context)
+        model_choice = select_model(domain, urgency, length(text))
+        instructions = build_instructions(domain, formality, urgency)
+        conf_threshold = 0.85
+        if domain == "medical" || domain == "legal" { conf_threshold = 0.95 }
+        return {"domain": domain, "formality": formality, "urgency": urgency, "model": model_choice, "instructions": instructions, "confidence_threshold": conf_threshold, "require_confirmation": domain == "medical" || domain == "legal"}
+    }
+
+    fn translate(text: string, source_lang: string, target_lang: string, context: dict): dict {
+        analysis = analyze(text, source_lang, target_lang, context)
+        instruction_text = join(get_value(analysis, "instructions"), ". ")
+        prompt = f"Translate from {source_lang} to {target_lang}. {instruction_text}. Text: {text}"
+        result = ask claude: prompt
+        return {"translated_text": result, "analysis": analysis, "model_used": get_value(analysis, "model"), "domain": get_value(analysis, "domain"), "formality": get_value(analysis, "formality"), "require_confirmation": get_value(analysis, "require_confirmation")}
+    }
+}
+
+agent IdiomHandler(claude) {
+    instructions: "You detect idioms and culturally-specific expressions and provide culturally-equivalent translations."
+    tools: detect_idioms, culturally_adapt
+
+    fn detect_idioms(text: string, source_lang: string): list {
+        prompt = f"Identify idioms, slang, or cultural expressions in this {source_lang} text. Return JSON array with original, meaning, is_idiom fields: {text}"
+        result = ask claude: prompt
+        detected = extract_json(result)
+        if detected == false { return [] }
+        return detected
+    }
+
+    fn culturally_adapt(text: string, source_lang: string, target_lang: string, idioms: list): string {
+        if length(idioms) == 0 { return text }
+        idiom_context = to_json(idioms)
+        prompt = f"Translate from {source_lang} to {target_lang}, replacing idioms with culturally equivalent expressions (not literal). Idioms: {idiom_context}. Text: {text}"
+        return ask claude: prompt
+    }
+}
+
+fn main() {
+    ctx = {"urgency": "urgent", "speaker": "Patient", "turn_count": 1}
+    result = TranslationBrain.translate("I need to see a doctor, my chest hurts badly and I'm allergic to penicillin", "en", "es", ctx)
+    print(result)
+}

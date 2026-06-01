@@ -1,0 +1,42 @@
+# Fast Pipeline — minimal latency for real-time streaming
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+fn step_stt(audio_data: dict, context: dict): dict {
+    text = get_value(audio_data, "transcribed_text")
+    lang = get_value(audio_data, "detected_language")
+    conf = get_value(audio_data, "stt_confidence")
+    return {"text": text, "source_lang": lang, "confidence": conf}
+}
+
+fn step_quick_context(input: dict, context: dict): dict {
+    text = get_value(input, "text")
+    tgt = get_value(context, "target_lang")
+    return dict_set(dict_set(input, "resolved_text", text), "target_lang", tgt)
+}
+
+fn step_fast_translate(input: dict, context: dict): dict {
+    src = get_value(input, "source_lang")
+    tgt = get_value(input, "target_lang")
+    text = get_value(input, "resolved_text")
+    result = f"[{src}->{tgt}] {text}"
+    return dict_set(input, "translated_text", result)
+}
+
+fn step_tts_prepare(input: dict, context: dict): dict {
+    translated = get_value(input, "translated_text")
+    target = get_value(input, "target_lang")
+    tts = {"text": translated, "language": target, "speed": 1.0, "emotion": "neutral"}
+    return dict_set(input, "tts_config", tts)
+}
+
+const FAST_STEPS = ["step_stt", "step_quick_context", "step_fast_translate", "step_tts_prepare"]
+
+fn main() {
+    data = {"transcribed_text": "Where is the bathroom?", "detected_language": "en", "stt_confidence": 0.95}
+    ctx = {"target_lang": "es"}
+    result = step_stt(data, ctx)
+    result = step_quick_context(result, ctx)
+    result = step_fast_translate(result, ctx)
+    result = step_tts_prepare(result, ctx)
+    print(get_value(result, "translated_text"))
+}

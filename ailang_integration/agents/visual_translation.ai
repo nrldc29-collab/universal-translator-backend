@@ -1,0 +1,50 @@
+# Visual Translation — reads signs, menus, docs via OCR then translates
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+agent VisualTranslator(claude) {
+    instructions: "You process OCR text from images and translate it preserving layout structure."
+    tools: process_ocr_text, detect_content_type, translate_structured, format_overlay
+
+    fn process_ocr_text(raw_ocr: string): dict {
+        prompt = f"Clean this OCR text. Fix errors, separate into lines. Reply JSON with cleaned_text and lines array: {raw_ocr}"
+        return extract_json(ask fast: prompt)
+    }
+
+    fn detect_content_type(text: string): dict {
+        prompt = f"What type of content: sign, menu, document, label, receipt, business_card? Text: {text}. Reply JSON with type and confidence."
+        return extract_json(ask fast: prompt)
+    }
+
+    fn translate_structured(lines: list, source_lang: string, target_lang: string, content_type: string): list {
+        translated_lines = []
+        for line in lines {
+            if length(strip(line)) == 0 {
+                translated_lines = translated_lines + [{"original": line, "translated": line}]
+            } else {
+                prompt = f"Translate this {content_type} text from {source_lang} to {target_lang}, keep concise: {line}"
+                translated = strip(ask fast: prompt)
+                translated_lines = translated_lines + [{"original": line, "translated": translated}]
+            }
+        }
+        return translated_lines
+    }
+
+    fn format_overlay(translated_lines: list, content_type: string): dict {
+        entries = []
+        idx = 0
+        for item in translated_lines {
+            orig = get_value(item, "original")
+            trans = get_value(item, "translated")
+            entries = entries + [{"line": idx, "original": orig, "translated": trans}]
+            idx = idx + 1
+        }
+        return {"overlay_data": entries, "content_type": content_type, "total_lines": length(translated_lines)}
+    }
+}
+
+fn main() {
+    ocr = "SALIDA DE EMERGENCIA\nNo bloquear esta puerta"
+    processed = VisualTranslator.process_ocr_text(ocr)
+    print(processed)
+}
