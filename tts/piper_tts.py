@@ -1,5 +1,6 @@
 import base64
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -73,6 +74,82 @@ def _normalize_language(code):
     return str(code).strip().lower().split("-")[0].split("_")[0] or "en"
 
 
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def google_audio_config_from_emotion(emotion_config: Optional[dict]) -> dict:
+    """Map an AILang EmotionTTS tts_config to Google Cloud TTS audioConfig overrides.
+
+    Returns only the keys that differ from neutral so callers can merge them into
+    the base audioConfig. Safe with None or partial configs.
+    """
+    overrides: dict = {}
+    if not emotion_config:
+        return overrides
+    speed = emotion_config.get("speed")
+    if isinstance(speed, (int, float)) and speed > 0 and float(speed) != 1.0:
+        overrides["speakingRate"] = round(_clamp(float(speed), 0.25, 4.0), 3)
+    pitch_shift = emotion_config.get("pitch_shift")
+    if isinstance(pitch_shift, (int, float)) and pitch_shift:
+        overrides["pitch"] = round(_clamp(float(pitch_shift), -20.0, 20.0), 3)
+    volume = emotion_config.get("volume")
+    if isinstance(volume, (int, float)) and volume > 0 and float(volume) != 1.0:
+        overrides["volumeGainDb"] = round(_clamp(20.0 * math.log10(float(volume)), -96.0, 16.0), 3)
+    return overrides
+
+
+def espeak_flags_from_emotion(emotion_config: Optional[dict]) -> tuple:
+    """Map an AILang EmotionTTS tts_config to eSpeak NG (speed_wpm, pitch, amplitude).
+
+    Defaults match the neutral baseline (160 wpm, pitch 50, amplitude 100).
+    """
+    speed_wpm, pitch, amplitude = 160, 50, 100
+    if not emotion_config:
+        return speed_wpm, pitch, amplitude
+    speed = emotion_config.get("speed")
+    if isinstance(speed, (int, float)) and speed > 0:
+        speed_wpm = int(_clamp(160.0 * float(speed), 80, 450))
+    pitch_shift = emotion_config.get("pitch_shift")
+    if isinstance(pitch_shift, (int, float)):
+        pitch = int(_clamp(50.0 + float(pitch_shift) * 2.5, 0, 99))
+    volume = emotion_config.get("volume")
+    if isinstance(volume, (int, float)) and volume > 0:
+        amplitude = int(_clamp(100.0 * float(volume), 0, 200))
+    return speed_wpm, pitch, amplitude
+
+
+def _piper_synthesis_config_from_emotion(emotion_config: Optional[dict]):
+    """Build a piper SynthesisConfig from an emotion tts_config, or None.
+
+    Returns None when there is nothing to apply or piper's SynthesisConfig is
+    unavailable, so callers fall back to the default synthesis path.
+    """
+    if not emotion_config:
+        return None
+    try:
+        from piper import SynthesisConfig
+    except Exception:
+        return None
+    kwargs: dict = {}
+    speed = emotion_config.get("speed")
+    if isinstance(speed, (int, float)) and speed > 0 and float(speed) != 1.0:
+        # length_scale is the inverse of speed: >1 slower, <1 faster.
+        kwargs["length_scale"] = round(_clamp(1.0 / float(speed), 0.25, 4.0), 3)
+    volume = emotion_config.get("volume")
+    if isinstance(volume, (int, float)) and volume > 0 and float(volume) != 1.0:
+        kwargs["volume"] = round(_clamp(float(volume), 0.0, 4.0), 3)
+    if not kwargs:
+        return None
+    try:
+        return SynthesisConfig(**kwargs)
+    except TypeError:
+        try:
+            return SynthesisConfig(length_scale=kwargs.get("length_scale", 1.0))
+        except Exception:
+            return None
+
+
 class PiperTextToSpeech:
     def __init__(self, model_path=None, voices=None):
         # Backward-compat: if a single model_path is passed, use it for English.
@@ -132,7 +209,7 @@ class PiperTextToSpeech:
             "off",
         }
 
-    def _synthesize_google(self, text, out_path, lang, google_api_key=None):
+    def _synthesize_google(self, text, out_path, lang, google_api_key=None, emotion_config=None):
         """Render audio via Google Cloud Text-to-Speech neural voice.
 
         Produces a 22050 Hz mono 16-bit PCM WAV — same format Piper outputs.
@@ -158,6 +235,8 @@ class PiperTextToSpeech:
                 "sampleRateHertz": 22050,
             },
         }
+        # Apply emotional tone (speaking rate / pitch / volume) when provided.
+        payload["audioConfig"].update(google_audio_config_from_emotion(emotion_config))
         
         for attempt in range(MAX_RETRIES):
             try:
@@ -180,7 +259,7 @@ class PiperTextToSpeech:
             f.write(base64.b64decode(audio_b64))
         return str(out_path)
 
-    def _synthesize_espeak(self, text, out_path, lang):
+    def _synthesize_espeak(self, text, out_path, lang, emotion_config=None):
         """Render audio via eSpeak NG for languages with no Piper voice.
 
         Produces a 22050 Hz mono 16-bit PCM WAV — same format Piper outputs,
@@ -190,12 +269,13 @@ class PiperTextToSpeech:
         # Speed (-s): 160 wpm is roughly natural. Pitch (-p): 50 = neutral.
         # -a 100 = max amplitude. -w writes WAV. -v ht selects Haitian Creole.
         espeak_voice = ESPEAK_VOICE_MAP.get(lang, lang)
+        speed_wpm, pitch, amplitude = espeak_flags_from_emotion(emotion_config)
         cmd = [
             "espeak-ng",
             "-v", espeak_voice,
-            "-s", "160",
-            "-p", "50",
-            "-a", "100",
+            "-s", str(speed_wpm),
+            "-p", str(pitch),
+            "-a", str(amplitude),
             "-w", str(out_path),
             text,
         ]
@@ -224,7 +304,7 @@ class PiperTextToSpeech:
                 
         return str(out_path)
 
-    def synthesize(self, text, output_path="models/tts/output.wav", language=None, google_api_key=None):
+    def synthesize(self, text, output_path="models/tts/output.wav", language=None, google_api_key=None, emotion_config=None):
         if not text or not text.strip():
             raise ValueError("Cannot synthesize empty text.")
 
@@ -238,14 +318,14 @@ class PiperTextToSpeech:
             if lang in ESPEAK_LANGUAGES:
                 if self._use_cloud_tts(lang, google_api_key=google_api_key):
                     try:
-                        return self._synthesize_google(text, out_path, lang, google_api_key=google_api_key)
+                        return self._synthesize_google(text, out_path, lang, google_api_key=google_api_key, emotion_config=emotion_config)
                     except (requests.RequestException, ConnectionError, TimeoutError) as exc:
                         logger.warning(f"Google TTS failed for {lang}, falling back to eSpeak: {exc}")
-                return self._synthesize_espeak(text, out_path, lang)
+                return self._synthesize_espeak(text, out_path, lang, emotion_config=emotion_config)
 
             if self._use_cloud_tts(lang, google_api_key=google_api_key):
                 try:
-                    return self._synthesize_google(text, out_path, lang, google_api_key=google_api_key)
+                    return self._synthesize_google(text, out_path, lang, google_api_key=google_api_key, emotion_config=emotion_config)
                 except (requests.RequestException, ConnectionError, TimeoutError) as exc:
                     logger.warning(f"Google TTS failed for {lang}, falling back to Piper: {exc}")
 
@@ -272,7 +352,14 @@ class PiperTextToSpeech:
                 if not acquired:
                     raise RuntimeError("TTS synthesis busy — skipping partial to stay current.")
                 try:
-                    audio_chunks = list(voice.synthesize(text))
+                    syn_config = _piper_synthesis_config_from_emotion(emotion_config)
+                    if syn_config is not None:
+                        try:
+                            audio_chunks = list(voice.synthesize(text, syn_config=syn_config))
+                        except TypeError:
+                            audio_chunks = list(voice.synthesize(text))
+                    else:
+                        audio_chunks = list(voice.synthesize(text))
                 finally:
                     self._lock.release()
                 if not audio_chunks:

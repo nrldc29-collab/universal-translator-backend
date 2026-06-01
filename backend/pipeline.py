@@ -161,9 +161,12 @@ class AnaiTranslatorPipeline:
                 context = self.ailang_pipeline.get_or_create_context(self.session_id)
                 emotion_result = self.ailang_pipeline.process_emotion_tts(translated_text, target_language, context)
                 emotion_config = emotion_result.get("tts_config")
+                ailang_metadata["emotion_tts"] = emotion_result
             
-            # For now, we still use standard TTS - emotion config can be applied in future TTS enhancements
-            audio_output_path = self.tts.synthesize(translated_text, output_audio_path, language=target_language)
+            # Emotion-aware TTS: speaking rate / pitch / volume carried into synthesis.
+            audio_output_path = self.tts.synthesize(
+                translated_text, output_audio_path, language=target_language, emotion_config=emotion_config
+            )
 
         return TranslationResult(
             source_text=text,
@@ -281,9 +284,12 @@ class AnaiTranslatorPipeline:
                 context = self.ailang_pipeline.get_or_create_context(self.session_id)
                 emotion_result = self.ailang_pipeline.process_emotion_tts(translated_text, target_language, context)
                 emotion_config = emotion_result.get("tts_config")
+                ailang_metadata["emotion_tts"] = emotion_result
             
-            # For now, we still use standard TTS - emotion config can be applied in future TTS enhancements
-            audio_output_path = self.tts.synthesize(translated_text, output_audio_path, language=target_language)
+            # Emotion-aware TTS: speaking rate / pitch / volume carried into synthesis.
+            audio_output_path = self.tts.synthesize(
+                translated_text, output_audio_path, language=target_language, emotion_config=emotion_config
+            )
         return TranslationResult(
             source_text=text,
             improved_text=improved_text,

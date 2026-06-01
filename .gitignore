@@ -63,10 +63,7 @@ logs/
 *.sqlite3
 *.sqlite
 *.db
-governance/
-memory/
-runtime/
-translation_log.jsonl
+/translation_log.jsonl
 
 # OS/editor noise
 .DS_Store
