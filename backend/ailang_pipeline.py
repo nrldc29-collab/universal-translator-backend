@@ -274,6 +274,7 @@ class AILangPipelineManager:
         self._bridge = None
         self._enabled = get_ailang_enabled()
         self._context_cache: Dict[str, AILangContext] = {}
+        self._session_timestamps: Dict[str, float] = {}  # Track last access time for each session
         
         # Circuit breakers for each agent with configurable thresholds
         failure_threshold = get_ailang_circuit_failure_threshold()
@@ -405,12 +406,28 @@ class AILangPipelineManager:
         """Get or create context for a session."""
         if session_id not in self._context_cache:
             self._context_cache[session_id] = AILangContext(session_id=session_id)
+        self._session_timestamps[session_id] = time.time()
         return self._context_cache[session_id]
     
     def clear_context(self, session_id: str) -> None:
         """Clear context for a session."""
         if session_id in self._context_cache:
             del self._context_cache[session_id]
+        if session_id in self._session_timestamps:
+            del self._session_timestamps[session_id]
+    
+    def cleanup_inactive_sessions(self, max_age_seconds: float = 3600.0) -> int:
+        """Remove inactive sessions older than max_age_seconds. Returns number of sessions cleaned."""
+        current_time = time.time()
+        inactive_sessions = [
+            session_id for session_id, timestamp in self._session_timestamps.items()
+            if current_time - timestamp > max_age_seconds
+        ]
+        for session_id in inactive_sessions:
+            self.clear_context(session_id)
+        if inactive_sessions:
+            logger.info(f"Cleaned up {len(inactive_sessions)} inactive AILang sessions")
+        return len(inactive_sessions)
     
     def _validate_agent_response(self, agent_name: str, response: Any, expected_fields: List[str]) -> bool:
         """Validate that agent response contains expected fields."""

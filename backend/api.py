@@ -1032,6 +1032,17 @@ def reset_all_ailang_circuit_breakers(identity: str = Depends(authenticate_http)
     return {"status": "error", "message": "AILang pipeline not available"}
 
 
+@app.post("/ailang/sessions/cleanup")
+@limiter.limit("5/minute")
+def cleanup_ailang_sessions(max_age_seconds: float = 3600.0, identity: str = Depends(authenticate_http)):
+    """Clean up inactive AILang sessions older than max_age_seconds."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        count = pipeline.ailang_pipeline.cleanup_inactive_sessions(max_age_seconds)
+        return {"status": "ok", "cleaned": count, "message": f"Cleaned {count} inactive sessions"}
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
 @app.websocket("/ws/translate")
 async def websocket_translate(websocket: WebSocket):
     ok, identity = await authenticate_websocket(websocket)

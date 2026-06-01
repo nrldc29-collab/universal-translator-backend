@@ -126,6 +126,19 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
     }
   };
 
+  const cleanupSessions = async () => {
+    try {
+      const response = await fetch(`${apiUrl}/ailang/sessions/cleanup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Failed to cleanup sessions');
+      await loadStats();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   if (loading) {
     return (
       <div className="ailang-config-panel">
@@ -248,6 +261,9 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
           </button>
           <button type="button" className="ailang-config-btn" onClick={resetAllCircuitBreakers}>
             Reset All CBs
+          </button>
+          <button type="button" className="ailang-config-btn" onClick={cleanupSessions}>
+            Cleanup Sessions
           </button>
         </div>
       </div>
