@@ -63,6 +63,8 @@ COPY llm llm/
 COPY speech speech/
 COPY translation translation/
 COPY tts tts/
+COPY ailang ailang/
+COPY ailang_integration ailang_integration/
 RUN mkdir -p models/tts && \
     curl -L --fail -o models/tts/en_US-lessac-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx && \
     curl -L --fail -o models/tts/en_US-lessac-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json && \
