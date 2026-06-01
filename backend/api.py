@@ -945,6 +945,22 @@ def get_ailang_health(identity: str = Depends(authenticate_http)):
         }
 
 
+@app.get("/ailang/health-status")
+def get_ailang_health_status(identity: str = Depends(authenticate_http)):
+    """Get AILang pipeline health status with alerts."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        return pipeline.ailang_pipeline.get_health_status()
+    return {
+        "overall_status": "unavailable",
+        "agent_health": {},
+        "alerts": [],
+        "total_alerts": 0,
+        "critical_alerts": 0,
+        "warning_alerts": 0,
+    }
+
+
 @app.post("/ailang/agent/{agent_name}/enable")
 @limiter.limit("20/minute")
 def enable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_http)):

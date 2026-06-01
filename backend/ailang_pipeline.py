@@ -70,17 +70,38 @@ class CircuitBreaker:
     successful_calls: int = 0
     failed_calls: int = 0
     avg_latency_ms: float = 0.0
+    # Performance monitoring
+    latency_history: List[float] = field(default_factory=list)
+    max_history_size: int = 100
+    p50_latency_ms: float = 0.0
+    p95_latency_ms: float = 0.0
+    p99_latency_ms: float = 0.0
     
     def record_success(self, latency_ms: float = 0.0) -> None:
         """Record a successful call."""
         self.failure_count = 0
         self.total_calls += 1
         self.successful_calls += 1
+        
         # Update rolling average latency
         if self.avg_latency_ms == 0:
             self.avg_latency_ms = latency_ms
         else:
             self.avg_latency_ms = (self.avg_latency_ms * 0.9) + (latency_ms * 0.1)
+        
+        # Update latency history for percentile calculations
+        self.latency_history.append(latency_ms)
+        if len(self.latency_history) > self.max_history_size:
+            self.latency_history.pop(0)
+        
+        # Calculate percentiles
+        if self.latency_history:
+            sorted_history = sorted(self.latency_history)
+            n = len(sorted_history)
+            self.p50_latency_ms = sorted_history[int(n * 0.5)]
+            self.p95_latency_ms = sorted_history[int(n * 0.95)]
+            self.p99_latency_ms = sorted_history[int(n * 0.99)]
+        
         if self.state == CircuitState.HALF_OPEN:
             self.state = CircuitState.CLOSED
             logger.info("Circuit breaker recovered to CLOSED state")
@@ -112,7 +133,7 @@ class CircuitBreaker:
         return True
     
     def get_stats(self) -> Dict[str, Any]:
-        """Get circuit breaker statistics."""
+        """Get circuit breaker statistics with performance metrics."""
         return {
             "state": self.state.value,
             "failure_count": self.failure_count,
@@ -121,7 +142,75 @@ class CircuitBreaker:
             "failed_calls": self.failed_calls,
             "success_rate": self.successful_calls / self.total_calls if self.total_calls > 0 else 0.0,
             "avg_latency_ms": round(self.avg_latency_ms, 2),
+            "p50_latency_ms": round(self.p50_latency_ms, 2),
+            "p95_latency_ms": round(self.p95_latency_ms, 2),
+            "p99_latency_ms": round(self.p99_latency_ms, 2),
+            "latency_samples": len(self.latency_history),
             "last_failure_time": self.last_failure_time,
+        }
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get health status with alerts."""
+        alerts = []
+        status = "healthy"
+        
+        # Check circuit breaker state
+        if self.state == CircuitState.OPEN:
+            alerts.append({
+                "type": "circuit_open",
+                "severity": "critical",
+                "message": f"Circuit breaker is OPEN after {self.failure_count} failures"
+            })
+            status = "critical"
+        elif self.state == CircuitState.HALF_OPEN:
+            alerts.append({
+                "type": "circuit_half_open",
+                "severity": "warning",
+                "message": "Circuit breaker is in HALF_OPEN state testing recovery"
+            })
+            status = "degraded"
+        
+        # Check success rate
+        if self.total_calls >= 10:
+            success_rate = self.successful_calls / self.total_calls
+            if success_rate < 0.5:
+                alerts.append({
+                    "type": "low_success_rate",
+                    "severity": "critical",
+                    "message": f"Success rate is {success_rate:.1%} (below 50%)"
+                })
+                status = "critical"
+            elif success_rate < 0.8:
+                alerts.append({
+                    "type": "low_success_rate",
+                    "severity": "warning",
+                    "message": f"Success rate is {success_rate:.1%} (below 80%)"
+                })
+                if status != "critical":
+                    status = "degraded"
+        
+        # Check latency percentiles
+        if self.p95_latency_ms > 5000:  # 5 seconds
+            alerts.append({
+                "type": "high_latency",
+                "severity": "warning",
+                "message": f"P95 latency is {self.p95_latency_ms:.0f}ms (above 5000ms)"
+            })
+            if status != "critical":
+                status = "degraded"
+        
+        if self.p99_latency_ms > 10000:  # 10 seconds
+            alerts.append({
+                "type": "high_latency",
+                "severity": "critical",
+                "message": f"P99 latency is {self.p99_latency_ms:.0f}ms (above 10000ms)"
+            })
+            status = "critical"
+        
+        return {
+            "status": status,
+            "alerts": alerts,
+            "metrics": self.get_stats()
         }
 
 
@@ -597,6 +686,30 @@ class AILangPipelineManager:
             "active_sessions": len(self._context_cache),
             "bridge_stats": None,
             "circuit_breakers": circuit_breaker_stats,
+        }
+    
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get overall pipeline health status with alerts."""
+        circuit_breaker_health = {name: cb.get_health_status() for name, cb in self._circuit_breakers.items()}
+        
+        # Aggregate alerts
+        all_alerts = []
+        overall_status = "healthy"
+        
+        for agent_name, health in circuit_breaker_health.items():
+            all_alerts.extend([{"agent": agent_name, **alert} for alert in health["alerts"]])
+            if health["status"] == "critical":
+                overall_status = "critical"
+            elif health["status"] == "degraded" and overall_status != "critical":
+                overall_status = "degraded"
+        
+        return {
+            "overall_status": overall_status,
+            "agent_health": circuit_breaker_health,
+            "alerts": all_alerts,
+            "total_alerts": len(all_alerts),
+            "critical_alerts": len([a for a in all_alerts if a["severity"] == "critical"]),
+            "warning_alerts": len([a for a in all_alerts if a["severity"] == "warning"]),
         }
 
 

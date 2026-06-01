@@ -37,6 +37,56 @@ All AILang endpoints require authentication via API key or JWT token.
 
 ### Health & Statistics
 
+#### GET `/ailang/health-status`
+
+Returns the health status of the AILang pipeline with alerts for any issues.
+
+**Response:**
+```json
+{
+  "overall_status": "healthy" | "degraded" | "critical" | "unavailable",
+  "agent_health": {
+    "TranslationBrain": {
+      "status": "healthy",
+      "alerts": [],
+      "metrics": {
+        "state": "closed",
+        "total_calls": 150,
+        "success_rate": 0.95,
+        "avg_latency_ms": 250.5,
+        "p50_latency_ms": 230.0,
+        "p95_latency_ms": 450.0,
+        "p99_latency_ms": 800.0
+      }
+    },
+    ...
+  },
+  "alerts": [
+    {
+      "agent": "SpeakerProfilerAgent",
+      "type": "high_latency",
+      "severity": "warning",
+      "message": "P95 latency is 5200ms (above 5000ms)"
+    }
+  ],
+  "total_alerts": 1,
+  "critical_alerts": 0,
+  "warning_alerts": 1
+}
+```
+
+**Alert Types:**
+- `circuit_open`: Circuit breaker is OPEN (critical)
+- `circuit_half_open`: Circuit breaker is testing recovery (warning)
+- `low_success_rate`: Success rate below threshold (critical/warning)
+- `high_latency`: Latency percentiles above threshold (critical/warning)
+
+**Status Levels:**
+- `healthy`: No alerts, all agents functioning normally
+- `degraded`: Warning-level alerts present, service degraded but operational
+- `critical`: Critical-level alerts present, service may be unavailable
+- `unavailable`: AILang pipeline not loaded or disabled
+
 #### GET `/ailang/health`
 
 Returns the health status of the AILang bridge and pipeline.
@@ -53,7 +103,7 @@ Returns the health status of the AILang bridge and pipeline.
 
 #### GET `/ailang/stats`
 
-Returns comprehensive statistics about the AILang pipeline including circuit breaker metrics.
+Returns comprehensive statistics about the AILang pipeline including circuit breaker metrics and performance percentiles.
 
 **Response:**
 ```json
@@ -66,7 +116,11 @@ Returns comprehensive statistics about the AILang pipeline including circuit bre
       "state": "closed",
       "total_calls": 150,
       "success_rate": 0.95,
-      "avg_latency_ms": 250.5
+      "avg_latency_ms": 250.5,
+      "p50_latency_ms": 230.0,
+      "p95_latency_ms": 450.0,
+      "p99_latency_ms": 800.0,
+      "latency_samples": 100
     },
     ...
   }
@@ -204,7 +258,30 @@ Sets the current speaker for context tracking.
 
 **Rate Limit:** 10 requests per minute
 
-## Circuit Breaker Pattern
+## Performance Monitoring
+
+The AILang pipeline includes comprehensive performance monitoring:
+
+### Latency Tracking
+
+Each agent call tracks latency with percentile calculations:
+- **P50 (median)**: Typical latency for 50% of calls
+- **P95**: Latency for 95% of calls (SLA target)
+- **P99**: Latency for 99% of calls (worst-case scenarios)
+
+Latency history is maintained for the last 100 calls per agent.
+
+### Health Alerts
+
+The pipeline automatically generates alerts for:
+- **Circuit breaker OPEN**: Critical - agent is rejecting calls
+- **Circuit breaker HALF_OPEN**: Warning - agent is testing recovery
+- **Low success rate**: Critical if <50%, warning if <80%
+- **High latency**: Warning if P95 > 5s, critical if P99 > 10s
+
+Alerts are aggregated across all agents and available via `/ailang/health-status`.
+
+### Circuit Breaker Pattern
 
 The AILang pipeline uses a circuit breaker pattern to prevent cascading failures:
 
