@@ -604,12 +604,15 @@ class AILangPipelineManager:
         cached = self._get_cached_response(cache_key)
         if cached:
             return cached
-        
+
+        if not text or not isinstance(text, str):
+            return {"style_guide": [], "profile": {}}
+
         try:
             bridge = self._get_bridge()
             agent = bridge.get_agent("SpeakerProfilerAgent")
             if agent:
-                result = self._call_agent_with_circuit_breaker("SpeakerProfilerAgent", agent.call, "get_style_instructions", context.current_speaker, text, source_lang, target_lang, context.speaker_registry, expected_fields=["style_guide", "profile"])
+                result = self._call_agent_with_circuit_breaker("SpeakerProfilerAgent", agent.call, "get_style_instructions", context.current_speaker or "speaker", text, source_lang or "en", target_lang or "es", context.speaker_registry or {}, expected_fields=["style_guide", "profile"])
                 if result:
                     # Update context with new registry
                     context.speaker_registry = result.get("updated_registry", context.speaker_registry)
@@ -618,7 +621,7 @@ class AILangPipelineManager:
                     return result
         except Exception as e:
             logger.error(f"SpeakerProfilerAgent failed: {e}", exc_info=True)
-        
+
         return {"style_guide": [], "profile": {}}
     
     @log_agent_call("DialectAdapterAgent")
@@ -676,19 +679,22 @@ class AILangPipelineManager:
         """Run AmbiguityResolverAgent for phrase ambiguity detection."""
         if not self._enabled or not self.is_agent_enabled("AmbiguityResolverAgent"):
             return {"has_ambiguities": False, "resolved_text": text, "needs_human_review": False}
-        
+
+        if not text or not isinstance(text, str):
+            return {"has_ambiguities": False, "resolved_text": text or "", "needs_human_review": False}
+
         try:
             bridge = self._get_bridge()
             agent = bridge.get_agent("AmbiguityResolverAgent")
             if agent:
-                history_summary = "\n".join([f"{t.get('speaker', 'unknown')}: {t.get('text', '')}" for t in context.conversation_history[-6:]])
-                result = self._call_agent_with_circuit_breaker("AmbiguityResolverAgent", agent.call, "process", text, source_lang, target_lang, context.domain, history_summary or "", expected_fields=["has_ambiguities", "resolved_text"])
+                history_summary = "\n".join([f"{t.get('speaker', 'unknown')}: {t.get('text', '')}" for t in context.conversation_history[-6:] if t.get('text')])
+                result = self._call_agent_with_circuit_breaker("AmbiguityResolverAgent", agent.call, "process", text, source_lang or "en", target_lang or "es", context.domain or "", history_summary or "", expected_fields=["has_ambiguities", "resolved_text"])
                 if result and isinstance(result, dict) and "has_ambiguities" in result:
                     result["resolved_text"] = coalesce_agent_text(result.get("resolved_text"), text)
                     return result
         except Exception as e:
             logger.error(f"AmbiguityResolverAgent failed: {e}", exc_info=True)
-        
+
         return {"has_ambiguities": False, "resolved_text": text, "needs_human_review": False}
     
     @log_agent_call("ConfidenceFallbackAgent")

@@ -102,31 +102,41 @@ def upper(text: str) -> str:
 
 def strip(text: str) -> str:
     """Remove leading and trailing whitespace."""
-    return text.strip()
+    return text.strip() if text else ""
 
 
 def replace(text: str, old: str, new: str) -> str:
     """Replace occurrences of old with new in text."""
+    if not text or not old:
+        return text or ""
     return text.replace(old, new)
 
 
 def contains(text: str, substring: str) -> bool:
     """Check if text contains substring."""
+    if not text or not substring:
+        return False
     return substring in text
 
 
 def starts_with(text: str, prefix: str) -> bool:
     """Check if text starts with prefix."""
+    if not text or not prefix:
+        return False
     return text.startswith(prefix)
 
 
 def ends_with(text: str, suffix: str) -> bool:
     """Check if text ends with suffix."""
+    if not text or not suffix:
+        return False
     return text.endswith(suffix)
 
 
 def length(text: str) -> int:
     """Get the length of a string."""
+    if text is None:
+        return 0
     return len(text)
 
 
