@@ -1,0 +1,75 @@
+# Back-Translation Verifier — translates output back to source and flags divergence
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast   { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+fn back_translate(translated_text: string, target_lang: string, source_lang: string): string {
+    prompt = f"Translate from {target_lang} to {source_lang}. Return ONLY the translation. Text: {translated_text}"
+    return ask fast: prompt
+}
+
+fn compare_semantic_similarity(original: string, back_translated: string, source_lang: string): dict {
+    prompt = f"Compare these two {source_lang} texts for semantic similarity. Original: {original}. Back-translated: {back_translated}. Return JSON with similarity_score, key_differences, meaning_preserved, and critical_loss fields"
+    result = ask fast: prompt
+    parsed = extract_json(result)
+    if parsed == false {
+        return {"similarity_score": 0.8, "key_differences": [], "meaning_preserved": true, "critical_loss": false}
+    }
+    return parsed
+}
+
+fn improve_translation(original: string, translated: string, back_translated: string, differences: list, source_lang: string, target_lang: string, domain: string): string {
+    diff_text = join(differences, "; ")
+    prompt = f"The translation lost meaning. Fix it. Source ({source_lang}): {original}. Current translation ({target_lang}): {translated}. Back-translation revealed these issues: {diff_text}. Domain: {domain}. Return ONLY the corrected translation."
+    return ask claude: prompt
+}
+
+fn should_flag(similarity: dict, domain: string): bool {
+    score    = get_value(similarity, "similarity_score")
+    critical = get_value(similarity, "critical_loss")
+
+    threshold = 0.75
+    if domain == "medical" || domain == "legal" { threshold = 0.90 }
+
+    if critical == true   { return true }
+    if score < threshold  { return true }
+    return false
+}
+
+agent BackTranslatorAgent(claude) {
+    instructions: "You verify translation accuracy by back-translating and comparing against the original, improving when meaning is lost."
+    tools: back_translate, compare_semantic_similarity, improve_translation, should_flag
+
+    fn verify(original: string, translated: string, source_lang: string, target_lang: string, domain: string): dict {
+        back  = back_translate(translated, target_lang, source_lang)
+        sim   = compare_semantic_similarity(original, back, source_lang)
+        flag  = should_flag(sim, domain)
+
+        if flag == false {
+            return {
+                "verified":           true,
+                "final_translation":  translated,
+                "back_translation":   back,
+                "similarity":         sim,
+                "improved":           false
+            }
+        }
+
+        differences = get_value(sim, "key_differences")
+        improved    = improve_translation(original, translated, back, differences, source_lang, target_lang, domain)
+
+        return {
+            "verified":           false,
+            "final_translation":  improved,
+            "original_translation": translated,
+            "back_translation":   back,
+            "similarity":         sim,
+            "improved":           true,
+            "differences":        differences
+        }
+    }
+}
+
+fn main() {
+    result = BackTranslatorAgent.verify("Do not give the patient any blood thinners before surgery", "No dar al paciente anticoagulantes antes de la operación", "en", "es", "medical")
+    print(result)
+}

@@ -1,0 +1,96 @@
+# Context Memory V2 — speaker tracking and pronoun/reference resolution across turns
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast  { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+# ---------- helpers ----------
+
+fn build_history_summary(history: list, max_turns: int): string {
+    if length(history) == 0 { return "" }
+    lines = []
+    i = 0
+    for turn in history {
+        if i >= max_turns { break }
+        spk    = get_value(turn, "speaker")
+        src    = get_value(turn, "text")
+        tgt    = get_value(turn, "translated")
+        lines  = lines + [f"{spk}: {src} → {tgt}"]
+        i      = i + 1
+    }
+    return join(lines, "\n")
+}
+
+fn extract_entities(text: string, history_summary: string): dict {
+    prompt = f"Extract named entities and pronouns from this text, using the conversation history for context. History: {history_summary}. Current text: {text}. Return JSON with people, places, objects, and pronoun_map fields"
+    result = ask fast: prompt
+    parsed = extract_json(result)
+    if parsed == false {
+        return {"people": [], "places": [], "objects": [], "pronoun_map": {}}
+    }
+    return parsed
+}
+
+fn resolve_references(text: string, entities: dict, history_summary: string): string {
+    pronoun_map = get_value(entities, "pronoun_map")
+    if pronoun_map == null { return text }
+    prompt = f"Given this conversation history: {history_summary}. And these known entities: {to_json(entities)}. Resolve any ambiguous pronouns or references in: {text}. Return ONLY the clarified text (same language, minimal changes)."
+    return ask fast: prompt
+}
+
+fn detect_topic_shift(current_text: string, history_summary: string): bool {
+    if length(history_summary) == 0 { return false }
+    prompt = f"Has the topic shifted significantly? Previous context: {history_summary}. New text: {current_text}. Reply with only: yes or no"
+    answer = lower(trim(ask fast: prompt))
+    return answer == "yes"
+}
+
+fn update_speaker_registry(registry: dict, speaker: string, text: string, lang: string): dict {
+    existing = get_value(registry, speaker)
+    if existing == null {
+        profile = {"name": speaker, "lang": lang, "turn_count": 1, "recent_texts": [text]}
+    } else {
+        count     = get_value(existing, "turn_count") + 1
+        recents   = get_value(existing, "recent_texts")
+        recents   = recents + [text]
+        if length(recents) > 10 {
+            # keep last 10
+            recents = slice(recents, length(recents) - 10, length(recents))
+        }
+        profile = {"name": speaker, "lang": lang, "turn_count": count, "recent_texts": recents}
+    }
+    return dict_set(registry, speaker, profile)
+}
+
+# ---------- agent ----------
+
+agent ContextMemoryAgent(claude) {
+    instructions: "You maintain conversation context across turns, tracking speakers, entities, and topic threads to improve translation coherence."
+    tools: build_history_summary, extract_entities, resolve_references, detect_topic_shift, update_speaker_registry
+
+    fn process(text: string, speaker: string, source_lang: string, history: list, speaker_registry: dict): dict {
+        summary      = build_history_summary(history, 6)
+        entities     = extract_entities(text, summary)
+        resolved     = resolve_references(text, entities, summary)
+        topic_shift  = detect_topic_shift(text, summary)
+        new_registry = update_speaker_registry(speaker_registry, speaker, text, source_lang)
+
+        return {
+            "resolved_text":     resolved,
+            "original_text":     text,
+            "entities":          entities,
+            "topic_shift":       topic_shift,
+            "speaker_registry":  new_registry,
+            "history_summary":   summary,
+            "resolution_applied": resolved != text
+        }
+    }
+}
+
+fn main() {
+    history = [
+        {"speaker": "Doctor", "text": "John came in complaining of chest pain.", "translated": "Juan llegó quejándose de dolor en el pecho."},
+        {"speaker": "Nurse",  "text": "He has a history of hypertension.",       "translated": "Tiene antecedentes de hipertensión."}
+    ]
+    registry = {}
+    result = ContextMemoryAgent.process("Give him 5mg of metoprolol", "Doctor", "en", history, registry)
+    print(result)
+}

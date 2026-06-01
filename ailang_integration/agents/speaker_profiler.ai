@@ -1,0 +1,112 @@
+# Speaker Profiler — learns each speaker's vocabulary level, register, and style
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast   { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+fn analyze_vocabulary_level(texts: list): string {
+    if length(texts) == 0 { return "unknown" }
+    sample = join(texts, " | ")
+    prompt = f"Analyze vocabulary level from these speech samples: {sample}. Return one word: basic, intermediate, advanced, or technical"
+    return lower(trim(ask fast: prompt))
+}
+
+fn analyze_register(texts: list): string {
+    if length(texts) == 0 { return "neutral" }
+    sample = join(texts, " | ")
+    prompt = f"Analyze speech register from these samples: {sample}. Return one word: formal, neutral, informal, or slang"
+    return lower(trim(ask fast: prompt))
+}
+
+fn detect_speech_patterns(texts: list, source_lang: string): dict {
+    if length(texts) < 3 { return {"patterns": [], "filler_words": [], "sentence_length": "medium"} }
+    sample = join(texts, " | ")
+    prompt = f"Analyze speech patterns in {source_lang}: {sample}. Return JSON with patterns, filler_words, sentence_length, and uses_contractions fields"
+    result = ask fast: prompt
+    parsed = extract_json(result)
+    if parsed == false { return {"patterns": [], "filler_words": [], "sentence_length": "medium"} }
+    return parsed
+}
+
+fn build_translation_style_guide(profile: dict, target_lang: string): list {
+    vocab  = get_value(profile, "vocabulary_level")
+    reg    = get_value(profile, "register")
+    patterns = get_value(profile, "speech_patterns")
+    sent_len = get_value(patterns, "sentence_length")
+
+    instructions = []
+
+    if vocab == "basic"    { instructions = instructions + [f"Use simple, everyday vocabulary in {target_lang}. Avoid complex or technical words."] }
+    if vocab == "advanced" { instructions = instructions + [f"Use sophisticated vocabulary matching the speaker's level in {target_lang}."] }
+    if vocab == "technical" { instructions = instructions + [f"Preserve technical terminology in {target_lang}."] }
+
+    if reg == "formal"   { instructions = instructions + ["Use formal register and polite forms."] }
+    if reg == "informal" { instructions = instructions + ["Use conversational, natural informal speech. Include appropriate colloquialisms."] }
+    if reg == "slang"    { instructions = instructions + ["Match casual/slang register in the target language where culturally equivalent expressions exist."] }
+
+    if sent_len == "short"  { instructions = instructions + ["Keep translations concise — match the speaker's short sentence style."] }
+    if sent_len == "long"   { instructions = instructions + ["Preserve longer sentence structure in the translation."] }
+
+    return instructions
+}
+
+fn update_profile(existing_profile: dict, new_text: string, source_lang: string): dict {
+    recents = get_value(existing_profile, "recent_texts")
+    if recents == null { recents = [] }
+    recents = recents + [new_text]
+    if length(recents) > 20 { recents = slice(recents, length(recents) - 20, length(recents)) }
+
+    turn_count = get_value(existing_profile, "turn_count")
+    if turn_count == null { turn_count = 0 }
+    turn_count = turn_count + 1
+
+    # Re-analyze every 5 turns
+    should_reanalyze = turn_count == 1 || turn_count % 5 == 0
+    vocab   = get_value(existing_profile, "vocabulary_level")
+    reg     = get_value(existing_profile, "register")
+    patterns = get_value(existing_profile, "speech_patterns")
+
+    if should_reanalyze {
+        vocab    = analyze_vocabulary_level(recents)
+        reg      = analyze_register(recents)
+        patterns = detect_speech_patterns(recents, source_lang)
+    }
+
+    if vocab    == null { vocab    = "intermediate" }
+    if reg      == null { reg      = "neutral" }
+    if patterns == null { patterns = {} }
+
+    return {
+        "vocabulary_level": vocab,
+        "register":         reg,
+        "speech_patterns":  patterns,
+        "recent_texts":     recents,
+        "turn_count":       turn_count,
+        "lang":             source_lang
+    }
+}
+
+agent SpeakerProfilerAgent(claude) {
+    instructions: "You build and maintain speaker profiles to personalize translation style for each participant."
+    tools: analyze_vocabulary_level, analyze_register, detect_speech_patterns, build_translation_style_guide, update_profile
+
+    fn get_style_instructions(speaker: string, text: string, source_lang: string, target_lang: string, registry: dict): dict {
+        existing = get_value(registry, speaker)
+        if existing == null { existing = {} }
+
+        updated_profile = update_profile(existing, text, source_lang)
+        style_guide     = build_translation_style_guide(updated_profile, target_lang)
+        updated_registry = dict_set(registry, speaker, updated_profile)
+
+        return {
+            "speaker":          speaker,
+            "profile":          updated_profile,
+            "style_guide":      style_guide,
+            "updated_registry": updated_registry
+        }
+    }
+}
+
+fn main() {
+    registry = {}
+    result = SpeakerProfilerAgent.get_style_instructions("Doctor", "The patient presents with acute myocardial infarction. Administer 325mg aspirin stat and prepare for PCI.", "en", "es", registry)
+    print(result)
+}

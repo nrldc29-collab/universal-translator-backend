@@ -1,0 +1,100 @@
+# Glossary Injector — user-defined custom terminology always respected in translation
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast   { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+# Glossary entry: { "source": "...", "target": "...", "lang_pair": "en-es", "context": "..." }
+
+fn load_glossary(glossary: list, lang_pair: string): list {
+    matching = []
+    for entry in glossary {
+        ep = get_value(entry, "lang_pair")
+        if ep == lang_pair || ep == "*" {
+            matching = matching + [entry]
+        }
+    }
+    return matching
+}
+
+fn find_matches_in_text(text: string, glossary_entries: list): list {
+    if length(glossary_entries) == 0 { return [] }
+    lowered = lower(text)
+    matches = []
+    for entry in glossary_entries {
+        src = lower(get_value(entry, "source"))
+        if contains(lowered, src) {
+            matches = matches + [entry]
+        }
+    }
+    return matches
+}
+
+fn build_glossary_prompt(matches: list): string {
+    if length(matches) == 0 { return "" }
+    lines = ["Use these mandatory term translations (do not deviate):"]
+    for m in matches {
+        src = get_value(m, "source")
+        tgt = get_value(m, "target")
+        ctx = get_value(m, "context")
+        if ctx != null && length(ctx) > 0 {
+            lines = lines + [f"  '{src}' => '{tgt}' ({ctx})"]
+        } else {
+            lines = lines + [f"  '{src}' => '{tgt}'"]
+        }
+    }
+    return join(lines, "\n")
+}
+
+fn translate_with_glossary(text: string, source_lang: string, target_lang: string, glossary_prompt: string, domain: string, base_instructions: list): string {
+    instruction_text = join(base_instructions, ". ")
+    prompt = f"Translate from {source_lang} to {target_lang}. {glossary_prompt}. {instruction_text}. Domain: {domain}. Source: {text}. Return ONLY the translation."
+    return ask claude: prompt
+}
+
+fn inject_into_existing(translation: string, matches: list, target_lang: string): string {
+    if length(matches) == 0 { return translation }
+    glossary_prompt = build_glossary_prompt(matches)
+    prompt = f"Review this {target_lang} translation and ensure these mandatory terms are used correctly: {glossary_prompt}. Translation: {translation}. Fix only term substitutions if needed. Return ONLY the (possibly corrected) translation."
+    return ask fast: prompt
+}
+
+agent GlossaryInjectorAgent(claude) {
+    instructions: "You ensure user-defined terminology is always respected in translations, overriding model defaults."
+    tools: load_glossary, find_matches_in_text, build_glossary_prompt, translate_with_glossary, inject_into_existing
+
+    fn process(text: string, base_translation: string, source_lang: string, target_lang: string, domain: string, glossary: list, base_instructions: list): dict {
+        lang_pair = f"{source_lang}-{target_lang}"
+        entries = load_glossary(glossary, lang_pair)
+        matches = find_matches_in_text(text, entries)
+
+        if length(matches) == 0 {
+            return {
+                "final_translation":  base_translation,
+                "glossary_applied":   false,
+                "matched_terms":      []
+            }
+        }
+
+        glossary_prompt = build_glossary_prompt(matches)
+
+        # If we have a base translation, inject into it (faster)
+        # If no base translation provided, do full retranslation with glossary
+        if length(base_translation) > 0 {
+            final = inject_into_existing(base_translation, matches, target_lang)
+        } else {
+            final = translate_with_glossary(text, source_lang, target_lang, glossary_prompt, domain, base_instructions)
+        }
+
+        return {
+            "final_translation":  final,
+            "glossary_applied":   true,
+            "matched_terms":      matches,
+            "glossary_prompt":    glossary_prompt
+        }
+    }
+}
+
+fn main() {
+    glossary = [{"source": "Universal Translator", "target": "Traductor Universal", "lang_pair": "en-es", "context": "product name"}, {"source": "NAIA", "target": "NAIA", "lang_pair": "*", "context": "AI assistant name - do not translate"}, {"source": "metformin", "target": "metformina", "lang_pair": "en-es", "context": "medication"}]
+    result = GlossaryInjectorAgent.process("The patient is taking metformin and using the Universal Translator to communicate", "El paciente toma metformín y usa el Traductor Universal para comunicarse", "en", "es", "medical", glossary, [])
+    print(result)
+}

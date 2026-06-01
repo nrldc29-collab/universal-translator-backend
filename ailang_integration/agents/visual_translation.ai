@@ -44,7 +44,7 @@ agent VisualTranslator(claude) {
 }
 
 fn main() {
-    ocr = "SALIDA DE EMERGENCIA\nNo bloquear esta puerta"
+    ocr = "SALIDA DE EMERGENCIA. No bloquear esta puerta"
     processed = VisualTranslator.process_ocr_text(ocr)
     print(processed)
 }

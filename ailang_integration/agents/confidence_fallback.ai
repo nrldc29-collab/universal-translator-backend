@@ -1,0 +1,92 @@
+# Confidence Fallback — auto-escalates low-confidence base translations to Claude
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast   { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+# Thresholds
+const CONFIDENCE_HIGH   = 0.85   # trust base model
+const CONFIDENCE_MEDIUM = 0.65   # Claude fast review
+const CONFIDENCE_LOW    = 0.0    # full Claude retranslation
+
+fn classify_confidence(score: float, domain: string): string {
+    # Raise the bar for critical domains
+    threshold_high = CONFIDENCE_HIGH
+    if domain == "medical" || domain == "legal" {
+        threshold_high = 0.92
+    }
+    if score >= threshold_high  { return "high" }
+    if score >= CONFIDENCE_MEDIUM { return "medium" }
+    return "low"
+}
+
+fn retranslate(text: string, base_translation: string, source_lang: string, target_lang: string, domain: string, instructions: list): string {
+    instruction_text = join(instructions, ". ")
+    if length(instructions) == 0 {
+        instruction_text = "Produce an accurate, natural-sounding translation."
+    }
+    prompt = f"The base translation system produced a low-confidence result. Please retranslate from {source_lang} to {target_lang}. {instruction_text}. Source: {text}. Base attempt (for reference only): {base_translation}. Return ONLY the improved translation."
+    return ask claude: prompt
+}
+
+fn fast_review(text: string, base_translation: string, source_lang: string, target_lang: string): string {
+    prompt = f"Quickly review and fix this translation if needed. Source ({source_lang}): {text}. Translation ({target_lang}): {base_translation}. If correct, return it unchanged. If wrong, return only the fixed version."
+    return ask fast: prompt
+}
+
+fn assess_improvement(original: string, base: string, improved: string, source_lang: string, target_lang: string): dict {
+    prompt = f"Compare two translations of: {original} ({source_lang} to {target_lang}). Base: {base}. Improved: {improved}. Reply JSON with improvement, reason, and use_improved fields"
+    result = ask fast: prompt
+    parsed = extract_json(result)
+    if parsed == false { return {"improvement": true, "use_improved": true} }
+    return parsed
+}
+
+agent ConfidenceFallbackAgent(claude) {
+    instructions: "You handle low-confidence translations by escalating to stronger models and verifying improvements."
+    tools: classify_confidence, retranslate, fast_review, assess_improvement
+
+    fn process(text: string, base_translation: string, confidence: float, source_lang: string, target_lang: string, domain: string, instructions: list): dict {
+        tier = classify_confidence(confidence, domain)
+
+        if tier == "high" {
+            return {
+                "final_translation": base_translation,
+                "tier":              "high",
+                "escalated":         false,
+                "confidence":        confidence
+            }
+        }
+
+        if tier == "medium" {
+            reviewed = fast_review(text, base_translation, source_lang, target_lang)
+            return {
+                "final_translation": reviewed,
+                "tier":              "medium",
+                "escalated":         true,
+                "model_used":        "fast",
+                "confidence":        confidence
+            }
+        }
+
+        # low — full retranslation
+        improved   = retranslate(text, base_translation, source_lang, target_lang, domain, instructions)
+        assessment = assess_improvement(text, base_translation, improved, source_lang, target_lang)
+        use_improved = get_value(assessment, "use_improved")
+        final = improved
+        if use_improved == false { final = base_translation }
+
+        return {
+            "final_translation": final,
+            "tier":              "low",
+            "escalated":         true,
+            "model_used":        "claude",
+            "base_translation":  base_translation,
+            "assessment":        assessment,
+            "confidence":        confidence
+        }
+    }
+}
+
+fn main() {
+    result = ConfidenceFallbackAgent.process("The patient is allergic to penicillin and needs an alternative antibiotic", "El paciente es alérgico a la penicilina y necesita un antibiótico alternativo", 0.45, "en", "es", "medical", ["Use precise medical terminology", "Preserve drug names exactly"])
+    print(result)
+}

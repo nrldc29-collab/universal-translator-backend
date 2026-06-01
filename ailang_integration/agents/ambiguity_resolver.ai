@@ -1,0 +1,106 @@
+# Ambiguity Resolver — detects phrases with multiple valid translations and resolves them
+model claude { provider: "anthropic" name: "claude-sonnet-4-20250514" }
+model fast   { provider: "anthropic" name: "claude-haiku-4-5-20251001" }
+
+fn detect_ambiguities(text: string, source_lang: string): list {
+    prompt = f"Identify genuinely ambiguous words or phrases in this {source_lang} text that could be translated in meaningfully different ways. Text: {text}. Return JSON array with phrase, interpretations, and type fields. Only include real ambiguities, not just multiple synonyms. Return [] if none."
+    result = ask fast: prompt
+    parsed = extract_json(result)
+    if parsed == false { return [] }
+    return parsed
+}
+
+fn resolve_from_context(ambiguity: dict, history_summary: string, domain: string): dict {
+    phrase         = get_value(ambiguity, "phrase")
+    interpretations = get_value(ambiguity, "interpretations")
+    prompt = f"Given this conversation context: {history_summary}. Domain: {domain}. Ambiguous phrase: {phrase}. Possible meanings: {to_json(interpretations)}. Which interpretation is most likely? Reply JSON with resolved_meaning, confidence, and reasoning fields"
+    result = ask fast: prompt
+    parsed = extract_json(result)
+    if parsed == false {
+        return {"resolved_meaning": get_value(interpretations, 0), "confidence": 0.5, "reasoning": "defaulted"}
+    }
+    return parsed
+}
+
+fn translate_with_disambiguation(text: string, ambiguities: list, resolutions: list, source_lang: string, target_lang: string, domain: string): dict {
+    if length(ambiguities) == 0 {
+        return {"needs_disambiguation": false, "translation": null, "ambiguities": []}
+    }
+
+    resolution_notes = []
+    i = 0
+    for amb in ambiguities {
+        phrase = get_value(amb, "phrase")
+        if i < length(resolutions) {
+            res = get_value(resolutions, i)
+            meaning = get_value(res, "resolved_meaning")
+            conf    = get_value(res, "confidence")
+            resolution_notes = resolution_notes + [f"'{phrase}' means: {meaning} (confidence: {conf})"]
+        }
+        i = i + 1
+    }
+
+    notes_text = join(resolution_notes, ". ")
+    prompt = f"Translate from {source_lang} to {target_lang} using these disambiguation notes: {notes_text}. Domain: {domain}. Source: {text}. Return ONLY the translation."
+    translation = ask claude: prompt
+
+    return {
+        "needs_disambiguation": true,
+        "translation":          translation,
+        "ambiguities":          ambiguities,
+        "resolutions":          resolutions
+    }
+}
+
+fn flag_low_confidence_resolutions(resolutions: list): list {
+    flagged = []
+    for res in resolutions {
+        conf = get_value(res, "confidence")
+        if conf < 0.7 {
+            flagged = flagged + [res]
+        }
+    }
+    return flagged
+}
+
+agent AmbiguityResolverAgent(claude) {
+    instructions: "You detect and resolve translation ambiguities using conversation context, flagging cases where human clarification may be needed."
+    tools: detect_ambiguities, resolve_from_context, translate_with_disambiguation, flag_low_confidence_resolutions
+
+    fn process(text: string, source_lang: string, target_lang: string, domain: string, history_summary: string): dict {
+        ambiguities = detect_ambiguities(text, source_lang)
+
+        if length(ambiguities) == 0 {
+            return {
+                "has_ambiguities":    false,
+                "resolved_text":      text,
+                "disambiguation":     null,
+                "needs_human_review": false
+            }
+        }
+
+        resolutions = []
+        for amb in ambiguities {
+            res = resolve_from_context(amb, history_summary, domain)
+            resolutions = resolutions + [res]
+        }
+
+        flagged  = flag_low_confidence_resolutions(resolutions)
+        result   = translate_with_disambiguation(text, ambiguities, resolutions, source_lang, target_lang, domain)
+
+        return {
+            "has_ambiguities":    true,
+            "resolved_text":      text,
+            "disambiguation":     result,
+            "ambiguities":        ambiguities,
+            "resolutions":        resolutions,
+            "needs_human_review": length(flagged) > 0,
+            "flagged_items":      flagged
+        }
+    }
+}
+
+fn main() {
+    result = AmbiguityResolverAgent.process("I can't bear the pain anymore", "en", "es", "medical", "Patient has been in the hospital for 3 days with back injury.")
+    print(result)
+}
