@@ -997,6 +997,17 @@ def get_ailang_agents(identity: str = Depends(authenticate_http)):
     return {"status": "error", "message": "AILang pipeline not available"}
 
 
+@app.post("/ailang/cache/clear")
+@limiter.limit("10/minute")
+def clear_ailang_cache(identity: str = Depends(authenticate_http)):
+    """Clear the AILang response cache."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        pipeline.ailang_pipeline.clear_cache()
+        return {"status": "ok", "message": "Cache cleared"}
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
 @app.websocket("/ws/translate")
 async def websocket_translate(websocket: WebSocket):
     ok, identity = await authenticate_websocket(websocket)

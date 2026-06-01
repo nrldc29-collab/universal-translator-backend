@@ -87,6 +87,19 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
     }
   };
 
+  const clearCache = async () => {
+    try {
+      const response = await fetch(`${apiUrl}/ailang/cache/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Failed to clear cache');
+      await loadStats();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   if (loading) {
     return (
       <div className="ailang-config-panel">
@@ -189,6 +202,9 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
             {Object.values(agents || {}).filter(v => v === false).length} disabled
           </span>
         </div>
+        <button type="button" className="ailang-config-btn" onClick={clearCache}>
+          Clear Cache
+        </button>
       </div>
     </div>
   );

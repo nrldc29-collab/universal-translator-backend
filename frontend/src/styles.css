@@ -7524,6 +7524,9 @@ select:focus-visible {
 .ailang-config-footer {
   padding-top: 12px;
   border-top: 1px solid rgba(148, 163, 184, 0.2);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .ailang-config-summary {
