@@ -7445,6 +7445,43 @@ select:focus-visible {
   line-height: 1.4;
 }
 
+.ailang-config-item-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.ailang-metric {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+}
+
+.ailang-metric-label {
+  color: #64748b;
+}
+
+.ailang-metric-value {
+  color: #e2e8f0;
+  font-weight: 500;
+}
+
+.ailang-metric-value.closed {
+  color: #4ade80;
+}
+
+.ailang-metric-value.open {
+  color: #f87171;
+}
+
+.ailang-metric-value.half_open {
+  color: #fcd34d;
+}
+
 .ailang-config-toggle {
   display: flex;
   align-items: center;
