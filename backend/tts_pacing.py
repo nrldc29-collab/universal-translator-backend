@@ -3,6 +3,7 @@ Advanced TTS pacing module with emotional nuance and prosody control.
 Implements frontier-level emotional awareness for natural-sounding speech.
 """
 
+import math
 import re
 from typing import Dict, List, Optional
 from enum import Enum
@@ -349,8 +350,6 @@ def style_for_emotion(emotion: str, urgency: str = "low") -> dict:
     if urgency == "high":
         style["speed"] = max(style["speed"], 1.15)
         style["pause_seconds"] = min(style["pause_seconds"], 0.2)
-    elif urgency == "medium":
-        style["speed"] = max(style["speed"], 1.0)
     return style
 
 
@@ -377,3 +376,26 @@ def build_tts_pacing(text: str, intent: str | None = None, urgency: str | None =
         "style": style,
         "segments": apply_human_pauses(text, emotion),
     }
+
+
+def emotion_config_from_style(style: Optional[dict]) -> Optional[dict]:
+    """Convert a TTS pacing ``style`` into the ``emotion_config`` consumed by
+    ``PiperTextToSpeech.synthesize`` (``{speed, pitch_shift, volume}``).
+
+    Pacing ``pitch``/``energy`` are multipliers relative to neutral; ``pitch`` is
+    converted to semitones for the renderer. Returns ``None`` when the style is
+    neutral so synthesis behaviour is unchanged.
+    """
+    if not style:
+        return None
+    config: dict = {}
+    speed = style.get("speed")
+    if isinstance(speed, (int, float)) and speed > 0 and float(speed) != 1.0:
+        config["speed"] = float(speed)
+    pitch = style.get("pitch")
+    if isinstance(pitch, (int, float)) and pitch > 0 and float(pitch) != 1.0:
+        config["pitch_shift"] = round(12.0 * math.log2(float(pitch)), 3)
+    energy = style.get("energy")
+    if isinstance(energy, (int, float)) and energy > 0 and float(energy) != 1.0:
+        config["volume"] = float(energy)
+    return config or None

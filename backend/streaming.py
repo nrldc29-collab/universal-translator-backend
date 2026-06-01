@@ -60,7 +60,7 @@ from backend.observability import observability
 from backend.pipeline import TranslationResult
 from backend.security import usage_limiter
 from backend.sessions import session_registry
-from backend.tts_pacing import build_tts_pacing
+from backend.tts_pacing import build_tts_pacing, emotion_config_from_style
 from fastapi import WebSocket
 from fastapi.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
@@ -1158,6 +1158,7 @@ async def websocket_audio_translation(
                 elif folded_live_text(translated_text).startswith(folded_live_text(live_spoken_text)):
                     tts_playback_text = ""
             tts_pacing = build_tts_pacing(tts_playback_text or translated_text, intent, urgency)
+            tts_emotion_config = emotion_config_from_style(tts_pacing.get("style"))
             stream_debug_log("Translate:", translation_ms, "ms", translated_text)
             await websocket.send_json({"type": "latency", "metric": "translation", "ms": translation_ms})
             if cip:
@@ -1227,6 +1228,7 @@ async def websocket_audio_translation(
                             c,
                             f"models/tts/{uuid4()}-{idx}.wav",
                             language=active_target_language,
+                            emotion_config=tts_emotion_config,
                         ),
                     )
                     if audio_output_path is None:

@@ -11,6 +11,7 @@ from tts.piper_tts import (
     google_audio_config_from_emotion,
     _piper_synthesis_config_from_emotion,
 )
+from backend.tts_pacing import build_tts_pacing, emotion_config_from_style
 
 
 # ── Google Cloud TTS mapping ──────────────────────────────────────────────────
@@ -105,3 +106,40 @@ def test_synthesize_without_emotion_passes_none(monkeypatch, tmp_path):
     tts.synthesize("hello", str(tmp_path / "out.wav"), language="es")
 
     assert captured["emotion_config"] is None
+
+
+# ── Pacing style -> emotion_config (live streaming path) ──────────────────────
+
+def test_pacing_style_none_returns_none():
+    assert emotion_config_from_style(None) is None
+
+
+def test_pacing_neutral_style_returns_none():
+    assert emotion_config_from_style({"speed": 1.0, "pitch": 1.0}) is None
+
+
+def test_pacing_excited_style_maps_speed_and_pitch():
+    cfg = emotion_config_from_style({"speed": 1.2, "pitch": 1.1})
+    assert cfg["speed"] == 1.2
+    assert cfg["pitch_shift"] == round(12.0 * math.log2(1.1), 3)
+    assert cfg["pitch_shift"] > 0
+
+
+def test_pacing_apologetic_style_lowers_pitch():
+    cfg = emotion_config_from_style({"speed": 0.85, "pitch": 0.95})
+    assert cfg["speed"] == 0.85
+    assert cfg["pitch_shift"] == round(12.0 * math.log2(0.95), 3)
+    assert cfg["pitch_shift"] < 0
+
+
+def test_pacing_energy_maps_to_volume():
+    assert emotion_config_from_style({"speed": 1.0, "pitch": 1.0, "energy": 1.3}) == {"volume": 1.3}
+
+
+def test_apologetic_utterance_produces_applied_emotion_config():
+    # End-to-end: pacing detects emotion -> style -> emotion_config the renderer applies.
+    pacing = build_tts_pacing("I am so sorry, please forgive me.")
+    assert pacing["emotion"] == "apologetic"
+    cfg = emotion_config_from_style(pacing["style"])
+    assert cfg is not None
+    assert cfg["speed"] == 0.85
