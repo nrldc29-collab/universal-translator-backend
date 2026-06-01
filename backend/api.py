@@ -1008,6 +1008,30 @@ def clear_ailang_cache(identity: str = Depends(authenticate_http)):
     return {"status": "error", "message": "AILang pipeline not available"}
 
 
+@app.post("/ailang/circuit-breaker/{agent_name}/reset")
+@limiter.limit("20/minute")
+def reset_ailang_circuit_breaker(agent_name: str, identity: str = Depends(authenticate_http)):
+    """Manually reset a specific agent's circuit breaker."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        success = pipeline.ailang_pipeline.reset_circuit_breaker(agent_name)
+        if success:
+            return {"status": "ok", "agent": agent_name, "message": "Circuit breaker reset"}
+        return {"status": "error", "message": f"Agent {agent_name} not found"}
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
+@app.post("/ailang/circuit-breaker/reset-all")
+@limiter.limit("5/minute")
+def reset_all_ailang_circuit_breakers(identity: str = Depends(authenticate_http)):
+    """Reset all circuit breakers."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        count = pipeline.ailang_pipeline.reset_all_circuit_breakers()
+        return {"status": "ok", "count": count, "message": f"Reset {count} circuit breakers"}
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
 @app.websocket("/ws/translate")
 async def websocket_translate(websocket: WebSocket):
     ok, identity = await authenticate_websocket(websocket)

@@ -7529,6 +7529,16 @@ select:focus-visible {
   align-items: center;
 }
 
+.ailang-config-footer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ailang-config-btn.small {
+  padding: 4px 8px;
+  font-size: 0.7rem;
+}
+
 .ailang-config-summary {
   display: flex;
   gap: 16px;

@@ -116,6 +116,13 @@ class CircuitBreaker:
             self.state = CircuitState.OPEN
             logger.warning(f"Circuit breaker opened after {self.failure_count} failures")
     
+    def reset(self) -> None:
+        """Manually reset the circuit breaker to CLOSED state."""
+        self.state = CircuitState.CLOSED
+        self.failure_count = 0
+        self.last_failure_time = 0.0
+        logger.info("Circuit breaker manually reset to CLOSED state")
+    
     def allow_request(self) -> bool:
         """Check if request should be allowed."""
         if self.state == CircuitState.CLOSED:
@@ -687,6 +694,23 @@ class AILangPipelineManager:
             "bridge_stats": None,
             "circuit_breakers": circuit_breaker_stats,
         }
+    
+    def reset_circuit_breaker(self, agent_name: str) -> bool:
+        """Manually reset a specific agent's circuit breaker."""
+        if agent_name in self._circuit_breakers:
+            self._circuit_breakers[agent_name].reset()
+            logger.info(f"Reset circuit breaker for agent {agent_name}")
+            return True
+        return False
+    
+    def reset_all_circuit_breakers(self) -> int:
+        """Reset all circuit breakers. Returns number of agents reset."""
+        count = 0
+        for agent_name in self._circuit_breakers:
+            self._circuit_breakers[agent_name].reset()
+            count += 1
+        logger.info(f"Reset all {count} circuit breakers")
+        return count
     
     def get_health_status(self) -> Dict[str, Any]:
         """Get overall pipeline health status with alerts."""

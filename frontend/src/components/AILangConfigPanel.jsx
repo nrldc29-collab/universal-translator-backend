@@ -100,6 +100,32 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
     }
   };
 
+  const resetCircuitBreaker = async (agentName) => {
+    try {
+      const response = await fetch(`${apiUrl}/ailang/circuit-breaker/${agentName}/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Failed to reset circuit breaker');
+      await loadStats();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const resetAllCircuitBreakers = async () => {
+    try {
+      const response = await fetch(`${apiUrl}/ailang/circuit-breaker/reset-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Failed to reset all circuit breakers');
+      await loadStats();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   if (loading) {
     return (
       <div className="ailang-config-panel">
@@ -170,6 +196,15 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
                       <span className="ailang-metric-label">State:</span>
                       <span className={`ailang-metric-value ${stats.circuit_breakers[agentName].state}`}>{stats.circuit_breakers[agentName].state}</span>
                     </span>
+                    {stats.circuit_breakers[agentName].state !== 'closed' && (
+                      <button
+                        type="button"
+                        className="ailang-config-btn small"
+                        onClick={() => resetCircuitBreaker(agentName)}
+                      >
+                        Reset
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -202,9 +237,14 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
             {Object.values(agents || {}).filter(v => v === false).length} disabled
           </span>
         </div>
-        <button type="button" className="ailang-config-btn" onClick={clearCache}>
-          Clear Cache
-        </button>
+        <div className="ailang-config-footer-actions">
+          <button type="button" className="ailang-config-btn" onClick={clearCache}>
+            Clear Cache
+          </button>
+          <button type="button" className="ailang-config-btn" onClick={resetAllCircuitBreakers}>
+            Reset All CBs
+          </button>
+        </div>
       </div>
     </div>
   );
