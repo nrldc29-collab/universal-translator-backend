@@ -379,3 +379,62 @@ def google_tts_diagnostics() -> dict:
         "prefer_cloud": prefer_cloud,
         "enabled": has_key and prefer_cloud,
     }
+
+
+# ---------------------------------------------------------------------------
+# AILang Pipeline Configuration
+# ---------------------------------------------------------------------------
+
+
+def get_ailang_enabled() -> bool:
+    """Return whether AILang pipeline is enabled."""
+    return _to_bool("AILANG_ENABLED", True)
+
+
+def get_ailang_agent_timeout() -> float:
+    """Return timeout in seconds for AILang agent calls."""
+    return _to_float("AILANG_AGENT_TIMEOUT", 10.0, minimum=1.0, maximum=60.0)
+
+
+def get_ailang_cache_ttl() -> float:
+    """Return cache TTL in seconds for AILang agent responses."""
+    return _to_float("AILANG_CACHE_TTL", 300.0, minimum=0.0, maximum=3600.0)
+
+
+def get_ailang_circuit_failure_threshold() -> int:
+    """Return number of failures before circuit breaker opens."""
+    return _to_int("AILANG_CIRCUIT_FAILURE_THRESHOLD", 5, minimum=1, maximum=20)
+
+
+def get_ailang_circuit_recovery_timeout() -> float:
+    """Return recovery timeout in seconds for circuit breaker."""
+    return _to_float("AILANG_CIRCUIT_RECOVERY_TIMEOUT", 60.0, minimum=10.0, maximum=600.0)
+
+
+def get_ailang_max_retries() -> int:
+    """Return maximum number of retries for failed agent calls."""
+    return _to_int("AILANG_MAX_RETRIES", 2, minimum=0, maximum=5)
+
+
+def get_ailang_enabled_agents() -> str:
+    """Return comma-separated list of enabled AILang agents (empty = all enabled)."""
+    return os.getenv("AILANG_ENABLED_AGENTS", "").strip()
+
+
+def get_ailang_disabled_agents() -> str:
+    """Return comma-separated list of disabled AILang agents (empty = none disabled)."""
+    return os.getenv("AILANG_DISABLED_AGENTS", "").strip()
+
+
+def ailang_diagnostics() -> dict:
+    """Return AILang configuration status."""
+    return {
+        "enabled": get_ailang_enabled(),
+        "agent_timeout": get_ailang_agent_timeout(),
+        "cache_ttl": get_ailang_cache_ttl(),
+        "circuit_failure_threshold": get_ailang_circuit_failure_threshold(),
+        "circuit_recovery_timeout": get_ailang_circuit_recovery_timeout(),
+        "max_retries": get_ailang_max_retries(),
+        "enabled_agents": get_ailang_enabled_agents(),
+        "disabled_agents": get_ailang_disabled_agents(),
+    }

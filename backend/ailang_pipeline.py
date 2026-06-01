@@ -164,27 +164,48 @@ class AILangPipelineManager:
     """Manages AILang agent execution for advanced translation features."""
     
     def __init__(self):
+        from backend.config import (
+            get_ailang_enabled,
+            get_ailang_agent_timeout,
+            get_ailang_cache_ttl,
+            get_ailang_circuit_failure_threshold,
+            get_ailang_circuit_recovery_timeout,
+            get_ailang_max_retries,
+            get_ailang_enabled_agents,
+            get_ailang_disabled_agents,
+        )
+        
         self._bridge = None
-        self._enabled = True
+        self._enabled = get_ailang_enabled()
         self._context_cache: Dict[str, AILangContext] = {}
-        # Circuit breakers for each agent
+        
+        # Circuit breakers for each agent with configurable thresholds
+        failure_threshold = get_ailang_circuit_failure_threshold()
+        recovery_timeout = get_ailang_circuit_recovery_timeout()
         self._circuit_breakers: Dict[str, CircuitBreaker] = {
-            "TranslationBrain": CircuitBreaker(failure_threshold=5, recovery_timeout=60.0),
-            "ContextMemoryAgent": CircuitBreaker(failure_threshold=5, recovery_timeout=60.0),
-            "SpeakerProfilerAgent": CircuitBreaker(failure_threshold=5, recovery_timeout=60.0),
-            "DialectAdapterAgent": CircuitBreaker(failure_threshold=5, recovery_timeout=60.0),
-            "GlossaryInjectorAgent": CircuitBreaker(failure_threshold=5, recovery_timeout=60.0),
-            "AmbiguityResolverAgent": CircuitBreaker(failure_threshold=5, recovery_timeout=60.0),
-            "ConfidenceFallbackAgent": CircuitBreaker(failure_threshold=5, recovery_timeout=60.0),
-            "BackTranslatorAgent": CircuitBreaker(failure_threshold=5, recovery_timeout=60.0),
-            "EmotionTTS": CircuitBreaker(failure_threshold=5, recovery_timeout=60.0),
+            "TranslationBrain": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
+            "ContextMemoryAgent": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
+            "SpeakerProfilerAgent": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
+            "DialectAdapterAgent": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
+            "GlossaryInjectorAgent": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
+            "AmbiguityResolverAgent": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
+            "ConfidenceFallbackAgent": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
+            "BackTranslatorAgent": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
+            "EmotionTTS": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
         }
-        # Response cache for expensive operations (TTL: 5 minutes)
+        
+        # Response cache for expensive operations (configurable TTL)
         self._response_cache: Dict[str, tuple] = {}
-        self._cache_ttl = 300.0  # 5 minutes
-        # Timeout configuration for agent calls (default: 10 seconds)
-        self._agent_timeout = 10.0
-        # Agent enable/disable configuration
+        self._cache_ttl = get_ailang_cache_ttl()
+        
+        # Timeout configuration for agent calls (configurable)
+        self._agent_timeout = get_ailang_agent_timeout()
+        self._max_retries = get_ailang_max_retries()
+        
+        # Agent enable/disable configuration from environment
+        enabled_agents_str = get_ailang_enabled_agents()
+        disabled_agents_str = get_ailang_disabled_agents()
+        
         self._enabled_agents: Dict[str, bool] = {
             "TranslationBrain": True,
             "ContextMemoryAgent": True,
@@ -196,6 +217,19 @@ class AILangPipelineManager:
             "BackTranslatorAgent": True,
             "EmotionTTS": True,
         }
+        
+        # Apply enabled agents whitelist (if specified)
+        if enabled_agents_str:
+            enabled_list = [agent.strip() for agent in enabled_agents_str.split(",") if agent.strip()]
+            for agent_name in self._enabled_agents:
+                self._enabled_agents[agent_name] = agent_name in enabled_list
+        
+        # Apply disabled agents blacklist (if specified)
+        if disabled_agents_str:
+            disabled_list = [agent.strip() for agent in disabled_agents_str.split(",") if agent.strip()]
+            for agent_name in disabled_list:
+                if agent_name in self._enabled_agents:
+                    self._enabled_agents[agent_name] = False
         
     def _get_cache_key(self, agent_name: str, *args) -> str:
         """Generate a cache key for agent call."""
@@ -281,12 +315,16 @@ class AILangPipelineManager:
         
         return True
     
-    def _call_agent_with_circuit_breaker(self, agent_name: str, func, *args, max_retries: int = 2, expected_fields: List[str] = None, timeout: float = None, **kwargs) -> Any:
+    def _call_agent_with_circuit_breaker(self, agent_name: str, func, *args, max_retries: int = None, expected_fields: List[str] = None, timeout: float = None, **kwargs) -> Any:
         """Execute agent call with circuit breaker protection, retry logic, and timeout."""
         circuit_breaker = self._circuit_breakers.get(agent_name)
         if circuit_breaker and not circuit_breaker.allow_request():
             logger.warning(f"Circuit breaker OPEN for {agent_name}, skipping call")
             return None
+        
+        # Use configured retry count if not specified
+        if max_retries is None:
+            max_retries = self._max_retries
         
         # Use configured timeout if not specified
         if timeout is None:

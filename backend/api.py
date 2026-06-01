@@ -21,6 +21,9 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, field_validator
 from starlette.websockets import WebSocketDisconnect
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from backend.conversation import ConversationBrain
 from backend.memory import ConversationMemory
@@ -157,6 +160,12 @@ async def lifespan(app_instance: FastAPI):
 
 
 app = FastAPI(title="Anai Translator", lifespan=lifespan)
+
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_allowed_origins(),
@@ -255,6 +264,10 @@ def diagnostics(request: Request):
     # Get AILang pipeline statistics
     ailang_stats = pipeline.get_ailang_statistics() if hasattr(pipeline, 'get_ailang_statistics') else {"enabled": False, "active_sessions": 0, "bridge_stats": None}
     
+    # Get AILang configuration from config
+    from backend.config import ailang_diagnostics
+    ailang_config = ailang_diagnostics()
+    
     return {
         "status": "ok",
         "ready": runtime_state["ready"],
@@ -265,7 +278,7 @@ def diagnostics(request: Request):
         "voice_warmup": runtime_state.get("voice_warmup"),
         "cip": cip_health_snapshot(),
         "stt_provider": stt_provider,
-        "ailang": ailang_stats,
+        "ailang": {**ailang_stats, "config": ailang_config},
         "service_health": service_health_manager.get_all_health_summaries(),
         "streaming": {
             "websocket_path": "/ws/audio",
@@ -849,6 +862,7 @@ async def detect_voice_activity(audio: UploadFile = File(...), identity: str = D
 # AILang Configuration Endpoints
 
 @app.post("/ailang/glossary")
+@limiter.limit("10/minute")
 def set_ailang_glossary(
     glossary: list,
     session_id: str = "default",
@@ -862,6 +876,7 @@ def set_ailang_glossary(
 
 
 @app.post("/ailang/dialect")
+@limiter.limit("10/minute")
 def set_ailang_dialect(
     dialect: str,
     session_id: str = "default",
@@ -875,6 +890,7 @@ def set_ailang_dialect(
 
 
 @app.post("/ailang/speaker")
+@limiter.limit("10/minute")
 def set_ailang_speaker(
     speaker: str,
     session_id: str = "default",
@@ -930,6 +946,7 @@ def get_ailang_health(identity: str = Depends(authenticate_http)):
 
 
 @app.post("/ailang/agent/{agent_name}/enable")
+@limiter.limit("20/minute")
 def enable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_http)):
     """Enable a specific AILang agent."""
     metrics["http_requests"] += 1
@@ -940,6 +957,7 @@ def enable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_ht
 
 
 @app.post("/ailang/agent/{agent_name}/disable")
+@limiter.limit("20/minute")
 def disable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_http)):
     """Disable a specific AILang agent."""
     metrics["http_requests"] += 1

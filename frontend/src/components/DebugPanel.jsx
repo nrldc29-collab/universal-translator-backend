@@ -30,6 +30,8 @@ export default function DebugPanel({
   lastAudioError,
 }) {
   const cip = diagnostics?.cip;
+  const ailang = diagnostics?.ailang;
+  const ailangConfig = ailang?.config;
   return (
     <section className="debug-panel">
       <div className="debug-header">
@@ -78,6 +80,32 @@ export default function DebugPanel({
         {cip?.error && (
           <DebugItem label="CIP Error:" value={cip.error} span color="#fca5a5" />
         )}
+        <DebugItem
+          label="AILang Enabled:"
+          value={ailangConfig?.enabled ? 'Yes' : 'No'}
+          color={ailangConfig?.enabled ? '#86efac' : '#fca5a5'}
+        />
+        <DebugItem
+          label="AILang Sessions:"
+          value={ailang?.active_sessions ?? '-'}
+        />
+        <DebugItem
+          label="AILang Timeout:"
+          value={`${ailangConfig?.agent_timeout ?? '-'}${ailangConfig?.agent_timeout != null ? 's' : ''}`}
+        />
+        <DebugItem
+          label="AILang Cache TTL:"
+          value={`${ailangConfig?.cache_ttl ?? '-'}${ailangConfig?.cache_ttl != null ? 's' : ''}`}
+        />
+        <DebugItem
+          label="AILang Circuit Threshold:"
+          value={ailangConfig?.circuit_failure_threshold ?? '-'}
+        />
+        <DebugItem
+          label="AILang Bridge:"
+          value={ailang?.bridge_stats ? 'Loaded' : 'Not loaded'}
+          color={ailang?.bridge_stats ? '#86efac' : '#fca5a5'}
+        />
         {result?.translated_by && (
           <DebugItem label="Translated by:" value={result.translated_by} />
         )}
@@ -85,6 +113,14 @@ export default function DebugPanel({
           <DebugItem
             label="CIP Decision:"
             value={JSON.stringify(result.cip_decision)}
+            span
+            color="#93c5fd"
+          />
+        )}
+        {result?.ailang_metadata && (
+          <DebugItem
+            label="AILang Metadata:"
+            value={JSON.stringify(result.ailang_metadata)}
             span
             color="#93c5fd"
           />
