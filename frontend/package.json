@@ -13,7 +13,7 @@
     "@vitejs/plugin-react": "^4.4.0",
     "lucide-react": "^0.460.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0",
+    "react-dom": "^19.2.6",
     "vite": "^6.0.0"
   },
   "devDependencies": {
