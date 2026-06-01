@@ -11,9 +11,18 @@ interface SettingsScreenProps {
 }
 
 const LANGUAGES = [
-  { code: "en", name: "English" },
-  { code: "es", name: "Spanish" },
-  { code: "ht", name: "Haitian Creole" },
+  { code: "en", name: "English", native: "English", flag: "🇺🇸" },
+  { code: "es", name: "Spanish", native: "Español", flag: "🇪🇸" },
+  { code: "ht", name: "Haitian Creole", native: "Kreyòl Ayisyen", flag: "🇭🇹" },
+  { code: "fr", name: "French", native: "Français", flag: "🇫🇷" },
+  { code: "de", name: "German", native: "Deutsch", flag: "🇩🇪" },
+  { code: "it", name: "Italian", native: "Italiano", flag: "🇮🇹" },
+  { code: "pt", name: "Portuguese", native: "Português", flag: "🇧🇷" },
+  { code: "zh", name: "Chinese", native: "中文", flag: "🇨🇳" },
+  { code: "ja", name: "Japanese", native: "日本語", flag: "🇯🇵" },
+  { code: "ko", name: "Korean", native: "한국어", flag: "🇰🇷" },
+  { code: "ar", name: "Arabic", native: "العربية", flag: "🇸🇦" },
+  { code: "ru", name: "Russian", native: "Русский", flag: "🇷🇺" },
 ];
 
 export default function SettingsScreen({
@@ -51,7 +60,9 @@ export default function SettingsScreen({
               style={[styles.chip, sourceLanguage === language.code && styles.chipActive]}
               onPress={() => setSourceLanguage(language.code)}
             >
-              <Text style={[styles.chipText, sourceLanguage === language.code && styles.chipTextActive]}>{language.name}</Text>
+              <Text style={[styles.chipText, sourceLanguage === language.code && styles.chipTextActive]}>
+                {language.flag} {language.native || language.name}
+              </Text>
             </Pressable>
           ))}
         </View>
@@ -66,7 +77,9 @@ export default function SettingsScreen({
               style={[styles.chip, targetLanguage === language.code && styles.chipActive]}
               onPress={() => setTargetLanguage(language.code)}
             >
-              <Text style={[styles.chipText, targetLanguage === language.code && styles.chipTextActive]}>{language.name}</Text>
+              <Text style={[styles.chipText, targetLanguage === language.code && styles.chipTextActive]}>
+                {language.flag} {language.native || language.name}
+              </Text>
             </Pressable>
           ))}
         </View>

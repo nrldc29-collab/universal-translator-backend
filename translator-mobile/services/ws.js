@@ -93,7 +93,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
       clearTimers();
       reconnectAttempts = 0; // Reset on successful connection
       debugLog("WebSocket connected:", url);
-      setStatus?.("Connected");
+      currentSetStatus?.("Connected");
       startHeartbeat();
     };
     
@@ -104,7 +104,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
         if (data.type === 'pong') {
           return; // Don't forward pong to message handler
         }
-        onMessage(data);
+        currentOnMessage(data);
       } catch (error) {
         console.error("Message parse error:", error);
       }
@@ -118,13 +118,12 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     newWs.onclose = (event) => {
       clearTimers();
       debugLog("WebSocket closed:", event.code, event.reason);
-      
+
       if (!intentionallyClosed) {
-        setStatusWithType?.(`Disconnected (${event.code})`);
+        currentSetStatus?.(`Disconnected (${event.code})`);
         scheduleReconnect();
       } else {
-        setStatusWithType?.('Disconnected');
-        setStatus?.('Disconnected');
+        currentSetStatus?.('Disconnected');
       }
     };
     
