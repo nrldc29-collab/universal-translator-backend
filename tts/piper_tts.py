@@ -4,7 +4,7 @@ import subprocess
 import sys
 import wave
 from pathlib import Path
-from threading import Lock
+from threading import Lock, get_ident
 
 import requests
 
@@ -21,11 +21,19 @@ DEFAULT_VOICES = {
     "es": "models/tts/es_MX-claude-high.onnx",
 }
 
-# Languages with no Piper voice — synthesized via eSpeak NG fallback by default.
-# eSpeak NG 1.50+ supports Haitian Creole (`ht`) but sounds robotic.
-# If GOOGLE_TTS_API_KEY is set, Haitian Creole uses Google Cloud neural TTS
-# (language code ht-HT) instead of eSpeak for natural-sounding audio.
-ESPEAK_LANGUAGES = {"ht"}
+# Languages with no Piper voice — synthesized via eSpeak NG (free, no API key).
+# eSpeak works offline for all of these. Google TTS is used instead when
+# GOOGLE_TTS_API_KEY is set (better quality).
+ESPEAK_LANGUAGES = {"ht", "fr", "de", "it", "pt", "nl", "ru", "zh", "ja", "ko", "ar", "hi"}
+
+# eSpeak voice names that differ from the ISO language code
+ESPEAK_VOICE_MAP = {
+    "zh": "cmn",   # Mandarin Chinese
+    "ht": "ht",    # Haitian Creole
+    "hi": "hi",    # Hindi
+    "ko": "ko",    # Korean
+    "ja": "ja",    # Japanese
+}
 
 # Google Cloud Text-to-Speech is faster than local Piper on the Railway CPU
 # instance. Production uses it by default when GOOGLE_TTS_API_KEY is configured,
@@ -97,9 +105,10 @@ class PiperTextToSpeech:
         self._loaded[lang] = voice
         return voice
 
-    def _use_cloud_tts(self, lang):
+    def _use_cloud_tts(self, lang, google_api_key=None):
         normalized = _normalize_language(lang)
-        if not os.getenv("GOOGLE_TTS_API_KEY"):
+        effective_key = google_api_key or os.getenv("GOOGLE_TTS_API_KEY")
+        if not effective_key:
             return False
         if normalized not in GOOGLE_TTS_LANGUAGE_CODES:
             return False
@@ -110,13 +119,13 @@ class PiperTextToSpeech:
             "off",
         }
 
-    def _synthesize_google(self, text, out_path, lang):
+    def _synthesize_google(self, text, out_path, lang, google_api_key=None):
         """Render audio via Google Cloud Text-to-Speech neural voice.
 
         Produces a 22050 Hz mono 16-bit PCM WAV — same format Piper outputs.
-        Requires GOOGLE_TTS_API_KEY environment variable.
+        Requires GOOGLE_TTS_API_KEY environment variable or google_api_key param.
         """
-        api_key = os.getenv("GOOGLE_TTS_API_KEY")
+        api_key = google_api_key or os.getenv("GOOGLE_TTS_API_KEY")
         if not api_key:
             raise RuntimeError("GOOGLE_TTS_API_KEY is not set")
 
@@ -161,9 +170,10 @@ class PiperTextToSpeech:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         # Speed (-s): 160 wpm is roughly natural. Pitch (-p): 50 = neutral.
         # -a 100 = max amplitude. -w writes WAV. -v ht selects Haitian Creole.
+        espeak_voice = ESPEAK_VOICE_MAP.get(lang, lang)
         cmd = [
             "espeak-ng",
-            "-v", lang,
+            "-v", espeak_voice,
             "-s", "160",
             "-p", "50",
             "-a", "100",
@@ -183,7 +193,7 @@ class PiperTextToSpeech:
             ) from exc
         return str(out_path)
 
-    def synthesize(self, text, output_path="models/tts/output.wav", language=None):
+    def synthesize(self, text, output_path="models/tts/output.wav", language=None, google_api_key=None):
         if not text or not text.strip():
             raise ValueError("Cannot synthesize empty text.")
 
@@ -193,17 +203,17 @@ class PiperTextToSpeech:
         # Languages with no Piper voice → try Google Cloud TTS first if key is set,
         # otherwise fall back to eSpeak NG (currently: ht).
         if lang in ESPEAK_LANGUAGES:
-            if self._use_cloud_tts(lang):
+            if self._use_cloud_tts(lang, google_api_key=google_api_key):
                 try:
-                    return self._synthesize_google(text, out_path, lang)
+                    return self._synthesize_google(text, out_path, lang, google_api_key=google_api_key)
                 except (requests.RequestException, ConnectionError, TimeoutError):
                     # If Google TTS fails for any reason, silently fall back to eSpeak
                     pass
             return self._synthesize_espeak(text, out_path, lang)
 
-        if self._use_cloud_tts(lang):
+        if self._use_cloud_tts(lang, google_api_key=google_api_key):
             try:
-                return self._synthesize_google(text, out_path, lang)
+                return self._synthesize_google(text, out_path, lang, google_api_key=google_api_key)
             except (requests.RequestException, ConnectionError, TimeoutError):
                 # Keep speech reliable if the cloud provider is unavailable or a
                 # language is rejected; local Piper remains the durable fallback.
@@ -225,8 +235,15 @@ class PiperTextToSpeech:
 
         voice = self._load_voice(lang)
         if voice is not None:
-            with self._lock:
+            # Non-blocking for partials: if the lock is already held (another
+            # synthesis running), skip rather than queue — keeps audio responsive.
+            acquired = self._lock.acquire(blocking=False)
+            if not acquired:
+                raise RuntimeError("TTS synthesis busy — skipping partial to stay current.")
+            try:
                 audio_chunks = list(voice.synthesize(text))
+            finally:
+                self._lock.release()
             if not audio_chunks:
                 raise RuntimeError("Piper returned no audio.")
             first_chunk = audio_chunks[0]
