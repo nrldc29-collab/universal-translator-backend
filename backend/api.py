@@ -252,6 +252,9 @@ def diagnostics(request: Request):
 
     service_health_manager = get_service_health_manager()
     
+    # Get AILang pipeline statistics
+    ailang_stats = pipeline.get_ailang_statistics() if hasattr(pipeline, 'get_ailang_statistics') else {"enabled": False, "active_sessions": 0, "bridge_stats": None}
+    
     return {
         "status": "ok",
         "ready": runtime_state["ready"],
@@ -262,6 +265,7 @@ def diagnostics(request: Request):
         "voice_warmup": runtime_state.get("voice_warmup"),
         "cip": cip_health_snapshot(),
         "stt_provider": stt_provider,
+        "ailang": ailang_stats,
         "service_health": service_health_manager.get_all_health_summaries(),
         "streaming": {
             "websocket_path": "/ws/audio",
@@ -477,6 +481,22 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
             speaker_memory.register(speaker_id, language=request.source_language or detect_language_heuristic(request.text))
         # Use a per-request translator if mode/provider was specified by the client
         req_translator = _translator_for_request(request.translation_mode, request.translation_provider)
+        
+        # Get session ID from request or generate one
+        session_id = request.session_id if hasattr(request, 'session_id') and request.session_id else identity
+        
+        # Get speaker from request or use default
+        speaker = request.speaker if hasattr(request, 'speaker') and request.speaker else speaker_id
+        
+        # Get confidence from request
+        confidence = request.confidence if hasattr(request, 'confidence') else 0.0
+        
+        # Configure AILang pipeline with request settings
+        if request.dialect_preference:
+            pipeline.set_dialect_preference(request.dialect_preference)
+        if request.glossary:
+            pipeline.set_glossary(request.glossary)
+        
         if req_translator:
             interim = pipeline.translate_text_with(
                 req_translator,
@@ -485,6 +505,8 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 target_language=request.target_language,
                 tone=request.tone,
                 synthesize_audio=False,
+                speaker=speaker,
+                confidence=confidence,
             )
         else:
             interim = pipeline.translate_text(
@@ -493,6 +515,8 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 target_language=request.target_language,
                 tone=request.tone,
                 synthesize_audio=False,
+                speaker=speaker,
+                confidence=confidence,
             )
         user_profile = profiles.get(identity)
         # Let the UT pipeline produce the translation first, then let CIP make
@@ -551,6 +575,11 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         speaker_memory.add_message(speaker_id, request.text)
         response_dict = dict(result.__dict__)
         apply_cip_decision(response_dict, cip)
+        
+        # Include AILang metadata in response
+        if interim.ailang_metadata:
+            response_dict["ailang_metadata"] = interim.ailang_metadata
+        
         if conf_score < 0.4 and not response_dict.get("clarify"):
             response_dict["clarify"] = True
             response_dict["clarify_message"] = clarification_for(request.text, detect_ambiguities(request.text))
@@ -815,6 +844,67 @@ async def detect_voice_activity(audio: UploadFile = File(...), identity: str = D
     audio_bytes = await _read_limited_upload(audio, get_max_audio_mb() * 1024 * 1024)
     suffix = _safe_upload_suffix(audio.filename, "audio.webm", {".webm", ".wav", ".m4a", ".mp3", ".ogg", ".aac"})
     return await run_in_threadpool(vad.detect_bytes, audio_bytes, suffix)
+
+
+# AILang Configuration Endpoints
+
+@app.post("/ailang/glossary")
+def set_ailang_glossary(
+    glossary: list,
+    session_id: str = "default",
+    identity: str = Depends(authenticate_http),
+):
+    """Set custom glossary for AILang terminology injection."""
+    metrics["http_requests"] += 1
+    pipeline.set_glossary(glossary)
+    logger.info("ailang_glossary_set identity=%s session_id=%s terms=%d", identity, session_id, len(glossary))
+    return {"status": "ok", "session_id": session_id, "glossary_terms": len(glossary)}
+
+
+@app.post("/ailang/dialect")
+def set_ailang_dialect(
+    dialect: str,
+    session_id: str = "default",
+    identity: str = Depends(authenticate_http),
+):
+    """Set dialect preference for AILang regional adaptation."""
+    metrics["http_requests"] += 1
+    pipeline.set_dialect_preference(dialect)
+    logger.info("ailang_dialect_set identity=%s session_id=%s dialect=%s", identity, session_id, dialect)
+    return {"status": "ok", "session_id": session_id, "dialect": dialect}
+
+
+@app.post("/ailang/speaker")
+def set_ailang_speaker(
+    speaker: str,
+    session_id: str = "default",
+    identity: str = Depends(authenticate_http),
+):
+    """Set current speaker for AILang context tracking."""
+    metrics["http_requests"] += 1
+    pipeline.set_speaker(speaker)
+    logger.info("ailang_speaker_set identity=%s session_id=%s speaker=%s", identity, session_id, speaker)
+    return {"status": "ok", "session_id": session_id, "speaker": speaker}
+
+
+@app.delete("/ailang/context")
+def clear_ailang_context(
+    session_id: str = "default",
+    identity: str = Depends(authenticate_http),
+):
+    """Clear AILang context for a session."""
+    metrics["http_requests"] += 1
+    pipeline.clear_session_context()
+    logger.info("ailang_context_cleared identity=%s session_id=%s", identity, session_id)
+    return {"status": "ok", "session_id": session_id}
+
+
+@app.get("/ailang/stats")
+def get_ailang_stats(identity: str = Depends(authenticate_http)):
+    """Get AILang pipeline statistics."""
+    metrics["http_requests"] += 1
+    stats = pipeline.get_ailang_statistics()
+    return stats
 
 
 @app.websocket("/ws/translate")

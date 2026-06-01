@@ -23,6 +23,10 @@ class TextTranslationRequest(BaseModel):
     translation_mode: str | None = None
     translation_provider: str | None = None
     google_tts_api_key: str | None = None
+    speaker: str | None = None  # AILang speaker identifier
+    confidence: float = 0.0  # Translation confidence for fallback
+    dialect_preference: str | None = None  # Regional dialect preference (e.g., es-MX, pt-BR)
+    glossary: list | None = None  # Custom terminology glossary
 
 
 class TextToSpeechRequest(BaseModel):
