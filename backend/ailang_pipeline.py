@@ -293,6 +293,8 @@ class AILangPipelineManager:
         # Response cache for expensive operations (configurable TTL)
         self._response_cache: Dict[str, tuple] = {}
         self._cache_ttl = get_ailang_cache_ttl()
+        self._cache_hits = 0
+        self._cache_misses = 0
         
         # Timeout configuration for agent calls (configurable)
         self._agent_timeout = get_ailang_agent_timeout()
@@ -338,11 +340,13 @@ class AILangPipelineManager:
         if cache_key in self._response_cache:
             response, timestamp = self._response_cache[cache_key]
             if time.time() - timestamp < self._cache_ttl:
+                self._cache_hits += 1
                 logger.debug(f"Cache hit for {cache_key}")
                 return response
             else:
                 # Expired, remove from cache
                 del self._response_cache[cache_key]
+        self._cache_misses += 1
         return None
     
     def _cache_response(self, cache_key: str, response: Any) -> None:
@@ -358,6 +362,16 @@ class AILangPipelineManager:
         """Clear all cached responses."""
         self._response_cache.clear()
         logger.info("AILang response cache cleared")
+    
+    def get_cache_info(self) -> Dict[str, Any]:
+        """Get cache information including size and hit rate."""
+        return {
+            "size": len(self._response_cache),
+            "max_size": 1000,
+            "hit_rate": self._cache_hits / (self._cache_hits + self._cache_misses) if (self._cache_hits + self._cache_misses) > 0 else 0.0,
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
+        }
     
     def set_agent_enabled(self, agent_name: str, enabled: bool) -> None:
         """Enable or disable a specific agent."""
@@ -687,12 +701,14 @@ class AILangPipelineManager:
                 "active_sessions": len(self._context_cache),
                 "bridge_stats": bridge.get_stats(),
                 "circuit_breakers": circuit_breaker_stats,
+                "cache": self.get_cache_info(),
             }
         return {
             "enabled": self._enabled,
             "active_sessions": len(self._context_cache),
             "bridge_stats": None,
             "circuit_breakers": circuit_breaker_stats,
+            "cache": self.get_cache_info(),
         }
     
     def reset_circuit_breaker(self, agent_name: str) -> bool:

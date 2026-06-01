@@ -7546,7 +7546,6 @@ select:focus-visible {
   color: #94a3b8;
 }
 
-.ailang-config-enabled-count,
 .ailang-config-disabled-count {
   display: inline-flex;
   align-items: center;
@@ -7559,4 +7558,11 @@ select:focus-visible {
 
 .ailang-config-disabled-count {
   color: #f87171;
+}
+
+.ailang-config-cache-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #94a3b8;
 }

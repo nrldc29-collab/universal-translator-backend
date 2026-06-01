@@ -236,6 +236,11 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
             <X size={14} />
             {Object.values(agents || {}).filter(v => v === false).length} disabled
           </span>
+          {stats?.cache && (
+            <span className="ailang-config-cache-info">
+              Cache: {stats.cache.size}/{stats.cache.max_size} ({(stats.cache.hit_rate * 100).toFixed(0)}% hit)
+            </span>
+          )}
         </div>
         <div className="ailang-config-footer-actions">
           <button type="button" className="ailang-config-btn" onClick={clearCache}>
