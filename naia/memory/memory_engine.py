@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,8 @@ from memory.memory_validator import MemoryValidationResult, MemoryValidator
 from memory.procedural import ProceduralMemory
 from memory.retriever import MemoryRetriever, RetrievalRequest, RetrievalResult
 from memory.semantic import SemanticMemory
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryWriteResult(BaseModel):
@@ -66,10 +69,35 @@ class MemoryEngine:
         self.indexer = indexer or MemoryIndexer()
         self.retriever = MemoryRetriever(self.store, self.embeddings)
         self._lock = threading.Lock()
+        self._write_count = 0
+        self._write_errors = 0
+        self._retrieve_count = 0
+        self._retrieve_errors = 0
+        self._decay_count = 0
+        self._forget_count = 0
+        self._forget_errors = 0
+        logger.info(f"MemoryEngine initialized with db_path={self.store.db_path}")
 
     def write(self, candidate: MemoryWriteCandidate) -> MemoryWriteResult:
-        with self._lock:
-            return self._write_unlocked(candidate)
+        start_time = time.time()
+        try:
+            with self._lock:
+                result = self._write_unlocked(candidate)
+            self._write_count += 1
+            logger.debug(f"Memory write completed: stored={result.stored}, type={candidate.memory_type}")
+            return result
+        except Exception as e:
+            self._write_errors += 1
+            logger.error(f"Memory write failed: {e}", exc_info=True)
+            return MemoryWriteResult(
+                stored=False,
+                policy_action="error",
+                status="error",
+                reason=f"Write failed: {str(e)[:100]}",
+            )
+        finally:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.debug(f"Memory write took {duration_ms:.2f}ms")
 
     def _write_unlocked(self, candidate: MemoryWriteCandidate) -> MemoryWriteResult:
         policy_decision = self.policy.decide_write(candidate)
@@ -178,65 +206,102 @@ class MemoryEngine:
         min_confidence: float = 0.35,
         limit: int = 5,
     ) -> RetrievalResult:
-        return self.retriever.retrieve(
-            RetrievalRequest(
-                query=query,
-                memory_types=memory_types,
-                min_confidence=min_confidence,
-                limit=limit,
+        start_time = time.time()
+        try:
+            result = self.retriever.retrieve(
+                RetrievalRequest(
+                    query=query,
+                    memory_types=memory_types,
+                    min_confidence=min_confidence,
+                    limit=limit,
+                )
             )
-        )
+            self._retrieve_count += 1
+            logger.debug(f"Memory retrieve completed: found={len(result.results)} results")
+            return result
+        except Exception as e:
+            self._retrieve_errors += 1
+            logger.error(f"Memory retrieve failed: {e}", exc_info=True)
+            return RetrievalResult(results=[], query=query, error=str(e))
+        finally:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.debug(f"Memory retrieve took {duration_ms:.2f}ms")
 
     def decay(self) -> MemoryDecayResult:
-        with self._lock:
-            records = self.store.active_records()
-        now = datetime.now(timezone.utc)
-        decayed = 0
-        expired = 0
-        for record in records:
-            age_days = max((now - record.updated_at).total_seconds() / 86_400, 0)
-            if age_days <= 0:
-                continue
-            new_confidence = max(
-                0.0,
-                record.confidence - (record.decay_rate * age_days),
-            )
-            if new_confidence == record.confidence:
-                continue
-            status = MemoryStatus.EXPIRED if new_confidence < 0.15 else None
-            if status == MemoryStatus.EXPIRED:
-                expired += 1
-            decayed += 1
-            self.store.update_confidence(
-                record.memory_id,
-                round(new_confidence, 4),
-                status=status,
-            )
-        return MemoryDecayResult(decayed=decayed, expired=expired)
+        start_time = time.time()
+        try:
+            with self._lock:
+                records = self.store.active_records()
+            now = datetime.now(timezone.utc)
+            decayed = 0
+            expired = 0
+            for record in records:
+                age_days = max((now - record.updated_at).total_seconds() / 86_400, 0)
+                if age_days <= 0:
+                    continue
+                new_confidence = max(
+                    0.0,
+                    record.confidence - (record.decay_rate * age_days),
+                )
+                if new_confidence == record.confidence:
+                    continue
+                status = MemoryStatus.EXPIRED if new_confidence < 0.15 else None
+                if status == MemoryStatus.EXPIRED:
+                    expired += 1
+                decayed += 1
+                self.store.update_confidence(
+                    record.memory_id,
+                    round(new_confidence, 4),
+                    status=status,
+                )
+            self._decay_count += 1
+            logger.info(f"Memory decay completed: decayed={decayed}, expired={expired}")
+            return MemoryDecayResult(decayed=decayed, expired=expired)
+        except Exception as e:
+            logger.error(f"Memory decay failed: {e}", exc_info=True)
+            return MemoryDecayResult(decayed=0, expired=0)
+        finally:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.debug(f"Memory decay took {duration_ms:.2f}ms")
 
     def forget(self, memory_id: str, *, reason: str) -> MemoryForgetResult:
-        with self._lock:
-            decision = self.policy.can_soft_delete(reason=reason)
-            if decision.action != PolicyAction.ALLOW:
-                return MemoryForgetResult(
-                    forgotten=False,
-                    status=decision.status.value,
-                    reason=decision.reason,
+        start_time = time.time()
+        try:
+            with self._lock:
+                decision = self.policy.can_soft_delete(reason=reason)
+                if decision.action != PolicyAction.ALLOW:
+                    return MemoryForgetResult(
+                        forgotten=False,
+                        status=decision.status.value,
+                        reason=decision.reason,
+                    )
+                record = self.store.update_status(
+                    memory_id,
+                    MemoryStatus.EXPIRED,
+                    metadata_update={
+                        "forget_reason": reason,
+                        "forgotten_at": datetime.now(timezone.utc).isoformat(),
+                    },
                 )
-            record = self.store.update_status(
-                memory_id,
-                MemoryStatus.EXPIRED,
-                metadata_update={
-                    "forget_reason": reason,
-                    "forgotten_at": datetime.now(timezone.utc).isoformat(),
-                },
+            self._forget_count += 1
+            logger.info(f"Memory forget completed: memory_id={memory_id}, forgotten={record is not None}")
+            return MemoryForgetResult(
+                forgotten=record is not None,
+                record=record,
+                status=record.status.value if record else "missing",
+                reason=decision.reason if record else "memory not found",
             )
-        return MemoryForgetResult(
-            forgotten=record is not None,
-            record=record,
-            status=record.status.value if record else "missing",
-            reason=decision.reason if record else "memory not found",
-        )
+        except Exception as e:
+            self._forget_errors += 1
+            logger.error(f"Memory forget failed: {e}", exc_info=True)
+            return MemoryForgetResult(
+                forgotten=False,
+                status="error",
+                reason=f"Forget failed: {str(e)[:100]}",
+            )
+        finally:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.debug(f"Memory forget took {duration_ms:.2f}ms")
 
     def extract_semantic_candidate(
         self, text: str, *, session_id: str | None = None
@@ -270,8 +335,28 @@ class MemoryEngine:
         return None
 
     def status(self) -> dict[str, Any]:
-        return {
-            "by_status": self.store.count_by_status(),
-            "by_type": self.store.count_by_type(),
-            "db_path": str(self.store.db_path),
-        }
+        """Get memory engine statistics."""
+        try:
+            return {
+                "db_path": str(self.store.db_path),
+                "by_status": self.store.count_by_status(),
+                "by_type": self.store.count_by_type(),
+                "write_count": self._write_count,
+                "write_errors": self._write_errors,
+                "retrieve_count": self._retrieve_count,
+                "retrieve_errors": self._retrieve_errors,
+                "decay_count": self._decay_count,
+                "forget_count": self._forget_count,
+                "forget_errors": self._forget_errors,
+                "write_error_rate": self._write_errors / self._write_count if self._write_count > 0 else 0,
+                "retrieve_error_rate": self._retrieve_errors / self._retrieve_count if self._retrieve_count > 0 else 0,
+                "forget_error_rate": self._forget_errors / self._forget_count if self._forget_count > 0 else 0,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get memory status: {e}", exc_info=True)
+            return {
+                "db_path": str(self.store.db_path),
+                "error": str(e),
+                "write_count": self._write_count,
+                "write_errors": self._write_errors,
+            }

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class CognitiveState(BaseModel):
@@ -54,41 +57,53 @@ class CognitiveState(BaseModel):
     _MAX_ERRORS = 50
 
     def record_error(self, error: str) -> None:
-        if len(self.errors) >= self._MAX_ERRORS:
-            self.errors = self.errors[-self._MAX_ERRORS // 2:]
-        self.errors.append(error)
-        self.touch()
+        try:
+            if len(self.errors) >= self._MAX_ERRORS:
+                self.errors = self.errors[-self._MAX_ERRORS // 2:]
+            self.errors.append(error)
+            self.touch()
+            logger.warning(f"Error recorded in session {self.session_id}: {error[:100]}")
+        except Exception as e:
+            logger.error(f"Failed to record error: {e}", exc_info=True)
 
     def snapshot(self) -> dict[str, Any]:
-        return self.model_dump(
-            mode="json",
-            include={
-                "session_id",
-                "intent",
-                "task_type",
-                "cognitive_mode",
-                "complexity_level",
-                "risk_level",
-                "reasoning_depth",
-                "reflection_enabled",
-                "memory_enabled",
-                "tool_access",
-                "verification_level",
-                "agent_activation",
-                "response_priority",
-                "execution_budget",
-                "synthesis",
-                "retrieved_memories",
-                "memory_writes",
-                "tool_requests",
-                "tool_results",
-                "agent_requests",
-                "agent_results",
-                "active_modules",
-                "confidence",
-                "lifecycle_state",
-                "errors",
-                "created_at",
-                "updated_at",
-            },
-        )
+        try:
+            return self.model_dump(
+                mode="json",
+                include={
+                    "session_id",
+                    "intent",
+                    "task_type",
+                    "cognitive_mode",
+                    "complexity_level",
+                    "risk_level",
+                    "reasoning_depth",
+                    "reflection_enabled",
+                    "memory_enabled",
+                    "tool_access",
+                    "verification_level",
+                    "agent_activation",
+                    "response_priority",
+                    "execution_budget",
+                    "synthesis",
+                    "retrieved_memories",
+                    "memory_writes",
+                    "tool_requests",
+                    "tool_results",
+                    "agent_requests",
+                    "agent_results",
+                    "active_modules",
+                    "confidence",
+                    "lifecycle_state",
+                    "errors",
+                    "created_at",
+                    "updated_at",
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to create state snapshot: {e}", exc_info=True)
+            return {
+                "session_id": self.session_id,
+                "error": str(e),
+                "lifecycle_state": self.lifecycle_state,
+            }

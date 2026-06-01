@@ -88,6 +88,10 @@ class CognitiveRuntimeKernel:
             tool_router=tool_router,
             agent_runtime=agent_runtime,
         )
+        self._process_count = 0
+        self._process_errors = 0
+        self._empty_input_count = 0
+        self._total_latency_ms = 0.0
 
         with self._instances_lock:
             CognitiveRuntimeKernel._instances[self.instance_id] = self
@@ -119,75 +123,140 @@ class CognitiveRuntimeKernel:
         source: str = "user",
         metadata: dict[str, Any] | None = None,
     ) -> KernelResponse:
-        if not user_input or not user_input.strip():
+        start_time = time.perf_counter()
+        try:
+            if not user_input or not user_input.strip():
+                self._empty_input_count += 1
+                logger.debug("Empty input rejected")
+                return KernelResponse(
+                    session_id="empty",
+                    state="rejected",
+                    intent="empty_input",
+                    task_type="none",
+                    complexity_level="trivial",
+                    risk_level="none",
+                    cognitive_mode="rejection",
+                    reasoning_depth=0,
+                    verification_level="none",
+                    confidence=0.0,
+                    response="Input is empty. Please provide a message.",
+                    active_modules=[],
+                    route_plan={},
+                    synthesis={},
+                    telemetry={"rejection_reason": "empty_input"},
+                )
+
+            user_input = _sanitize_input(user_input)
+            started = time.perf_counter()
+            state = self.create_session(user_input)
+            await self.event_log.emit(
+                EventType.INPUT_RECEIVED,
+                module="runtime.kernel",
+                session_id=state.session_id,
+                state_snapshot=state.snapshot(),
+                details={"source": source, "metadata": metadata or {}},
+            )
+
+            try:
+                await self.lifecycle.start(state)
+                pipeline_output = await self.pipeline.execute(state)
+                await self.lifecycle.complete(state)
+                response = self._to_kernel_response(state, pipeline_output, started)
+                self._process_count += 1
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                self._total_latency_ms += latency_ms
+                logger.info(f"Kernel process completed: session={state.session_id}, latency={latency_ms:.2f}ms")
+                return response
+            except Exception as exc:  # noqa: BLE001
+                self._process_errors += 1
+                logger.error(f"Kernel process failed: {exc}", exc_info=True)
+                await self.lifecycle.fail(state, str(exc))
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                return KernelResponse(
+                    session_id=state.session_id,
+                    state=state.lifecycle_state,
+                    intent=state.intent,
+                    task_type=state.task_type,
+                    complexity_level=state.complexity_level,
+                    risk_level=state.risk_level,
+                    cognitive_mode="failure_containment",
+                    reasoning_depth=state.reasoning_depth,
+                    verification_level=state.verification_level,
+                    confidence=0.0,
+                    response="I hit an internal failure and stopped safely.",
+                    active_modules=list(state.active_modules),
+                    route_plan=dict(state.route_plan),
+                    synthesis=dict(state.synthesis),
+                    telemetry={
+                        "latency_ms": latency_ms,
+                        "errors": list(state.errors),
+                        "fault": str(exc),
+                    },
+                )
+        except Exception as e:
+            self._process_errors += 1
+            logger.error(f"Kernel process_user_input failed: {e}", exc_info=True)
+            latency_ms = (time.perf_counter() - start_time) * 1000
             return KernelResponse(
-                session_id="empty",
-                state="rejected",
-                intent="empty_input",
-                task_type="none",
-                complexity_level="trivial",
-                risk_level="none",
-                cognitive_mode="rejection",
+                session_id="error",
+                state="error",
+                intent="error",
+                task_type="error",
+                complexity_level="unknown",
+                risk_level="unknown",
+                cognitive_mode="error",
                 reasoning_depth=0,
                 verification_level="none",
                 confidence=0.0,
-                response="Input is empty. Please provide a message.",
+                response="An internal error occurred.",
                 active_modules=[],
                 route_plan={},
                 synthesis={},
-                telemetry={"rejection_reason": "empty_input"},
-            )
-
-        user_input = _sanitize_input(user_input)
-        started = time.perf_counter()
-        state = self.create_session(user_input)
-        await self.event_log.emit(
-            EventType.INPUT_RECEIVED,
-            module="runtime.kernel",
-            session_id=state.session_id,
-            state_snapshot=state.snapshot(),
-            details={"source": source, "metadata": metadata or {}},
-        )
-
-        try:
-            await self.lifecycle.start(state)
-            pipeline_output = await self.pipeline.execute(state)
-            await self.lifecycle.complete(state)
-            return self._to_kernel_response(state, pipeline_output, started)
-        except Exception as exc:  # noqa: BLE001
-            await self.lifecycle.fail(state, str(exc))
-            return KernelResponse(
-                session_id=state.session_id,
-                state=state.lifecycle_state,
-                intent=state.intent,
-                task_type=state.task_type,
-                complexity_level=state.complexity_level,
-                risk_level=state.risk_level,
-                cognitive_mode="failure_containment",
-                reasoning_depth=state.reasoning_depth,
-                verification_level=state.verification_level,
-                confidence=0.0,
-                response="I hit an internal failure and stopped safely.",
-                active_modules=list(state.active_modules),
-                route_plan=dict(state.route_plan),
-                synthesis=dict(state.synthesis),
-                telemetry={
-                    "latency_ms": (time.perf_counter() - started) * 1000,
-                    "errors": list(state.errors),
-                    "fault": str(exc),
-                },
+                telemetry={"latency_ms": latency_ms, "error": str(e)},
             )
 
     def create_session(self, user_input: str) -> CognitiveState:
-        return CognitiveState(user_input=user_input)
+        try:
+            return CognitiveState(user_input=user_input)
+        except Exception as e:
+            logger.error(f"Failed to create session: {e}", exc_info=True)
+            raise
 
     async def telemetry_snapshot(self, *, limit: int = 100) -> dict[str, Any]:
-        events = await self.event_log.snapshot(limit=limit)
+        try:
+            events = await self.event_log.snapshot(limit=limit)
+            return {
+                "instance_id": self.instance_id,
+                "events": events,
+                "scheduler": self.scheduler.snapshot(),
+                "active_sessions": self.lifecycle.active_sessions(),
+                "lifecycle_transitions": self.lifecycle.transitions()[-limit:],
+                "process_count": self._process_count,
+                "process_errors": self._process_errors,
+                "empty_input_count": self._empty_input_count,
+                "error_rate": self._process_errors / self._process_count if self._process_count > 0 else 0,
+                "avg_latency_ms": self._total_latency_ms / self._process_count if self._process_count > 0 else 0,
+            }
+        except Exception as e:
+            logger.error(f"Failed to get telemetry snapshot: {e}", exc_info=True)
+            return {
+                "instance_id": self.instance_id,
+                "error": str(e),
+                "process_count": self._process_count,
+                "process_errors": self._process_errors,
+            }
+
+    def get_statistics(self) -> dict[str, Any]:
+        """Get kernel statistics."""
         return {
-            "events": events,
-            "scheduler": self.scheduler.snapshot(),
-            "active_sessions": self.lifecycle.active_sessions(),
-            "lifecycle_transitions": self.lifecycle.transitions()[-limit:],
+            "instance_id": self.instance_id,
+            "process_count": self._process_count,
+            "process_errors": self._process_errors,
+            "empty_input_count": self._empty_input_count,
+            "error_rate": self._process_errors / self._process_count if self._process_count > 0 else 0,
+            "avg_latency_ms": self._total_latency_ms / self._process_count if self._process_count > 0 else 0,
+            "total_instances": len(self._instances),
+            "active_sessions": len(self.lifecycle.active_sessions()),
         }
 
     def _to_kernel_response(
