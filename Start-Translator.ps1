@@ -73,6 +73,7 @@ if (-not (Test-PortListening -Port $BackendPort)) {
     }
     $env:FRONTEND_URL = "http://127.0.0.1:$FrontendPort"
     $env:ALLOWED_ORIGIN_REGEX = "https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?|https://.*\.trycloudflare\.com"
+    $env:PARTIAL_TTS_MODE = "true"
     Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "$BackendPort") -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr | Out-Null
 }
 

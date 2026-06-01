@@ -72,4 +72,7 @@ COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
 CMD ["python", "-m", "backend.app"]

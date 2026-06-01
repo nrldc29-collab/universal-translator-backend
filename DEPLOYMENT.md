@@ -181,4 +181,183 @@ WHISPER_BEAM_SIZE=1        # 1 (fast) — 5 (accurate)
 
 ## Google Cloud Run (serverless, CPU)
 
-CPU-only deploy that scales to zero. Good for low-volume demos
+CPU-only deploy that scales to zero. Good for low-volume demos.
+
+```bash
+gcloud builds submit --tag gcr.io/YOUR_PROJECT/anai-translator-backend
+gcloud run deploy anai-translator-backend \
+  --image gcr.io/YOUR_PROJECT/anai-translator-backend \
+  --platform managed \
+  --memory 4Gi \
+  --timeout 3600 \
+  --set-env-vars ENVIRONMENT=production,WHISPER_DEVICE=cpu,WHISPER_MODEL_SIZE=tiny
+```
+
+Trade-offs: cold starts, no GPU, no persistent in-process state for long
+WebSocket sessions.
+
+## AWS ECS with GPU
+
+```bash
+# Build and push to ECR
+aws ecr get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin YOUR_ECR_URI
+docker build -f Dockerfile.backend -t anai-translator-backend .
+docker tag anai-translator-backend:latest \
+  YOUR_ECR_URI/anai-translator-backend:latest
+docker push YOUR_ECR_URI/anai-translator-backend:latest
+```
+
+Create an ECS task definition with GPU resources and a service in front of an
+ALB. Use the ALB for HTTPS termination and WebSocket support (`Upgrade` /
+`Connection` headers must be forwarded).
+
+## Reverse proxy, HTTPS, and CORS
+
+Minimum Nginx config for the FastAPI service (WebSocket-aware):
+
+```nginx
+upstream backend { server 127.0.0.1:8000; }
+
+server {
+    listen 80;
+    server_name your-domain.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+
+    ssl_certificate     /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+
+    proxy_set_header Upgrade           $http_upgrade;
+    proxy_set_header Connection        "upgrade";
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    proxy_read_timeout 300s;
+    proxy_connect_timeout 75s;
+
+    location / { proxy_pass http://backend; }
+}
+```
+
+Then on Ubuntu:
+
+```bash
+sudo apt-get install certbot python3-certbot-nginx
+sudo certbot certonly --nginx -d your-domain.com
+```
+
+### CORS / ALLOWED_ORIGINS
+
+Set `ALLOWED_ORIGINS` to the exact origin(s) of your frontend:
+
+```bash
+ALLOWED_ORIGINS=https://your-frontend.example.com,https://app.your-domain.com
+```
+
+If frontend and backend share a host (Railway, single-VPS), this can be left
+unset.
+
+## Verification
+
+```bash
+curl https://your-backend-url/health
+curl https://your-backend-url/ready
+curl https://your-backend-url/docs   # interactive Swagger UI
+
+curl -X POST https://your-backend-url/translate/text \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Hello","source_lang":"en","target_lang":"es"}'
+```
+
+For an end-to-end smoke test against a deployed backend:
+
+```powershell
+./Test-Translator.ps1 -BaseUrl https://your-backend-url
+```
+
+## Performance tuning
+
+### Low latency
+
+```bash
+WHISPER_MODEL_SIZE=tiny
+WHISPER_COMPUTE_TYPE=int8
+STT_MAX_CONCURRENCY=1
+WHISPER_BEAM_SIZE=1
+```
+
+### Better accuracy
+
+```bash
+WHISPER_MODEL_SIZE=base
+WHISPER_COMPUTE_TYPE=float16   # GPU only
+WHISPER_BEAM_SIZE=5
+STT_MAX_CONCURRENCY=2
+```
+
+### High concurrency
+
+```bash
+STT_MAX_CONCURRENCY=4
+```
+
+Requires more RAM and a capable CPU or GPU.
+
+## Troubleshooting
+
+### Service won't start
+
+```bash
+sudo systemctl status anai-translator
+sudo journalctl -u anai-translator -n 100
+sudo systemctl restart anai-translator
+```
+
+### Port 8000 already in use
+
+```bash
+sudo lsof -i :8000
+```
+
+Pick a different port in `deploy.sh` and rerun.
+
+### HTTPS cert errors
+
+```bash
+sudo certbot certificates
+sudo certbot renew
+sudo nginx -t
+```
+
+### Frontend can't reach backend
+
+1. `curl https://your-backend-url/health` — does the backend respond?
+2. `sudo systemctl status nginx` — proxy up?
+3. Firewall:
+   ```bash
+   sudo ufw allow 80/tcp
+   sudo ufw allow 443/tcp
+   ```
+4. Verify `VITE_API_URL` in the frontend matches the backend origin.
+5. Check `ALLOWED_ORIGINS` includes the frontend origin.
+
+### Logs
+
+```bash
+docker compose logs -f backend
+docker stats
+sudo tail -f /var/log/nginx/error.log
+sudo tail -f /var/log/nginx/access.log
+```
+
+---
+
+For backend internals see `docs/BACKEND.md`. For API surface see
+`docs/API.md`. For environment variables see `docs/ENVIRONMENT.md`.

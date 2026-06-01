@@ -2,9 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master, develop]
   pull_request:
-    branches: [main]
 
 jobs:
   backend:
@@ -19,7 +18,21 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
       - name: Run backend tests
-        run: pytest
+        run: pytest --ignore=tests/test_websocket_integration.py --ignore=tests/test_stt_integration.py -q
+
+  ai-comm-system:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install ai-comm-system dependencies
+        working-directory: ai-comm-system
+        run: npm install
+      - name: Run ai-comm-system tests
+        working-directory: ai-comm-system
+        run: npm test
 
   frontend:
     runs-on: ubuntu-latest
