@@ -4,6 +4,7 @@ import struct
 import wave
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import Optional
 
 from speech.audio_decode import transcode_to_wav
 
@@ -12,12 +13,22 @@ logger = logging.getLogger(__name__)
 _FRAME_MS = 30
 _ENERGY_THRESHOLD = 0.01
 _MIN_SPEECH_FRAMES = 3
+_MAX_FILE_SIZE_MB = 100  # Reject files larger than 100MB
 
 
 def _rms(samples: list) -> float:
     if not samples:
         return 0.0
     return math.sqrt(sum(s * s for s in samples) / len(samples))
+
+
+def _validate_wav_file(wav_path: str) -> bool:
+    """Validate WAV file is readable and not corrupted."""
+    try:
+        with wave.open(wav_path, "rb") as wf:
+            return wf.getnframes() > 0
+    except Exception:
+        return False
 
 
 def _energy_vad(wav_path: str, threshold: float = _ENERGY_THRESHOLD, min_speech_duration_ms: int = 200) -> dict:
@@ -41,13 +52,19 @@ def _energy_vad(wav_path: str, threshold: float = _ENERGY_THRESHOLD, min_speech_
     else:
         raise ValueError(f"Unsupported sample width: {sampwidth}")
 
-    all_samples = [s / divisor for s in struct.unpack(fmt, raw)]
+    try:
+        all_samples = [s / divisor for s in struct.unpack(fmt, raw)]
+    except struct.error as exc:
+        raise RuntimeError(f"Failed to unpack audio data: {exc}") from exc
+
     if n_channels > 1:
         mono = [sum(all_samples[i::n_channels]) / n_channels for i in range(n_frames)]
     else:
         mono = all_samples
 
     frame_size = int(framerate * _FRAME_MS / 1000)
+    if frame_size < 1:
+        frame_size = 1
     min_frames = max(1, int(min_speech_duration_ms / _FRAME_MS))
     segments = []
     speech_start = None
@@ -94,35 +111,67 @@ class SileroVoiceActivityDetector:
 
     def detect_file(self, audio_path: str) -> dict:
         path = Path(audio_path)
-        if not path.exists() or path.stat().st_size == 0:
-            return {"speech_detected": False, "segments": [], "speech_seconds": 0.0}
+        if not path.exists():
+            logger.warning(f"Audio file does not exist: {audio_path}")
+            return {"speech_detected": False, "segments": [], "speech_seconds": 0.0, "error": "file_not_found"}
+        
+        if path.stat().st_size == 0:
+            logger.warning(f"Audio file is empty: {audio_path}")
+            return {"speech_detected": False, "segments": [], "speech_seconds": 0.0, "error": "empty_file"}
+        
+        if path.stat().st_size > _MAX_FILE_SIZE_MB * 1024 * 1024:
+            logger.warning(f"Audio file too large ({path.stat().st_size / 1024 / 1024:.1f}MB): {audio_path}")
+            return {"speech_detected": False, "segments": [], "speech_seconds": 0.0, "error": "file_too_large"}
 
         transcoded_path = None
         try:
             if path.suffix.lower() == ".wav":
-                try:
-                    return _energy_vad(str(path), threshold=_ENERGY_THRESHOLD, min_speech_duration_ms=self.min_speech_duration_ms)
-                except Exception as exc:
-                    logger.warning("Direct WAV read failed (%s); transcoding via ffmpeg", exc)
+                if _validate_wav_file(str(path)):
+                    try:
+                        return _energy_vad(str(path), threshold=_ENERGY_THRESHOLD, min_speech_duration_ms=self.min_speech_duration_ms)
+                    except Exception as exc:
+                        logger.warning("Direct WAV read failed (%s); transcoding via ffmpeg", exc)
+                else:
+                    logger.warning("WAV file validation failed; transcoding via ffmpeg")
 
             transcoded_path = transcode_to_wav(str(path))
             if not transcoded_path:
                 logger.warning("ffmpeg could not transcode %s; assuming speech present", audio_path)
-                return {"speech_detected": True, "segments": [], "speech_seconds": 0.0}
+                return {"speech_detected": True, "segments": [], "speech_seconds": 0.0, "fallback": "transcode_failed"}
             return _energy_vad(transcoded_path, threshold=_ENERGY_THRESHOLD, min_speech_duration_ms=self.min_speech_duration_ms)
         except Exception as exc:
             logger.warning("VAD failed for %s (%s); assuming speech present", audio_path, exc)
-            return {"speech_detected": True, "segments": [], "speech_seconds": 0.0}
+            return {"speech_detected": True, "segments": [], "speech_seconds": 0.0, "fallback": "vad_error", "error": str(exc)}
         finally:
             if transcoded_path:
-                Path(transcoded_path).unlink(missing_ok=True)
+                try:
+                    Path(transcoded_path).unlink(missing_ok=True)
+                except Exception as exc:
+                    logger.warning(f"Failed to cleanup temp file {transcoded_path}: {exc}")
 
     def detect_bytes(self, audio_bytes: bytes, suffix: str = ".webm") -> dict:
-        with NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
-            temp_file.write(audio_bytes)
-            temp_path = temp_file.name
+        if not audio_bytes:
+            logger.warning("Empty audio bytes provided")
+            return {"speech_detected": False, "segments": [], "speech_seconds": 0.0, "error": "empty_bytes"}
+        
+        if len(audio_bytes) > _MAX_FILE_SIZE_MB * 1024 * 1024:
+            logger.warning(f"Audio bytes too large ({len(audio_bytes) / 1024 / 1024:.1f}MB)")
+            return {"speech_detected": False, "segments": [], "speech_seconds": 0.0, "error": "data_too_large"}
 
+        temp_file = None
         try:
+            temp_file = NamedTemporaryFile(delete=False, suffix=suffix)
+            temp_file.write(audio_bytes)
+            temp_file.flush()
+            temp_path = temp_file.name
             return self.detect_file(temp_path)
+        except Exception as exc:
+            logger.warning(f"VAD failed for bytes: {exc}")
+            return {"speech_detected": True, "segments": [], "speech_seconds": 0.0, "fallback": "bytes_error", "error": str(exc)}
         finally:
-            Path(temp_path).unlink(missing_ok=True)
+            if temp_file:
+                try:
+                    temp_file.close()
+                    Path(temp_file.name).unlink(missing_ok=True)
+                except Exception as exc:
+                    logger.warning(f"Failed to cleanup temp file: {exc}")

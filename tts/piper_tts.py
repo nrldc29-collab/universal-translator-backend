@@ -1,13 +1,17 @@
 import base64
+import logging
 import os
 import subprocess
 import sys
+import time
 import wave
 from pathlib import Path
 from threading import Lock, get_ident
+from typing import Optional
 
 import requests
 
+logger = logging.getLogger(__name__)
 
 # Map language codes to Piper voice file names. The Dockerfile downloads the
 # .onnx + .onnx.json pair for each entry into models/tts/. If a language is
@@ -55,6 +59,13 @@ GOOGLE_TTS_LANGUAGE_CODES = {
     "hi": "hi-IN",
 }
 
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAY_MS = 500
+GOOGLE_TTS_TIMEOUT = 30
+ESPEAK_TIMEOUT = 15
+PIPER_TIMEOUT = 60
+
 
 def _normalize_language(code):
     if not code:
@@ -75,6 +86,8 @@ class PiperTextToSpeech:
         self.model_path = self.voices["en"]  # legacy attribute
         self._loaded = {}  # language -> PiperVoice instance
         self._lock = Lock()
+        self._synthesis_count = 0
+        self._synthesis_errors = 0
 
     def _voice_path(self, language):
         return self.voices.get(_normalize_language(language)) or self.voices["en"]
@@ -145,11 +158,17 @@ class PiperTextToSpeech:
                 "sampleRateHertz": 22050,
             },
         }
-        try:
-            resp = requests.post(url, json=payload, timeout=30)
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            raise RuntimeError("Google Cloud TTS request failed: %s" % exc) from exc
+        
+        for attempt in range(MAX_RETRIES):
+            try:
+                resp = requests.post(url, json=payload, timeout=GOOGLE_TTS_TIMEOUT)
+                resp.raise_for_status()
+                break
+            except requests.RequestException as exc:
+                if attempt == MAX_RETRIES - 1:
+                    raise RuntimeError(f"Google Cloud TTS request failed after {MAX_RETRIES} retries: {exc}") from exc
+                logger.warning(f"Google TTS attempt {attempt + 1} failed, retrying: {exc}")
+                time.sleep(RETRY_DELAY_MS / 1000 * (attempt + 1))
 
         data = resp.json()
         audio_b64 = data.get("audioContent")
@@ -180,93 +199,134 @@ class PiperTextToSpeech:
             "-w", str(out_path),
             text,
         ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=15)
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                "espeak-ng is not installed; cannot synthesize %s audio" % lang
-            ) from exc
-        except subprocess.CalledProcessError as exc:
-            stderr = exc.stderr.decode("utf-8", errors="ignore") if exc.stderr else ""
-            raise RuntimeError(
-                "espeak-ng failed for %s: %s" % (lang, stderr.strip() or exc)
-            ) from exc
+        
+        for attempt in range(MAX_RETRIES):
+            try:
+                subprocess.run(cmd, check=True, capture_output=True, timeout=ESPEAK_TIMEOUT)
+                break
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    "espeak-ng is not installed; cannot synthesize %s audio" % lang
+                ) from exc
+            except subprocess.CalledProcessError as exc:
+                stderr = exc.stderr.decode("utf-8", errors="ignore") if exc.stderr else ""
+                if attempt == MAX_RETRIES - 1:
+                    raise RuntimeError(
+                        "espeak-ng failed for %s after %d retries: %s" % (lang, MAX_RETRIES, stderr.strip() or exc)
+                    ) from exc
+                logger.warning(f"eSpeak attempt {attempt + 1} failed for {lang}, retrying: {stderr.strip()}")
+                time.sleep(RETRY_DELAY_MS / 1000 * (attempt + 1))
+            except subprocess.TimeoutExpired as exc:
+                if attempt == MAX_RETRIES - 1:
+                    raise RuntimeError(f"eSpeak timeout for {lang} after {MAX_RETRIES} retries") from exc
+                logger.warning(f"eSpeak attempt {attempt + 1} timed out for {lang}, retrying")
+                time.sleep(RETRY_DELAY_MS / 1000 * (attempt + 1))
+                
         return str(out_path)
 
     def synthesize(self, text, output_path="models/tts/output.wav", language=None, google_api_key=None):
         if not text or not text.strip():
             raise ValueError("Cannot synthesize empty text.")
 
+        self._synthesis_count += 1
         lang = _normalize_language(language)
         out_path = Path(output_path)
 
-        # Languages with no Piper voice → try Google Cloud TTS first if key is set,
-        # otherwise fall back to eSpeak NG (currently: ht).
-        if lang in ESPEAK_LANGUAGES:
+        try:
+            # Languages with no Piper voice → try Google Cloud TTS first if key is set,
+            # otherwise fall back to eSpeak NG (currently: ht).
+            if lang in ESPEAK_LANGUAGES:
+                if self._use_cloud_tts(lang, google_api_key=google_api_key):
+                    try:
+                        return self._synthesize_google(text, out_path, lang, google_api_key=google_api_key)
+                    except (requests.RequestException, ConnectionError, TimeoutError) as exc:
+                        logger.warning(f"Google TTS failed for {lang}, falling back to eSpeak: {exc}")
+                return self._synthesize_espeak(text, out_path, lang)
+
             if self._use_cloud_tts(lang, google_api_key=google_api_key):
                 try:
                     return self._synthesize_google(text, out_path, lang, google_api_key=google_api_key)
-                except (requests.RequestException, ConnectionError, TimeoutError):
-                    # If Google TTS fails for any reason, silently fall back to eSpeak
-                    pass
-            return self._synthesize_espeak(text, out_path, lang)
+                except (requests.RequestException, ConnectionError, TimeoutError) as exc:
+                    logger.warning(f"Google TTS failed for {lang}, falling back to Piper: {exc}")
 
-        if self._use_cloud_tts(lang, google_api_key=google_api_key):
-            try:
-                return self._synthesize_google(text, out_path, lang, google_api_key=google_api_key)
-            except (requests.RequestException, ConnectionError, TimeoutError):
-                # Keep speech reliable if the cloud provider is unavailable or a
-                # language is rejected; local Piper remains the durable fallback.
-                pass
+            model_path = Path(self._voice_path(lang))
+            if not model_path.exists():
+                # Fall back to English if requested language voice is missing
+                fallback = Path(self.voices["en"])
+                if not fallback.exists():
+                    raise FileNotFoundError(
+                        "Piper voice model not found for language %s (%s) or fallback %s"
+                        % (lang, model_path, fallback)
+                    )
+                model_path = fallback
+                lang = "en"
+                logger.warning(f"Voice for {language} not found, using English fallback")
 
-        model_path = Path(self._voice_path(lang))
-        if not model_path.exists():
-            # Fall back to English if requested language voice is missing
-            fallback = Path(self.voices["en"])
-            if not fallback.exists():
-                raise FileNotFoundError(
-                    "Piper voice model not found for language %s (%s) or fallback %s"
-                    % (lang, model_path, fallback)
-                )
-            model_path = fallback
-            lang = "en"
+            out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+            voice = self._load_voice(lang)
+            if voice is not None:
+                # Non-blocking for partials: if the lock is already held (another
+                # synthesis running), skip rather than queue — keeps audio responsive.
+                acquired = self._lock.acquire(blocking=False)
+                if not acquired:
+                    raise RuntimeError("TTS synthesis busy — skipping partial to stay current.")
+                try:
+                    audio_chunks = list(voice.synthesize(text))
+                finally:
+                    self._lock.release()
+                if not audio_chunks:
+                    raise RuntimeError("Piper returned no audio.")
+                first_chunk = audio_chunks[0]
+                with wave.open(str(out_path), "wb") as wav_file:
+                    wav_file.setnchannels(first_chunk.sample_channels)
+                    wav_file.setsampwidth(first_chunk.sample_width)
+                    wav_file.setframerate(first_chunk.sample_rate)
+                    for chunk in audio_chunks:
+                        wav_file.writeframes(chunk.audio_int16_bytes)
+                return str(out_path)
 
-        voice = self._load_voice(lang)
-        if voice is not None:
-            # Non-blocking for partials: if the lock is already held (another
-            # synthesis running), skip rather than queue — keeps audio responsive.
-            acquired = self._lock.acquire(blocking=False)
-            if not acquired:
-                raise RuntimeError("TTS synthesis busy — skipping partial to stay current.")
-            try:
-                audio_chunks = list(voice.synthesize(text))
-            finally:
-                self._lock.release()
-            if not audio_chunks:
-                raise RuntimeError("Piper returned no audio.")
-            first_chunk = audio_chunks[0]
-            with wave.open(str(out_path), "wb") as wav_file:
-                wav_file.setnchannels(first_chunk.sample_channels)
-                wav_file.setsampwidth(first_chunk.sample_width)
-                wav_file.setframerate(first_chunk.sample_rate)
-                for chunk in audio_chunks:
-                    wav_file.writeframes(chunk.audio_int16_bytes)
+            # Fallback to subprocess piper
+            for attempt in range(MAX_RETRIES):
+                try:
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            "-m",
+                            "piper",
+                            "--model",
+                            str(model_path),
+                            "--output-file",
+                            str(out_path),
+                        ],
+                        input=text,
+                        text=True,
+                        check=True,
+                        timeout=PIPER_TIMEOUT,
+                    )
+                    break
+                except subprocess.TimeoutExpired as exc:
+                    if attempt == MAX_RETRIES - 1:
+                        raise RuntimeError(f"Piper timeout after {MAX_RETRIES} retries") from exc
+                    logger.warning(f"Piper attempt {attempt + 1} timed out, retrying")
+                    time.sleep(RETRY_DELAY_MS / 1000 * (attempt + 1))
+                except subprocess.CalledProcessError as exc:
+                    if attempt == MAX_RETRIES - 1:
+                        raise RuntimeError(f"Piper failed after {MAX_RETRIES} retries: {exc}") from exc
+                    logger.warning(f"Piper attempt {attempt + 1} failed, retrying")
+                    time.sleep(RETRY_DELAY_MS / 1000 * (attempt + 1))
+                    
             return str(out_path)
+        except Exception as exc:
+            self._synthesis_errors += 1
+            logger.error(f"TTS synthesis failed: {exc}")
+            raise
 
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "piper",
-                "--model",
-                str(model_path),
-                "--output-file",
-                str(out_path),
-            ],
-            input=text,
-            text=True,
-            check=True,
-        )
-        return str(out_path)
+    def get_stats(self) -> dict:
+        """Get TTS synthesis statistics."""
+        return {
+            "total_syntheses": self._synthesis_count,
+            "total_errors": self._synthesis_errors,
+            "error_rate": self._synthesis_errors / self._synthesis_count if self._synthesis_count > 0 else 0,
+            "loaded_voices": list(self._loaded.keys()),
+        }

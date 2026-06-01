@@ -8,12 +8,16 @@ making state transitions explicit and unit-testable without a live WebSocket.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
 from backend.config import get_stream_buffer_max_mb
 from backend.confidence import ConfidenceEngine
 from backend.latency import LatencyEngine
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -73,9 +77,17 @@ class StreamSessionState:
     latency_engine: LatencyEngine = field(default_factory=LatencyEngine)
     confidence_engine: ConfidenceEngine = field(default_factory=ConfidenceEngine)
 
+    # ── Session metadata ──────────────────────────────────────────────────
+    created_at: float = field(default_factory=time.time)
+    last_activity_at: float = field(default_factory=time.time)
+    total_chunks_received: int = 0
+    total_segments_processed: int = 0
+    error_count: int = 0
+
     def __post_init__(self):
         self.max_buffer_bytes: int = get_stream_buffer_max_mb() * 1024 * 1024
         self.pipeline_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
+        logger.debug(f"StreamSessionState created for session {self.session_id}")
 
     def reset_segment(self) -> None:
         """Clear per-utterance state between speaker turns.
@@ -97,3 +109,47 @@ class StreamSessionState:
         self.last_active_speaker = None
         self.turn_announced_for_segment = False
         self.segment_generation += 1
+        self.total_segments_processed += 1
+        logger.debug(f"Segment reset for session {self.session_id}, generation {self.segment_generation}")
+
+    def update_activity(self) -> None:
+        """Update last activity timestamp."""
+        self.last_activity_at = time.time()
+
+    def get_session_age(self) -> float:
+        """Get session age in seconds."""
+        return time.time() - self.created_at
+
+    def get_idle_time(self) -> float:
+        """Get idle time in seconds since last activity."""
+        return time.time() - self.last_activity_at
+
+    def is_buffer_overflow(self) -> bool:
+        """Check if audio buffer exceeds max size."""
+        return len(self.audio_chunks) > self.max_buffer_bytes
+
+    def cleanup_tasks(self) -> None:
+        """Cancel any pending async tasks."""
+        for task in [self.partial_task, self.live_text_task]:
+            if task and not task.done():
+                task.cancel()
+                logger.debug(f"Cancelled task for session {self.session_id}")
+        self.partial_task = None
+        self.live_text_task = None
+
+    def get_stats(self) -> dict:
+        """Get session statistics."""
+        return {
+            "session_id": self.session_id,
+            "age_seconds": self.get_session_age(),
+            "idle_seconds": self.get_idle_time(),
+            "total_chunks": self.total_chunks_received,
+            "total_segments": self.total_segments_processed,
+            "segment_generation": self.segment_generation,
+            "buffer_size": len(self.audio_chunks),
+            "buffer_max": self.max_buffer_bytes,
+            "error_count": self.error_count,
+            "vad_errors": self.vad_error_count,
+            "speech_started": self.speech_started,
+            "tts_active": self.tts_active,
+        }
