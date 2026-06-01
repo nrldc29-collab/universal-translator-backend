@@ -10,6 +10,7 @@ import LanguageDock from './components/LanguageDock';
 import SystemBanners from './components/SystemBanners';
 import AppHeader from './components/AppHeader';
 import DebugPanel from './components/DebugPanel';
+import AILangConfigPanel from './components/AILangConfigPanel';
 import SettingsPanel from './components/SettingsPanel';
 import MicPanel from './components/MicPanel';
 import TranslationStack from './components/TranslationStack';
@@ -248,6 +249,7 @@ function App() {
   });
   const lowBandwidthMode = !!settings.lowBandwidthMode;
   const [showDebugPanel, setShowDebugPanel] = useState(() => !!settings.debugMode);
+  const [showAILangConfig, setShowAILangConfig] = useState(false);
   const [reconnectToastVisible, setReconnectToastVisible] = useState(false);
 
   // Error state for user-friendly error display
@@ -3115,6 +3117,7 @@ function App() {
         {settings.debugMode && showDebugPanel && (
           <DebugPanel
             onClose={() => setShowDebugPanel(false)}
+            onOpenAILangConfig={() => setShowAILangConfig(true)}
             loadDiagnostics={loadDiagnostics}
             connectionStatus={connectionStatus}
             micPermission={micPermission}
@@ -3129,6 +3132,12 @@ function App() {
             diagnostics={diagnostics}
             result={result}
             lastAudioError={lastAudioError}
+          />
+        )}
+        {showAILangConfig && (
+          <AILangConfigPanel
+            apiUrl={liveApiUrl}
+            onClose={() => setShowAILangConfig(false)}
           />
         )}
 

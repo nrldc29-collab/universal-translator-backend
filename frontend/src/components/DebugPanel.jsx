@@ -28,6 +28,7 @@ export default function DebugPanel({
   diagnostics,
   result,
   lastAudioError,
+  onOpenAILangConfig,
 }) {
   const cip = diagnostics?.cip;
   const ailang = diagnostics?.ailang;
@@ -39,6 +40,9 @@ export default function DebugPanel({
         <h3>Debug Panel</h3>
         <div className="debug-header-actions">
           <button type="button" className="debug-btn" onClick={loadDiagnostics}>Refresh</button>
+          {onOpenAILangConfig && (
+            <button type="button" className="debug-btn" onClick={onOpenAILangConfig}>AILang Config</button>
+          )}
           <button type="button" className="debug-btn close" onClick={onClose}>×</button>
         </div>
       </div>
