@@ -907,6 +907,57 @@ def get_ailang_stats(identity: str = Depends(authenticate_http)):
     return stats
 
 
+@app.get("/ailang/health")
+def get_ailang_health(identity: str = Depends(authenticate_http)):
+    """Get AILang bridge health status."""
+    metrics["http_requests"] += 1
+    try:
+        from ailang_integration.runtime.bridge import get_bridge
+        bridge = get_bridge()
+        bridge_stats = bridge.get_stats() if bridge else None
+        return {
+            "status": "healthy" if bridge else "unavailable",
+            "bridge_loaded": bridge is not None,
+            "bridge_stats": bridge_stats,
+            "pipeline_enabled": pipeline.ailang_pipeline._enabled if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline else False,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "bridge_loaded": False,
+            "error": str(e),
+        }
+
+
+@app.post("/ailang/agent/{agent_name}/enable")
+def enable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_http)):
+    """Enable a specific AILang agent."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        pipeline.ailang_pipeline.set_agent_enabled(agent_name, True)
+        return {"status": "ok", "agent": agent_name, "enabled": True}
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
+@app.post("/ailang/agent/{agent_name}/disable")
+def disable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_http)):
+    """Disable a specific AILang agent."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        pipeline.ailang_pipeline.set_agent_enabled(agent_name, False)
+        return {"status": "ok", "agent": agent_name, "enabled": False}
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
+@app.get("/ailang/agents")
+def get_ailang_agents(identity: str = Depends(authenticate_http)):
+    """Get all AILang agents and their enable/disable status."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        return pipeline.ailang_pipeline.get_enabled_agents()
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
 @app.websocket("/ws/translate")
 async def websocket_translate(websocket: WebSocket):
     ok, identity = await authenticate_websocket(websocket)
