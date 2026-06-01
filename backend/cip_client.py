@@ -1,14 +1,18 @@
 import json
+import logging
 from time import time
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request as UrlRequest, urlopen
 
 from backend.config import get_cip_mode, get_cip_process_url, get_cip_retries, get_cip_timeout_seconds
+
 from backend.cip_engine import evaluate_local_cip
 from backend.observability import observability
 from backend.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpenError, get_circuit_breaker
 from backend.service_health import get_service_health_manager, record_service_success, record_service_failure
+
+logger = logging.getLogger("anai_translator.cip_client")
 
 
 def cip_settings() -> dict:

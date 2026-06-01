@@ -41,6 +41,9 @@ def make_pipeline(translator=None):
     p.translator = translator or FakeTranslator("default output")
     p.tts = FakeTts()
     p.context_layer = FakeContextLayer()
+    p.session_id = "default"
+    p.enable_ailang = False
+    p.ailang_pipeline = None
     return p
 
 

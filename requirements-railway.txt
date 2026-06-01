@@ -12,3 +12,7 @@ sentencepiece>=0.2.0
 python-multipart>=0.0.9
 piper-tts>=1.2.0
 requests>=2.31.0
+# Required by backend/api.py (rate limiting) and backend streaming/STT client.
+# Must stay in sync with requirements.txt or the Railway image crashes on startup.
+slowapi>=0.1.9
+websockets>=14.1

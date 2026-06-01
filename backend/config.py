@@ -426,6 +426,76 @@ def get_ailang_disabled_agents() -> str:
     return os.getenv("AILANG_DISABLED_AGENTS", "").strip()
 
 
+def get_data_dir() -> str:
+    """Return the persistent data directory (empty string = in-memory only)."""
+    return os.getenv("DATA_DIR", "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Production safety validation
+# ---------------------------------------------------------------------------
+
+_UNSAFE_JWT_SECRETS: frozenset[str] = frozenset({
+    "change-me-before-production",
+    "dev-only-change-me",
+    "secret",
+    "your-secret-key",
+    "changeme",
+    "replace-this",
+    "development-secret",
+    "test",
+    "password",
+    "jwt-secret",
+    "supersecret",
+    "mysecret",
+})
+
+_UNSAFE_USERS: frozenset[str] = frozenset({
+    "demo:demo",
+    "admin:admin",
+    "user:password",
+    "test:test",
+    "root:root",
+})
+
+
+def validate_production_config() -> list[str]:
+    """Validate configuration for a production deployment.
+
+    Returns a list of human-readable error strings. An empty list means the
+    configuration passes all checks. Should be called at startup; the caller
+    should abort the process when errors are present.
+    """
+    if not is_production():
+        return []
+
+    errors: list[str] = []
+
+    jwt = get_jwt_secret()
+    if jwt in _UNSAFE_JWT_SECRETS or len(jwt) < 32:
+        errors.append(
+            "JWT_SECRET is insecure — use a random 64+ character string. "
+            "Generate one with: python scripts/generate_secrets.py"
+        )
+
+    raw_users = os.getenv("USERS", "demo:demo").strip().lower()
+    if raw_users in _UNSAFE_USERS:
+        errors.append(
+            f"USERS contains placeholder credentials ({os.getenv('USERS', 'demo:demo')}). "
+            "Set real credentials or configure external auth before serving traffic."
+        )
+
+    origins = get_allowed_origins()
+    placeholder_origins = [o for o in origins if "example.com" in o or "your-frontend" in o]
+    if placeholder_origins:
+        errors.append(
+            f"ALLOWED_ORIGINS contains placeholder domain(s): {placeholder_origins}. "
+            "Set your actual deployed frontend origin(s)."
+        )
+
+    return errors
+
+
 def ailang_diagnostics() -> dict:
     """Return AILang configuration status."""
     return {

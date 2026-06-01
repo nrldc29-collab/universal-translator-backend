@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 from collections import defaultdict
 from threading import RLock
 from time import time
@@ -19,6 +20,9 @@ from backend.config import (
     get_users,
     is_production,
 )
+from backend.store import get_quota_store, get_user_store
+
+_sec_logger = logging.getLogger("anai_translator.security")
 
 
 class UsageLimiter:
@@ -36,42 +40,82 @@ class UsageLimiter:
             "last_seen": 0.0,
         })
         self._lock = RLock()
+        self._quota_seeded: set[str] = set()
+        self._audio_seeded: set[str] = set()
+
+    def _ensure_quota_seeded(self, identity: str) -> None:
+        """Lazily hydrate hourly quota from DB on first access per identity."""
+        if identity not in self._quota_seeded:
+            qs = get_quota_store()
+            if qs._available:
+                qs.seed_requests(identity, self.usage)
+            self._quota_seeded.add(identity)
+
+    def _ensure_audio_seeded(self, identity: str) -> None:
+        """Lazily hydrate daily audio quota from DB on first access per identity."""
+        if identity not in self._audio_seeded:
+            qs = get_quota_store()
+            if qs._available:
+                qs.seed_audio(identity, self.audio_usage)
+            self._audio_seeded.add(identity)
 
     def check(self, identity: str) -> tuple[bool, int]:
         with self._lock:
             now = time()
+            # Per-minute check (in-memory only — short window)
             minute_start = now - 60
-            minute_requests = [timestamp for timestamp in self.minute_usage[identity] if timestamp >= minute_start]
+            minute_requests = [ts for ts in self.minute_usage[identity] if ts >= minute_start]
             self.minute_usage[identity] = minute_requests
             if len(minute_requests) >= get_requests_per_minute():
                 return False, 0
             minute_requests.append(now)
+            self.minute_usage[identity] = minute_requests
 
+            # Hourly check — seed from DB once per identity so restarts don't reset counts
+            self._ensure_quota_seeded(identity)
             window_start = now - 3600
-            requests = [timestamp for timestamp in self.usage[identity] if timestamp >= window_start]
+            requests = [ts for ts in self.usage[identity] if ts >= window_start]
             self.usage[identity] = requests
             limit = get_quota_limit()
             if len(requests) >= limit:
                 return False, 0
             requests.append(now)
+            self.usage[identity] = requests
+            # Persist asynchronously (best-effort; never blocks the request)
+            try:
+                get_quota_store().record_request(identity, now)
+            except Exception:
+                pass
             return True, limit - len(requests)
 
     def check_audio_seconds(self, identity: str, seconds: float) -> tuple[bool, float]:
         with self._lock:
-            tier = get_user_tiers().get(identity, "free")
+            # Check DB tier first, then fall back to env-var tiers
+            us = get_user_store()
+            tier = None
+            if us.is_available() and us.has_any_users():
+                tier = us.get_tier(identity)
+            if tier is None:
+                tier = get_user_tiers().get(identity, "free")
             if tier == "pro":
                 return True, float("inf")
 
             now = time()
             day_start = now - 86400
-            records = [(timestamp, used_seconds) for timestamp, used_seconds in self.audio_usage[identity] if timestamp >= day_start]
-            used = sum(used_seconds for timestamp, used_seconds in records)
+            # Seed from DB once per identity so restarts don't reset daily audio usage
+            self._ensure_audio_seeded(identity)
+            records = [(ts, secs) for ts, secs in self.audio_usage[identity] if ts >= day_start]
+            used = sum(secs for _, secs in records)
             limit = get_free_daily_audio_minutes() * 60
             if used + seconds > limit:
                 self.audio_usage[identity] = records
                 return False, max(0, limit - used)
             records.append((now, seconds))
             self.audio_usage[identity] = records
+            try:
+                get_quota_store().record_audio(identity, now, seconds)
+            except Exception:
+                pass
             return True, max(0, limit - used - seconds)
 
     def track(self, identity: str, metric: str, amount: float = 1) -> None:
@@ -163,10 +207,16 @@ def verify_jwt(token: str | None) -> str | None:
 
 
 def authenticate_user(username: str, password: str) -> str:
-    users = get_users()
-    expected_password = users.get(username)
-    if not expected_password or not hmac.compare_digest(expected_password, password):
-        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    """Authenticate against DB users (when DATA_DIR is set) or env-var USERS."""
+    us = get_user_store()
+    if us.is_available() and us.has_any_users():
+        if not us.verify_user(username, password):
+            raise HTTPException(status_code=401, detail="Invalid username or password.")
+    else:
+        users = get_users()
+        expected_password = users.get(username)
+        if not expected_password or not hmac.compare_digest(expected_password, password):
+            raise HTTPException(status_code=401, detail="Invalid username or password.")
     return create_jwt(username)
 
 

@@ -52,6 +52,7 @@ from backend.config import (
     get_whisper_device,
     get_whisper_model_size,
     get_google_tts_api_key,
+    validate_production_config,
 )
 from backend.service_health import get_service_health_manager
 from translation import HybridTranslator, LightweightTranslator, MarianTranslator
@@ -133,6 +134,28 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
+    # Abort immediately if production config is insecure
+    config_errors = validate_production_config()
+    if config_errors:
+        for err in config_errors:
+            logger.critical("[PRODUCTION CONFIG ERROR] %s", err)
+        raise RuntimeError(
+            "Server refused to start due to insecure production configuration.\n"
+            + "\n".join(f"  - {e}" for e in config_errors)
+        )
+
+    # Warn if CIP brain is not fully configured
+    from backend.cip_client import cip_settings as _cip_settings
+    _cip = _cip_settings()
+    if _cip["mode"] == "cip_first" and not _cip["external_configured"]:
+        logger.warning(
+            "CIP_MODE=cip_first but CIP_PROCESS_URL is not set — "
+            "ambiguity resolution will use local engine only. "
+            "Set CIP_PROCESS_URL to enable the full AI Comm System brain."
+        )
+    elif _cip["mode"] == "off":
+        logger.info("CIP brain disabled (CIP_DEFAULT_MODE=off). Translations will not go through ambiguity resolution.")
+
     voice_warmup_task = None
     runtime_state["models"] = {
         "whisper_device": get_whisper_device(),
@@ -273,6 +296,30 @@ def diagnostics(request: Request):
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
         ailang_health = pipeline.ailang_pipeline.get_health_status()
     
+    # Translation health: show fallback chain and remote translator reachability
+    import os as _os
+    _hybrid_marian_fallback = _os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "0") == "1"
+    _remote_ok: bool | None = None
+    _remote_error: str | None = None
+    try:
+        from translation.remote_translator import RemoteTranslator as _RT
+        _r = _RT(timeout_seconds=2.0)
+        _probe = _r.translate("hello", "en", "es")
+        _remote_ok = bool(_probe and not _probe.startswith("[en->es]"))
+    except Exception as _exc:
+        _remote_ok = False
+        _remote_error = type(_exc).__name__
+
+    from backend.store import get_quota_store as _gqs, get_user_store as _gus
+    _qs = _gqs()
+    _us = _gus()
+    _persistence = {
+        "data_dir": _os.getenv("DATA_DIR", "") or None,
+        "quota_store_available": _qs._available,
+        "user_store_available": _us.is_available(),
+        "db_has_users": _us.has_any_users() if _us.is_available() else False,
+    }
+
     return {
         "status": "ok",
         "ready": runtime_state["ready"],
@@ -281,6 +328,17 @@ def diagnostics(request: Request):
         "frontend": frontend,
         "models": runtime_state["models"],
         "voice_warmup": runtime_state.get("voice_warmup"),
+        "translation": {
+            "runtime": runtime_state["models"].get("translation_runtime"),
+            "backend": runtime_state["models"].get("translation_backend"),
+            "device": runtime_state["models"].get("translation_device"),
+            "fallback_chain": ["lightweight", "remote_google", "marian" if _hybrid_marian_fallback else None],
+            "marian_fallback_enabled": _hybrid_marian_fallback,
+            "remote_translator_reachable": _remote_ok,
+            "remote_translator_error": _remote_error,
+            "tts_google_configured": bool(get_google_tts_api_key()),
+        },
+        "persistence": _persistence,
         "cip": cip_health_snapshot(),
         "stt_provider": stt_provider,
         "ailang": {**ailang_stats, "config": ailang_config, "health": ailang_health},
@@ -869,6 +927,7 @@ async def detect_voice_activity(audio: UploadFile = File(...), identity: str = D
 @app.post("/ailang/glossary")
 @limiter.limit("10/minute")
 def set_ailang_glossary(
+    request: Request,
     glossary: list,
     session_id: str = "default",
     identity: str = Depends(authenticate_http),
@@ -883,6 +942,7 @@ def set_ailang_glossary(
 @app.post("/ailang/dialect")
 @limiter.limit("10/minute")
 def set_ailang_dialect(
+    request: Request,
     dialect: str,
     session_id: str = "default",
     identity: str = Depends(authenticate_http),
@@ -897,6 +957,7 @@ def set_ailang_dialect(
 @app.post("/ailang/speaker")
 @limiter.limit("10/minute")
 def set_ailang_speaker(
+    request: Request,
     speaker: str,
     session_id: str = "default",
     identity: str = Depends(authenticate_http),
@@ -968,7 +1029,7 @@ def get_ailang_health_status(identity: str = Depends(authenticate_http)):
 
 @app.post("/ailang/agent/{agent_name}/enable")
 @limiter.limit("20/minute")
-def enable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_http)):
+def enable_ailang_agent(request: Request, agent_name: str, identity: str = Depends(authenticate_http)):
     """Enable a specific AILang agent."""
     metrics["http_requests"] += 1
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
@@ -979,7 +1040,7 @@ def enable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_ht
 
 @app.post("/ailang/agent/{agent_name}/disable")
 @limiter.limit("20/minute")
-def disable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_http)):
+def disable_ailang_agent(request: Request, agent_name: str, identity: str = Depends(authenticate_http)):
     """Disable a specific AILang agent."""
     metrics["http_requests"] += 1
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
@@ -990,7 +1051,7 @@ def disable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_h
 
 @app.post("/ailang/agent/{agent_name}/config")
 @limiter.limit("10/minute")
-def set_ailang_agent_config(agent_name: str, config: dict, identity: str = Depends(authenticate_http)):
+def set_ailang_agent_config(request: Request, agent_name: str, config: dict, identity: str = Depends(authenticate_http)):
     """Set custom configuration for a specific AILang agent."""
     metrics["http_requests"] += 1
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
@@ -1013,7 +1074,7 @@ def get_ailang_agent_config(agent_name: str, identity: str = Depends(authenticat
 
 @app.delete("/ailang/agent/{agent_name}/config")
 @limiter.limit("10/minute")
-def delete_ailang_agent_config(agent_name: str, identity: str = Depends(authenticate_http)):
+def delete_ailang_agent_config(request: Request, agent_name: str, identity: str = Depends(authenticate_http)):
     """Delete custom configuration for a specific AILang agent."""
     metrics["http_requests"] += 1
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
@@ -1035,7 +1096,7 @@ def get_ailang_agents(identity: str = Depends(authenticate_http)):
 
 @app.post("/ailang/cache/clear")
 @limiter.limit("10/minute")
-def clear_ailang_cache(identity: str = Depends(authenticate_http)):
+def clear_ailang_cache(request: Request, identity: str = Depends(authenticate_http)):
     """Clear the AILang response cache."""
     metrics["http_requests"] += 1
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
@@ -1046,7 +1107,7 @@ def clear_ailang_cache(identity: str = Depends(authenticate_http)):
 
 @app.post("/ailang/circuit-breaker/{agent_name}/reset")
 @limiter.limit("20/minute")
-def reset_ailang_circuit_breaker(agent_name: str, identity: str = Depends(authenticate_http)):
+def reset_ailang_circuit_breaker(request: Request, agent_name: str, identity: str = Depends(authenticate_http)):
     """Manually reset a specific agent's circuit breaker."""
     metrics["http_requests"] += 1
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
@@ -1059,7 +1120,7 @@ def reset_ailang_circuit_breaker(agent_name: str, identity: str = Depends(authen
 
 @app.post("/ailang/circuit-breaker/reset-all")
 @limiter.limit("5/minute")
-def reset_all_ailang_circuit_breakers(identity: str = Depends(authenticate_http)):
+def reset_all_ailang_circuit_breakers(request: Request, identity: str = Depends(authenticate_http)):
     """Reset all circuit breakers."""
     metrics["http_requests"] += 1
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
@@ -1070,7 +1131,7 @@ def reset_all_ailang_circuit_breakers(identity: str = Depends(authenticate_http)
 
 @app.post("/ailang/sessions/cleanup")
 @limiter.limit("5/minute")
-def cleanup_ailang_sessions(max_age_seconds: float = 3600.0, identity: str = Depends(authenticate_http)):
+def cleanup_ailang_sessions(request: Request, max_age_seconds: float = 3600.0, identity: str = Depends(authenticate_http)):
     """Clean up inactive AILang sessions older than max_age_seconds."""
     metrics["http_requests"] += 1
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
@@ -1327,6 +1388,79 @@ async def websocket_assistant(websocket: WebSocket):
         logger.exception("assistant_websocket_error identity=%s", identity)
         with suppress(Exception):
             await websocket.close(code=1011, reason="Internal WebSocket error")
+
+
+# ---------------------------------------------------------------------------
+# Admin: User management (requires DATA_DIR to be set)
+# All admin routes require a valid JWT + the identity must be listed in
+# ADMIN_IDENTITIES env var (comma-separated list of admin usernames).
+# ---------------------------------------------------------------------------
+
+def _require_admin(identity: str = Depends(authenticate_http)) -> str:
+    admin_ids = {
+        s.strip()
+        for s in os.getenv("ADMIN_IDENTITIES", "").split(",")
+        if s.strip()
+    }
+    if not admin_ids:
+        raise HTTPException(status_code=403, detail="No ADMIN_IDENTITIES configured.")
+    if identity not in admin_ids:
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return identity
+
+
+@app.get("/admin/users")
+def admin_list_users(admin: str = Depends(_require_admin)):
+    from backend.store import get_user_store
+    us = get_user_store()
+    if not us.is_available():
+        raise HTTPException(status_code=503, detail="DATA_DIR not set — persistent user store unavailable.")
+    return {"users": us.list_users()}
+
+
+@app.post("/admin/users")
+def admin_add_user(
+    body: dict,
+    admin: str = Depends(_require_admin),
+):
+    from backend.store import get_user_store
+    us = get_user_store()
+    if not us.is_available():
+        raise HTTPException(status_code=503, detail="DATA_DIR not set — persistent user store unavailable.")
+    username = str(body.get("username", "")).strip()
+    password = str(body.get("password", "")).strip()
+    tier = str(body.get("tier", "free")).strip()
+    if not username or not password:
+        raise HTTPException(status_code=422, detail="username and password are required.")
+    if tier not in {"free", "pro"}:
+        raise HTTPException(status_code=422, detail="tier must be 'free' or 'pro'.")
+    ok = us.add_user(username, password, tier)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to add user.")
+    return {"ok": True, "username": username, "tier": tier}
+
+
+@app.delete("/admin/users/{username}")
+def admin_delete_user(username: str, admin: str = Depends(_require_admin)):
+    from backend.store import get_user_store
+    us = get_user_store()
+    if not us.is_available():
+        raise HTTPException(status_code=503, detail="DATA_DIR not set — persistent user store unavailable.")
+    ok = us.delete_user(username)
+    return {"ok": ok, "username": username}
+
+
+@app.patch("/admin/users/{username}/tier")
+def admin_update_tier(username: str, body: dict, admin: str = Depends(_require_admin)):
+    from backend.store import get_user_store
+    us = get_user_store()
+    if not us.is_available():
+        raise HTTPException(status_code=503, detail="DATA_DIR not set — persistent user store unavailable.")
+    tier = str(body.get("tier", "")).strip()
+    if tier not in {"free", "pro"}:
+        raise HTTPException(status_code=422, detail="tier must be 'free' or 'pro'.")
+    ok = us.update_tier(username, tier)
+    return {"ok": ok, "username": username, "tier": tier}
 
 
 @app.get("/{full_path:path}")
