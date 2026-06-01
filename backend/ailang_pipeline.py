@@ -291,6 +291,9 @@ class AILangPipelineManager:
             "EmotionTTS": CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout),
         }
         
+        # Custom agent configurations (per-agent overrides)
+        self._agent_configs: Dict[str, Dict[str, Any]] = {}
+        
         # Response cache for expensive operations (configurable TTL)
         self._response_cache: Dict[str, tuple] = {}
         self._cache_ttl = get_ailang_cache_ttl()
@@ -389,6 +392,26 @@ class AILangPipelineManager:
     def get_enabled_agents(self) -> Dict[str, bool]:
         """Get all agent enable/disable states."""
         return self._enabled_agents.copy()
+    
+    def set_agent_config(self, agent_name: str, config: Dict[str, Any]) -> bool:
+        """Set custom configuration for a specific agent."""
+        if agent_name in self._enabled_agents:
+            self._agent_configs[agent_name] = config
+            logger.info(f"Set custom config for agent {agent_name}: {config}")
+            return True
+        return False
+    
+    def get_agent_config(self, agent_name: str) -> Dict[str, Any]:
+        """Get custom configuration for a specific agent."""
+        return self._agent_configs.get(agent_name, {})
+    
+    def delete_agent_config(self, agent_name: str) -> bool:
+        """Delete custom configuration for a specific agent."""
+        if agent_name in self._agent_configs:
+            del self._agent_configs[agent_name]
+            logger.info(f"Deleted custom config for agent {agent_name}")
+            return True
+        return False
     
     def _get_bridge(self):
         """Lazy load AILang bridge."""

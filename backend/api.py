@@ -988,6 +988,42 @@ def disable_ailang_agent(agent_name: str, identity: str = Depends(authenticate_h
     return {"status": "error", "message": "AILang pipeline not available"}
 
 
+@app.post("/ailang/agent/{agent_name}/config")
+@limiter.limit("10/minute")
+def set_ailang_agent_config(agent_name: str, config: dict, identity: str = Depends(authenticate_http)):
+    """Set custom configuration for a specific AILang agent."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        success = pipeline.ailang_pipeline.set_agent_config(agent_name, config)
+        if success:
+            return {"status": "ok", "agent": agent_name, "config": config}
+        return {"status": "error", "message": f"Agent {agent_name} not found"}
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
+@app.get("/ailang/agent/{agent_name}/config")
+def get_ailang_agent_config(agent_name: str, identity: str = Depends(authenticate_http)):
+    """Get custom configuration for a specific AILang agent."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        config = pipeline.ailang_pipeline.get_agent_config(agent_name)
+        return {"status": "ok", "agent": agent_name, "config": config}
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
+@app.delete("/ailang/agent/{agent_name}/config")
+@limiter.limit("10/minute")
+def delete_ailang_agent_config(agent_name: str, identity: str = Depends(authenticate_http)):
+    """Delete custom configuration for a specific AILang agent."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        success = pipeline.ailang_pipeline.delete_agent_config(agent_name)
+        if success:
+            return {"status": "ok", "agent": agent_name, "message": "Config deleted"}
+        return {"status": "error", "message": f"Agent {agent_name} not found or no config"}
+    return {"status": "error", "message": "AILang pipeline not available"}
+
+
 @app.get("/ailang/agents")
 def get_ailang_agents(identity: str = Depends(authenticate_http)):
     """Get all AILang agents and their enable/disable status."""
