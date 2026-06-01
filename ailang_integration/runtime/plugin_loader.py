@@ -1,6 +1,7 @@
 """Plugin Loader — Discovers and manages AILang plugins."""
 from __future__ import annotations
 import logging
+import time
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable, Dict, List, Optional
@@ -27,8 +28,36 @@ class PluginInfo:
         self.hooks = hooks
         self.enabled = True
         self.load_errors: List[str] = []
+        self.hook_execution_count: Dict[str, int] = {hook: 0 for hook in HOOK_POINTS}
+        self.hook_errors: Dict[str, int] = {hook: 0 for hook in HOOK_POINTS}
+        self.total_executions = 0
+        self.total_errors = 0
+
+    def record_hook_execution(self, hook_name: str, success: bool = True) -> None:
+        if hook_name in self.hook_execution_count:
+            self.hook_execution_count[hook_name] += 1
+        self.total_executions += 1
+        if not success:
+            if hook_name in self.hook_errors:
+                self.hook_errors[hook_name] += 1
+            self.total_errors += 1
+
+    def get_stats(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "version": self.version,
+            "enabled": self.enabled,
+            "hooks": self.hooks,
+            "load_errors": self.load_errors,
+            "total_executions": self.total_executions,
+            "total_errors": self.total_errors,
+            "hook_execution_count": self.hook_execution_count,
+            "hook_errors": self.hook_errors,
+            "error_rate": self.total_errors / self.total_executions if self.total_executions > 0 else 0,
+        }
+
     def __repr__(self) -> str:
-        return f"Plugin('{self.name}' v{self.version}, hooks={self.hooks})"
+        return f"Plugin('{self.name}' v{self.version}, hooks={self.hooks}, enabled={self.enabled})"
 
 class PluginLoader:
     def __init__(self, plugins_dir: Optional[Path] = None):
@@ -37,18 +66,29 @@ class PluginLoader:
         self._hooks: Dict[str, List[Dict[str, Any]]] = {hook: [] for hook in HOOK_POINTS}
         self._namespaces: Dict[str, Dict[str, Any]] = {}
         self._lock = RLock()
+        self._load_time = 0.0
         self._discover_plugins()
 
     def _discover_plugins(self) -> None:
+        start_time = time.time()
         if not self.plugins_dir.exists():
+            logger.debug(f"Plugins directory does not exist: {self.plugins_dir}")
+            self._load_time = (time.time() - start_time) * 1000
             return
+        
+        discovered_count = 0
         for ai_file in sorted(self.plugins_dir.glob("*.ai")):
             if ai_file.stem.startswith("_"):
+                logger.debug(f"Skipping private plugin: {ai_file.stem}")
                 continue
             try:
                 self._load_plugin(ai_file)
+                discovered_count += 1
             except Exception as e:
-                logger.error(f"Failed to load plugin {ai_file.stem}: {e}")
+                logger.error(f"Failed to load plugin {ai_file.stem}: {e}", exc_info=True)
+        
+        self._load_time = (time.time() - start_time) * 1000
+        logger.info(f"Plugin discovery complete: {discovered_count} plugins loaded in {self._load_time:.2f}ms")
 
     def _load_plugin(self, path: Path) -> None:
         try:
@@ -97,7 +137,8 @@ class PluginLoader:
         try:
             from .bridge import get_bridge
             return get_bridge()._route_ai_call(model_alias, prompt, **kwargs)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Plugin AI call failed: {e}")
             return f"[plugin-ai:{model_alias}] {prompt[:80]}..."
 
     def execute_hook(self, hook_name: str, *args, **kwargs) -> Any:
@@ -117,8 +158,11 @@ class PluginLoader:
                     result = fn(result, *args[1:], **kwargs)
                 else:
                     result = fn(*args, **kwargs)
+                plugin_info.record_hook_execution(hook_name, success=True)
             except Exception as e:
-                logger.error(f"Plugin '{handler['plugin']}' hook '{hook_name}' failed: {e}")
+                logger.error(f"Plugin '{handler['plugin']}' hook '{hook_name}' failed: {e}", exc_info=True)
+                if plugin_info:
+                    plugin_info.record_hook_execution(hook_name, success=False)
         return result
 
     def has_hooks(self, hook_name: str) -> bool:
@@ -130,13 +174,17 @@ class PluginLoader:
     def enable_plugin(self, name: str) -> bool:
         if name in self._plugins:
             self._plugins[name].enabled = True
+            logger.info(f"Plugin '{name}' enabled")
             return True
+        logger.warning(f"Plugin '{name}' not found")
         return False
 
     def disable_plugin(self, name: str) -> bool:
         if name in self._plugins:
             self._plugins[name].enabled = False
+            logger.info(f"Plugin '{name}' disabled")
             return True
+        logger.warning(f"Plugin '{name}' not found")
         return False
 
     def reload_all(self) -> None:
@@ -145,3 +193,21 @@ class PluginLoader:
             self._namespaces.clear()
             self._hooks = {hook: [] for hook in HOOK_POINTS}
             self._discover_plugins()
+            logger.info("All plugins reloaded")
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get plugin loader statistics."""
+        total_executions = sum(p.total_executions for p in self._plugins.values())
+        total_errors = sum(p.total_errors for p in self._plugins.values())
+        return {
+            "plugins_dir": str(self.plugins_dir),
+            "total_plugins": len(self._plugins),
+            "enabled_plugins": sum(1 for p in self._plugins.values() if p.enabled),
+            "disabled_plugins": sum(1 for p in self._plugins.values() if not p.enabled),
+            "total_hooks_registered": sum(len(hooks) for hooks in self._hooks.values()),
+            "load_time_ms": self._load_time,
+            "total_executions": total_executions,
+            "total_errors": total_errors,
+            "error_rate": total_errors / total_executions if total_executions > 0 else 0,
+            "plugins": [p.get_stats() for p in self._plugins.values()],
+        }

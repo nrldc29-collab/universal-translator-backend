@@ -52,6 +52,8 @@ class PipelineRunner:
         self._lock = RLock()
         self._metrics = []
         self._max_metrics = 100
+        self._total_runs = 0
+        self._total_errors = 0
         self._register_default_steps()
         self._register_builtin_pipelines()
         self._load_pipelines()
@@ -82,6 +84,7 @@ class PipelineRunner:
             from ailang.transpiler import Transpiler
             import ailang.stdlib as _stdlib
             stdlib_funcs = {n: getattr(_stdlib,n) for n in getattr(_stdlib,"__all__",[]) if hasattr(_stdlib,n)}
+            loaded_count = 0
             for ai_file in sorted(self.pipelines_dir.glob("*.ai")):
                 try:
                     raw = ai_file.read_bytes()
@@ -94,10 +97,12 @@ class PipelineRunner:
                         if key.endswith("_STEPS") and isinstance(value, list):
                             pname = key.replace("_STEPS","").lower()
                             self._pipelines[pname] = {"steps": value, "source": str(ai_file)}
+                            loaded_count += 1
                         if key.startswith("step_") and callable(value):
                             self._step_functions[key] = value
                 except Exception as e:
-                    logger.error(f"Failed to load pipeline {ai_file.stem}: {e}")
+                    logger.error(f"Failed to load pipeline {ai_file.stem}: {e}", exc_info=True)
+            logger.info(f"Loaded {loaded_count} custom pipelines")
         except ImportError:
             logger.info("AILang not available for pipeline loading")
 
@@ -113,6 +118,7 @@ class PipelineRunner:
         return "default"
 
     def run(self, pipeline_name, audio_data, context):
+        self._total_runs += 1
         pipeline_def = self._pipelines.get(pipeline_name, self._pipelines["default"])
         result = PipelineResult()
         result.pipeline_name = pipeline_name
@@ -127,7 +133,8 @@ class PipelineRunner:
                 tl = context.get("target_lang", "es")
                 mod = pl.execute_hook("pre_translate", text, sl, tl, context)
                 if mod and isinstance(mod, str): current_data["transcribed_text"] = mod
-        except Exception: pass
+        except Exception as e:
+            logger.warning(f"Pre-translate hooks failed: {e}")
         for step_name in pipeline_def["steps"]:
             ss = time.time()
             try:
@@ -139,7 +146,7 @@ class PipelineRunner:
                 if current_data.get("abort"): result.aborted_at=step_name; result.success=False; break
             except Exception as e:
                 sd = (time.time()-ss)*1000
-                logger.error(f"Step {step_name} failed: {e}")
+                logger.error(f"Step {step_name} failed: {e}", exc_info=True)
                 result.steps.append(StepResult(step_name, {}, sd, False, str(e)))
         try:
             from .plugin_loader import get_plugin_loader
@@ -151,9 +158,12 @@ class PipelineRunner:
                 tl = current_data.get("target_lang", context.get("target_lang", "es"))
                 mod = pl.execute_hook("post_translate", orig, trans, sl, tl, context)
                 if mod and isinstance(mod, str): current_data["translated_text"] = mod
-        except Exception: pass
+        except Exception as e:
+            logger.warning(f"Post-translate hooks failed: {e}")
         result.final_output = current_data
         result.total_duration_ms = (time.time()-start_time)*1000
+        if not result.success:
+            self._total_errors += 1
         self._metrics.append(result)
         if len(self._metrics) > self._max_metrics: self._metrics = self._metrics[-self._max_metrics:]
         return result
@@ -374,3 +384,17 @@ class PipelineRunner:
         return self._metrics[-last_n:]
     def reload(self):
         with self._lock: self._pipelines.clear(); self._load_pipelines()
+    def get_stats(self) -> Dict[str, Any]:
+        """Get pipeline runner statistics."""
+        avg_duration = sum(m.total_duration_ms for m in self._metrics) / len(self._metrics) if self._metrics else 0
+        success_rate = sum(1 for m in self._metrics if m.success) / len(self._metrics) if self._metrics else 1
+        return {
+            "total_runs": self._total_runs,
+            "total_errors": self._total_errors,
+            "error_rate": self._total_errors / self._total_runs if self._total_runs > 0 else 0,
+            "success_rate": success_rate,
+            "avg_duration_ms": avg_duration,
+            "pipelines_available": list(self._pipelines.keys()),
+            "steps_available": list(self._step_functions.keys()),
+            "metrics_stored": len(self._metrics),
+        }
