@@ -87,6 +87,36 @@ Returns the health status of the AILang pipeline with alerts for any issues.
 - `critical`: Critical-level alerts present, service may be unavailable
 - `unavailable`: AILang pipeline not loaded or disabled
 
+#### GET `/ailang/metrics`
+
+Get AILang metrics in Prometheus-compatible format for monitoring systems.
+
+**Response (text/plain):**
+```
+ailang_circuit_state{agent="TranslationBrain"} 1
+ailang_circuit_total_calls{agent="TranslationBrain"} 150
+ailang_circuit_successful_calls{agent="TranslationBrain"} 142
+ailang_circuit_failed_calls{agent="TranslationBrain"} 8
+ailang_circuit_success_rate{agent="TranslationBrain"} 0.9467
+ailang_circuit_avg_latency_ms{agent="TranslationBrain"} 250.50
+ailang_circuit_p50_latency_ms{agent="TranslationBrain"} 230.00
+ailang_circuit_p95_latency_ms{agent="TranslationBrain"} 450.00
+ailang_circuit_p99_latency_ms{agent="TranslationBrain"} 800.00
+ailang_cache_size 45
+ailang_cache_max_size 1000
+ailang_cache_hit_rate 0.8500
+ailang_cache_hits 85
+ailang_cache_misses 15
+ailang_active_sessions 5
+ailang_enabled 1
+```
+
+**Metrics Available:**
+- Circuit breaker state, calls, success rate, latency percentiles per agent
+- Cache size, max size, hit rate, hits, misses
+- Active sessions count
+- Pipeline enabled status
+
 #### GET `/ailang/health`
 
 Returns the health status of the AILang bridge and pipeline.

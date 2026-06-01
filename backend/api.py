@@ -1043,6 +1043,42 @@ def cleanup_ailang_sessions(max_age_seconds: float = 3600.0, identity: str = Dep
     return {"status": "error", "message": "AILang pipeline not available"}
 
 
+@app.get("/ailang/metrics")
+def get_ailang_metrics(identity: str = Depends(authenticate_http)):
+    """Get AILang metrics in Prometheus-compatible format."""
+    metrics["http_requests"] += 1
+    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
+        stats = pipeline.ailang_pipeline.get_statistics()
+        lines = []
+        
+        # Circuit breaker metrics
+        for agent_name, cb_stats in stats.get("circuit_breakers", {}).items():
+            lines.append(f'ailang_circuit_state{{agent="{agent_name}"}} {1 if cb_stats["state"] == "closed" else 0}')
+            lines.append(f'ailang_circuit_total_calls{{agent="{agent_name}"}} {cb_stats["total_calls"]}')
+            lines.append(f'ailang_circuit_successful_calls{{agent="{agent_name}"}} {cb_stats["successful_calls"]}')
+            lines.append(f'ailang_circuit_failed_calls{{agent="{agent_name}"}} {cb_stats["failed_calls"]}')
+            lines.append(f'ailang_circuit_success_rate{{agent="{agent_name}"}} {cb_stats["success_rate"]:.4f}')
+            lines.append(f'ailang_circuit_avg_latency_ms{{agent="{agent_name}"}} {cb_stats["avg_latency_ms"]:.2f}')
+            lines.append(f'ailang_circuit_p50_latency_ms{{agent="{agent_name}"}} {cb_stats.get("p50_latency_ms", 0):.2f}')
+            lines.append(f'ailang_circuit_p95_latency_ms{{agent="{agent_name}"}} {cb_stats.get("p95_latency_ms", 0):.2f}')
+            lines.append(f'ailang_circuit_p99_latency_ms{{agent="{agent_name}"}} {cb_stats.get("p99_latency_ms", 0):.2f}')
+        
+        # Cache metrics
+        cache_info = stats.get("cache", {})
+        lines.append(f'ailang_cache_size {cache_info.get("size", 0)}')
+        lines.append(f'ailang_cache_max_size {cache_info.get("max_size", 1000)}')
+        lines.append(f'ailang_cache_hit_rate {cache_info.get("hit_rate", 0):.4f}')
+        lines.append(f'ailang_cache_hits {cache_info.get("hits", 0)}')
+        lines.append(f'ailang_cache_misses {cache_info.get("misses", 0)}')
+        
+        # Session metrics
+        lines.append(f'ailang_active_sessions {stats.get("active_sessions", 0)}')
+        lines.append(f'ailang_enabled {1 if stats.get("enabled") else 0}')
+        
+        return Response(content="\n".join(lines), media_type="text/plain")
+    return Response(content="", media_type="text/plain")
+
+
 @app.websocket("/ws/translate")
 async def websocket_translate(websocket: WebSocket):
     ok, identity = await authenticate_websocket(websocket)
