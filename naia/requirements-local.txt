@@ -7,4 +7,4 @@
 # On Windows + CPU, the prebuilt wheel works out of the box. If pip tries to
 # build from source and fails, install the CMake-based wheel via:
 #   pip install llama-cpp-python --prefer-binary
-llama-cpp-python==0.3.2
+llama-cpp-python==0.3.24
