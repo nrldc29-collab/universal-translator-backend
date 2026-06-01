@@ -1,5 +1,5 @@
 /**
- * useConversationHistory — keep a rolling window of conversation turns
+ * useConversationHistory -- keep a rolling window of conversation turns
  * (source + translated text per speaker) and persist them to
  * localStorage so a refresh restores the recent dialogue.
  *
@@ -12,7 +12,9 @@ import { useEffect, useState } from 'react';
 
 const STORAGE_KEY = 'translator_conversation_turns';
 
-export default function useConversationHistory(limit = 50) {
+export const CONVERSATION_DISPLAY_LIMIT = 6;
+
+export default function useConversationHistory(limit = 50, { normalizeConversationTurn } = {}) {
   const [conversationTurns, setConversationTurns] = useState(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -32,5 +34,14 @@ export default function useConversationHistory(limit = 50) {
     }
   }, [conversationTurns, limit]);
 
-  return [conversationTurns, setConversationTurns];
+  function appendConversationTurn(turn) {
+    const normalized = normalizeConversationTurn ? normalizeConversationTurn(turn) : turn;
+    setConversationTurns((current) => {
+      const nextKey = `${normalized.speaker}-${normalized.created_at}-${normalized.source_text}`;
+      const withoutDuplicate = current.filter((item) => `${item.speaker}-${item.created_at}-${item.source_text}` !== nextKey);
+      return [...withoutDuplicate, normalized].slice(-CONVERSATION_DISPLAY_LIMIT);
+    });
+  }
+
+  return [conversationTurns, setConversationTurns, appendConversationTurn];
 }

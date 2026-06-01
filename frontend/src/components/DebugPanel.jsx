@@ -1,5 +1,5 @@
 /**
- * DebugPanel — collapsible diagnostics view (connection, mic permission,
+ * DebugPanel -- collapsible diagnostics view (connection, mic permission,
  * audio context, TTS state, CIP brain health, last error, build info).
  *
  * Currently rendered behind a `false &&` guard in main.jsx, but kept as
@@ -34,9 +34,9 @@ export default function DebugPanel({
     <section className="debug-panel">
       <div className="debug-header">
         <h3>Debug Panel</h3>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="button" onClick={loadDiagnostics}>Refresh</button>
-          <button type="button" onClick={onClose}>×</button>
+        <div className="debug-header-actions">
+          <button type="button" className="debug-btn" onClick={loadDiagnostics}>Refresh</button>
+          <button type="button" className="debug-btn close" onClick={onClose}>×</button>
         </div>
       </div>
       <div className="debug-grid">
@@ -116,11 +116,9 @@ export default function DebugPanel({
 
 function DebugItem({ label, value, span = false, color }) {
   return (
-    <div className="debug-item" style={span ? { gridColumn: '1 / -1' } : undefined}>
+    <div className={`debug-item${span ? ' span' : ''}`} data-color={color || undefined}>
       <span className="debug-label">{label}</span>
-      <span className="debug-value" style={color ? { color } : undefined}>
-        {value}
-      </span>
+      <span className="debug-value">{value}</span>
     </div>
   );
 }

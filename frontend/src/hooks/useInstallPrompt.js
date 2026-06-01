@@ -1,12 +1,12 @@
 /**
- * useInstallPrompt — wraps the PWA `beforeinstallprompt` + `appinstalled`
+ * useInstallPrompt -- wraps the PWA `beforeinstallprompt` + `appinstalled`
  * events.
  *
  * Returns `{ installPrompt, pwaInstalled, installApp }`:
- *  - `installPrompt` — the deferred event, or null until the browser fires
+ *  - `installPrompt` -- the deferred event, or null until the browser fires
  *    `beforeinstallprompt`.
- *  - `pwaInstalled` — true once the OS reports `appinstalled`.
- *  - `installApp()` — call to show the native install dialog. If no
+ *  - `pwaInstalled` -- true once the OS reports `appinstalled`.
+ *  - `installApp()` -- call to show the native install dialog. If no
  *    deferred prompt is available (e.g. iOS Safari), navigates to
  *    `/install.html` with manual install steps.
  *

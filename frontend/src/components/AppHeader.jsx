@@ -1,10 +1,6 @@
-/**
- * AppHeader — branded title row + share/install buttons + live
- * connection indicator. Extracted from `main.jsx` for readability.
- */
-
 import React from 'react';
-import { Download, Share2 } from 'lucide-react';
+import { Check, Download, Settings2, Share2, Wifi, WifiOff } from 'lucide-react';
+import VolumeControl from './VolumeControl';
 
 export default function AppHeader({
   connectionStatus,
@@ -12,44 +8,61 @@ export default function AppHeader({
   copiedKey,
   showInstallAction,
   installApp,
+  volume,
+  onVolumeChange,
+  onOpenSettings,
+  updateAvailable = false,
 }) {
+  const isOnline = connectionStatus === 'online';
+  const isChecking = connectionStatus === 'checking';
+
   return (
-    <header className="clean-header">
-      <div className="header-actions">
+    <header className="neo-header">
+      {/* Left actions */}
+      <div className="neo-header-left">
+        <VolumeControl volume={volume} onVolumeChange={onVolumeChange} />
+      </div>
+
+      {/* Brand */}
+      <div className={`neo-brand${isOnline ? ' neo-brand--live' : ''}`}>
+        <h1 className="neo-title">
+          <span className="neo-mark">ANAI</span>
+          <span className="neo-sub">TRANSLATOR</span>
+        </h1>
+        <div className="neo-status-row">
+          <span className={`neo-conn-dot ${connectionStatus}`} />
+          <span className="neo-conn-label">
+            {isChecking ? 'SYNCING' : isOnline ? 'LIVE' : 'OFFLINE'}
+          </span>
+        </div>
+      </div>
+
+      {/* Right actions */}
+      <div className="neo-header-right">
         <button
-          className="icon-action"
+          className={`neo-icon-btn${copiedKey === 'room' ? ' success' : ''}`}
           type="button"
           onClick={shareConversationRoom}
-          aria-label="Share speaker room"
-          title="Share speaker room"
+          aria-label={copiedKey === 'room' ? 'Copied' : 'Share'}
+          title="Share session"
         >
-          <Share2 size={17} strokeWidth={2.4} aria-hidden="true" />
-          <span className="sr-only">
-            {copiedKey === 'room' ? 'Room link copied' : 'Share speaker room'}
-          </span>
+          {copiedKey === 'room' ? <Check size={16} strokeWidth={2.8} /> : <Share2 size={16} strokeWidth={2.2} />}
         </button>
         {showInstallAction && (
-          <button
-            className="icon-action install-action"
-            type="button"
-            onClick={installApp}
-            aria-label="Install App"
-            title="Install App"
-          >
-            <Download size={17} strokeWidth={2.4} aria-hidden="true" />
-            <span className="sr-only">Install App</span>
+          <button className="neo-icon-btn" type="button" onClick={installApp} aria-label="Install" title="Install app">
+            <Download size={16} strokeWidth={2.2} />
           </button>
         )}
-      </div>
-      <div className="brand-cluster">
-        <h1 className="app-title">
-          <span className="brand-mark">Anai</span>
-          <sub>nrldc</sub>
-        </h1>
-        <div className="connection-indicator" data-status={connectionStatus}>
-          <span className="connection-dot" />
-          <span className="connection-label">{connectionStatus}</span>
-        </div>
+        <button
+          className="sp-gear-btn"
+          type="button"
+          onClick={onOpenSettings}
+          aria-label={updateAvailable ? 'Settings (update available)' : 'Settings'}
+          title={updateAvailable ? 'Update available' : 'Settings'}
+        >
+          <Settings2 size={16} strokeWidth={2.2} />
+          {updateAvailable && <span className="sp-gear-badge" aria-hidden="true" />}
+        </button>
       </div>
     </header>
   );

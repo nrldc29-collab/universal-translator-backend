@@ -1,5 +1,5 @@
 /**
- * useHaptic — returns a stable `haptic(pattern)` callback that calls
+ * useHaptic -- returns a stable `haptic(pattern)` callback that calls
  * `navigator.vibrate(pattern)` when the device supports it and does
  * nothing otherwise.
  *
@@ -15,7 +15,7 @@ export default function useHaptic() {
     try {
       window.navigator?.vibrate?.(pattern);
     } catch {
-      /* ignore — vibrate is best-effort */
+      /* ignore -- vibrate is best-effort */
     }
   }, []);
 }

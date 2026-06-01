@@ -1,5 +1,5 @@
 /**
- * useLatencyHistory — keep a rolling list of recent round-trip latency
+ * useLatencyHistory -- keep a rolling list of recent round-trip latency
  * measurements, persist it to `localStorage`, and expose the summary
  * (average / best).
  *

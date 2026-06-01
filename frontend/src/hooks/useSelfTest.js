@@ -1,5 +1,5 @@
 /**
- * useSelfTest — run a quick end-to-end check of translation + audio
+ * useSelfTest -- run a quick end-to-end check of translation + audio
  * WebSocket and expose the result as a structured object.
  *
  * Returns `{ selfTest, runSelfTest }`.

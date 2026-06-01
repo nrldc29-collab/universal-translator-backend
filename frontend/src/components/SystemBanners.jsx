@@ -1,5 +1,5 @@
 /**
- * SystemBanners — update-available and reconnect-toast banners shown at
+ * SystemBanners -- update-available and reconnect-toast banners shown at
  * the top of the app shell. Pulled out of `main.jsx` so the App component
  * doesn't carry the inline event handlers.
  */
@@ -45,15 +45,25 @@ export default function SystemBanners({
       {reconnectToastVisible && (
         <div className="system-banner danger" role="alert">
           <span>Connection lost. Retry?</span>
-          <button
-            type="button"
-            onClick={() => {
-              onDismissReconnect?.();
-              onReconnectRetry?.();
-            }}
-          >
-            Retry
-          </button>
+          <div className="banner-actions">
+            <button
+              type="button"
+              className="banner-dismiss"
+              aria-label="Dismiss"
+              onClick={onDismissReconnect}
+            >
+              ✕
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onDismissReconnect?.();
+                onReconnectRetry?.();
+              }}
+            >
+              Retry
+            </button>
+          </div>
         </div>
       )}
     </>

@@ -4,45 +4,81 @@ import { Activity, ArrowLeftRight, Check, Clock3, Copy, Download, Languages, Mic
 import './styles.css';
 import { registerServiceWorker } from './pwa';
 import Assistant from './Assistant';
+import ConversationMode from './components/ConversationMode';
 import ErrorBoundary from './ErrorBoundary';
 import LanguageDock from './components/LanguageDock';
 import SystemBanners from './components/SystemBanners';
 import AppHeader from './components/AppHeader';
 import DebugPanel from './components/DebugPanel';
+import SettingsPanel from './components/SettingsPanel';
 import MicPanel from './components/MicPanel';
 import TranslationStack from './components/TranslationStack';
+import OnboardingTour from './components/OnboardingTour';
+import UserFriendlyError, { mapTechnicalError } from './components/UserFriendlyError';
+import LoadingSpinner, { InlineSpinner } from './components/LoadingSpinner';
+import HelpTooltip from './components/HelpTooltip';
+import KeyboardHelp from './components/KeyboardHelp';
+import VolumeControl from './components/VolumeControl';
+import ConnectionQualityIndicator from './components/ConnectionQualityIndicator';
+import ConversationActions from './components/ConversationActions';
+import EnhancedMicButton from './components/EnhancedMicButton';
+import ErrorRetryHandler from './components/ErrorRetryHandler';
+import LanguageFlag from './components/LanguageFlag';
+import ThinkingIndicator from './components/ThinkingIndicator';
+import TypingText from './components/TypingText';
+import WaveformVisualizer from './components/WaveformVisualizer';
 import useCopyToClipboard from './hooks/useCopyToClipboard';
 import useHaptic from './hooks/useHaptic';
+import { useToast } from './hooks/useToast';
+import ToastRegion from './components/ToastRegion';
 import useInstallPrompt from './hooks/useInstallPrompt';
-import useLatencyHistory from './hooks/useLatencyHistory';
 import useDiagnostics from './hooks/useDiagnostics';
-import useConversationHistory from './hooks/useConversationHistory';
+import useConversationHistory, { CONVERSATION_DISPLAY_LIMIT } from './hooks/useConversationHistory';
 import useSelfTest from './hooks/useSelfTest';
 import useMicPermission from './hooks/useMicPermission';
 import useServiceWorkerUpdate from './hooks/useServiceWorkerUpdate';
 import useInterpreterState from './hooks/useInterpreterState';
+import useWakeLock from './hooks/useWakeLock';
+import useKeyboardShortcuts from './hooks/useKeyboardShortcuts';
+import useMicMeter from './hooks/useMicMeter';
+import useCamera from './hooks/useCamera';
+import { useAuth } from './hooks/useAuth';
+import { useLanguagePair } from './hooks/useLanguagePair';
+import { useConnectionStatus } from './hooks/useConnectionStatus';
+import { useStreamSession } from './hooks/useStreamSession';
+import { useVoiceWarmup } from './hooks/useVoiceWarmup';
+import { useAnalytics } from './hooks/useAnalytics';
+import { useSpeakerMemory } from './hooks/useSpeakerMemory';
+import { useTtsQueue } from './hooks/useTtsQueue';
+import { useBrainState } from './hooks/useBrainState';
+import { useDuplexState } from './hooks/useDuplexState';
+import { usePersistentAudio } from './hooks/usePersistentAudio';
+import { useSettings } from './hooks/useSettings';
+import { usePipelineState } from './hooks/usePipelineState';
+import { useLatencyStats } from './hooks/useLatencyStats';
+import { useTranslationState } from './hooks/useTranslationState';
+import { useAudioSendQueue } from './hooks/useAudioSendQueue';
+import { useStreamHeartbeat } from './hooks/useStreamHeartbeat';
+import { useWsDebug } from './hooks/useWsDebug';
+import { useSpeechFastPath } from './hooks/useSpeechFastPath';
+import { useStreamRefs } from './hooks/useStreamRefs';
+import { useHoldToTalk } from './hooks/useHoldToTalk';
+import { useAutoConversation } from './hooks/useAutoConversation';
+import useReliabilityMonitor from './hooks/useReliabilityMonitor';
 import {
   // host detection + URL helpers
   isLocalHost,
   isSameOriginBackendHost,
   defaultApiUrl,
   configuredUrl,
-  // session/device
-  normalizeSessionId,
-  readInitialSessionId,
   // constants
   TARGET_LANGUAGE_OPTIONS,
   VOICE_WARMUP_PHRASES,
   HEALTH_POLL_MS,
-  STREAM_HEARTBEAT_MS,
-  STREAM_HEARTBEAT_MAX_MISSES,
   STREAM_RECONNECT_MS,
   STREAM_RECONNECT_MAX_ATTEMPTS,
   STREAM_RECONNECT_MAX_DELAY_MS,
   MAX_AUDIO_SEND_QUEUE,
-  MAX_BUFFERED_AUDIO_CHUNKS,
-  LATENCY_HISTORY_KEY,
-  LATENCY_HISTORY_LIMIT,
   LATENCY_TARGET_MS,
   VOICE_WARMUP_COOLDOWN_MS,
   VOICE_PREFETCH_TIMEOUT_MS,
@@ -50,16 +86,13 @@ import {
   EXPECTED_BACKEND_RELEASE,
   FRONTEND_BUILD_ID,
   EXPERIMENTAL_IOS_STREAMING,
-  // persistence
-  readPersistedTargetLanguage,
-  readPersistedSourceLanguage,
   // debug
   readDebugFlag,
   makeDebugLog,
+  isFatalStreamError,
+  activePacketMs as activePacketMsUtil,
   // latency
   blankLatencyStats,
-  formatLatencyValue,
-  readLatencyHistory,
   summarizeLatencyHistory,
   // speaker labels
   fallbackSpeakerLabel,
@@ -87,6 +120,8 @@ import {
   compactRepairLabel,
   languageName as languageNameUtil,
   shareRoomUrl,
+  base64ToArrayBuffer,
+  buildTranslatePayload,
 } from './utils';
 
 // Resolve API URL up-front from env + host.
@@ -95,10 +130,34 @@ const SAME_ORIGIN_BACKEND = isSameOriginBackendHost(window.location.hostname);
 const API_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? defaultApiUrl() : (configuredUrl(import.meta.env.VITE_API_URL) || defaultApiUrl())).replace(/\/+$/, '');
 const WS_BASE_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? API_URL : (configuredUrl(import.meta.env.VITE_WS_URL) || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'))).replace(/\/+$/, '');
 const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
-const INITIAL_TOKEN = localStorage.getItem('translator_token') || '';
 
-const INITIAL_SESSION_ID = readInitialSessionId();
 const INITIAL_DEVICE_ID = localStorage.getItem('translator_device_id') || crypto.randomUUID();
+
+// Browser TTS -- used as fallback when backend has no voice for the target language.
+// Works offline, free, covers all languages via system voices.
+const PIPER_SUPPORTED_LANGS = new Set(['en', 'es']); // languages with local Piper voices
+const BROWSER_TTS_LANG_MAP = {
+  en: 'en-US', es: 'es-MX', fr: 'fr-FR', de: 'de-DE', it: 'it-IT',
+  pt: 'pt-BR', ru: 'ru-RU', zh: 'zh-CN', ja: 'ja-JP', ko: 'ko-KR',
+  ar: 'ar-SA', hi: 'hi-IN', ht: 'fr-HT', nl: 'nl-NL',
+};
+let browserTtsLastText = '';
+function browserTtsSpeak(text, langCode, speed = 1.0) {
+  if (!window.speechSynthesis || !text || text === browserTtsLastText) return;
+  browserTtsLastText = text;
+  const lang = BROWSER_TTS_LANG_MAP[langCode] || langCode || 'en-US';
+  window.speechSynthesis.cancel();
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = lang;
+  utt.rate = Math.min(Math.max(speed, 0.5), 2.0);
+  const voices = window.speechSynthesis.getVoices();
+  const match = voices.find((v) => v.lang.startsWith(lang.slice(0, 2)) && !v.localService)
+    || voices.find((v) => v.lang.startsWith(lang.slice(0, 2)));
+  if (match) utt.voice = match;
+  window.speechSynthesis.speak(utt);
+  setTimeout(() => { browserTtsLastText = ''; }, 3000);
+}
+
 const INITIAL_SPEAKER_NAME = localStorage.getItem('translator_speaker_name') || '';
 const STREAM_PACKET_MS = Number(import.meta.env.VITE_STREAM_PACKET_MS || 60);
 const STREAM_AUDIO_BITRATE = Number(import.meta.env.VITE_STREAM_AUDIO_BITRATE || 48000);
@@ -110,7 +169,6 @@ const LIVE_SPEECH_TEXT_THROTTLE_MS = Number(import.meta.env.VITE_LIVE_SPEECH_TEX
 
 const DEBUG_LOGS = readDebugFlag();
 const debugLog = makeDebugLog(DEBUG_LOGS);
-localStorage.setItem('translator_session_id', INITIAL_SESSION_ID);
 localStorage.setItem('translator_device_id', INITIAL_DEVICE_ID);
 registerServiceWorker();
 
@@ -129,22 +187,19 @@ function logAudioStream(stream) {
 // extractBrainPlan, and compactRepairLabel.
 
 function App() {
-  const [languages, setLanguages] = useState({ en: 'English', es: 'Spanish', ht: 'Haitian Creole' });
-  const [sourceLanguageState, setSourceLanguageState] = useState(readPersistedSourceLanguage);
-  const sourceLanguage = sourceLanguageState;
-  const setSourceLanguage = (next) => {
-    setSourceLanguageState(next);
-    try { localStorage.setItem('sourceLanguage', next); } catch {}
-  };
-  const [targetLanguage, setTargetLanguageState] = useState(readPersistedTargetLanguage);
-  const setTargetLanguage = (next) => {
-    setTargetLanguageState(next);
-    try { localStorage.setItem('targetLanguage', next); } catch {}
-  };
-  const [text, setText] = useState('');
-  const [result, setResult] = useState(null);
-  const [status, setStatus] = useState('Ready');
-  const [connectionStatus, setConnectionStatus] = useState('checking');
+  const { languages, setLanguages, sourceLanguage, setSourceLanguage, targetLanguage, setTargetLanguage } = useLanguagePair();
+  const { text, setText, result, setResult, status, setStatus } = useTranslationState();
+  // Settings is loaded first (sync from localStorage) so liveApiUrl is available for all hooks below.
+  const { settings, updateSetting } = useSettings();
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const liveApiUrl = (settings.backendUrl || '').trim().replace(/\/+$/, '') || API_URL;
+  const liveWsUrl = liveApiUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
+  const { connectionStatus, setConnectionStatus } = useConnectionStatus({
+    apiUrl: liveApiUrl,
+    pollIntervalMs: HEALTH_POLL_MS,
+    onLanguages: (langs) => langs && setLanguages((prev) => ({ ...prev, ...langs })),
+    onOffline: () => setStatus('Backend offline'),
+  });
   const { micPermission, setMicPermission, requestMicPermission } = useMicPermission({
     onStatus: (message) => setStatus(message),
   });
@@ -166,61 +221,128 @@ function App() {
     setInstantListening,
     setLiveAssistActive,
   } = useInterpreterState();
-  const [partialTranscript, setPartialTranscript] = useState('');
-  const [liveTranslation, setLiveTranslation] = useState('');
-  const [pipelineStage, setPipelineStage] = useState('Idle');
-  const [duplex, setDuplex] = useState({
-    A: { active: false, transcript: '', translation: '', stage: 'Idle' },
-    B: { active: false, transcript: '', translation: '', stage: 'Idle' },
+  const {
+    partialTranscript, setPartialTranscript,
+    liveTranslation, setLiveTranslation,
+    pipelineStage, setPipelineStage,
+    audioReplayAvailable, setAudioReplayAvailable,
+    lastAudioError, setLastAudioError,
+  } = usePipelineState();
+  const { duplex, setDuplex, duplexRefs, updateDuplexSpeaker } = useDuplexState();
+  const {
+    clarifyVisible, setClarifyVisible,
+    clarifyMessage, setClarifyMessage,
+    brainUi, setBrainUi,
+    conversationBrain, setConversationBrain,
+    semanticContext, setSemanticContext,
+    brainHintsRef, brainPlanRef,
+    shouldSkipBrainTts, resetBrainRuntimeUi,
+  } = useBrainState();
+  const reliabilityMonitor = useReliabilityMonitor();
+  const autoConversation = useAutoConversation({
+    wsAudioUrl: `${liveWsUrl}/ws/audio`,
+    authToken,
+    sourceLanguage,
+    targetLanguage,
+    withAuthToken,
   });
-  const [conversationBrain, setConversationBrain] = useState('Idle');
-  const [semanticContext, setSemanticContext] = useState({ last_intent: 'statement', conversation_mood: 'neutral', topics: [] });
-  const [showOnboarding, setShowOnboarding] = useState(true);
-  const [accessibilityMode, setAccessibilityMode] = useState('balanced');
-  const [speechSpeed, setSpeechSpeed] = useState('normal');
-  const [lowBandwidthMode, setLowBandwidthMode] = useState(false);
-  const [mobileAudioUnlocked, setMobileAudioUnlocked] = useState(false);
-  const [audioReplayAvailable, setAudioReplayAvailable] = useState(false);
-  const [showDebugPanel, setShowDebugPanel] = useState(false);
-  const [audioContextState, setAudioContextState] = useState('unknown');
-  const [lastAudioError, setLastAudioError] = useState(null);
-  const [ttsQueueLength, setTtsQueueLength] = useState(0);
-  const [ttsPlaying, setTtsPlaying] = useState(false);
-  const [ttsChunksBuffer, setTtsChunksBuffer] = useState([]);
-  const [userRequestedPlayback, setUserRequestedPlayback] = useState(false);
-  const [autoPlayFailed, setAutoPlayFailed] = useState(false);
+  const lowBandwidthMode = !!settings.lowBandwidthMode;
+  const [showDebugPanel, setShowDebugPanel] = useState(() => !!settings.debugMode);
+  const [reconnectToastVisible, setReconnectToastVisible] = useState(false);
+
+  // Error state for user-friendly error display
+  const [currentError, setCurrentError] = useState(null);
+  const handleDismissError = () => setCurrentError(null);
+  const handleRetryError = () => {
+    setCurrentError(null);
+    // Retry logic depends on error type - mic click for mic errors, etc.
+    try { handleMicClick(); } catch {}
+  };
+
+  // Keyboard shortcuts
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+  // Volume state synced from settings; keyboard shortcut toggles mute
+  const [volume, setVolume] = useState(() => settings.volume ?? 0.8);
+  // Keep local volume in sync when settings.volume changes externally
+  useEffect(() => { setVolume(settings.volume ?? 0.8); }, [settings.volume]);
+  useKeyboardShortcuts({
+    onToggleMic: handleMicClick,
+    onToggleMute: () => {
+      const next = volume === 0 ? (settings.volume || 0.8) : 0;
+      setVolume(next);
+      if (settings.soundEffects !== false) haptic(20);
+    },
+    onClearConversation: clearInterpreterScreen,
+    onSetLanguage: setTargetLanguage,
+    onShowHelp: () => setShowKeyboardHelp(true),
+    onCloseModals: () => {
+      setShowKeyboardHelp(false);
+      setCurrentError(null);
+    },
+    disabled: recording || processing,
+  });
+
+  const handleVolumeChange = (newVolume) => {
+    setVolume(newVolume);
+    updateSetting('volume', newVolume);
+    const audioElements = document.querySelectorAll('audio');
+    audioElements.forEach(audio => { audio.volume = newVolume; });
+    if (masterGainRef.current) {
+      masterGainRef.current.gain.setTargetAtTime(newVolume * 0.92, masterGainRef.current.context.currentTime, 0.05);
+    }
+  };
+  const {
+    mobileAudioUnlocked, setMobileAudioUnlocked,
+    audioContextState, setAudioContextState,
+    audioContextRef, persistentAudioRef, mobileAudioUnlockedRef, warmupOscRef, warmupGainRef,
+    createPersistentAudio, ensureAudioContext, stopAudioWarmup, destroyPersistentAudio,
+    synchronousAudioUnlock, unlockMobileAudio, ensureAudioUnlocked,
+  } = usePersistentAudio({ debugLog });
+  const {
+    ttsQueueLength, setTtsQueueLength,
+    ttsPlaying, setTtsPlaying,
+    ttsChunksBuffer, setTtsChunksBuffer,
+    userRequestedPlayback, setUserRequestedPlayback,
+    autoPlayFailed, setAutoPlayFailed,
+    ttsQueueRef, lastTtsItemRef, ttsPlayingRef, currentTtsFinishRef, canplayTimeoutRef,
+    revokeTtsItemUrl, hasPlayableAudioPayload, clearTtsQueue,
+  } = useTtsQueue();
   // interpreterMode is part of useInterpreterState (declared above).
-  const [speakerMode, setSpeakerMode] = useState('auto');
-  const [detectedSpeaker, setDetectedSpeaker] = useState('-');
-  const [latencyStats, setLatencyStats] = useState(() => blankLatencyStats());
-  const [latencyHistory, setLatencyHistory, latencySummary] = useLatencyHistory();
-  const [authToken, setAuthToken] = useState(INITIAL_TOKEN);
+  const { detectedSpeaker, setDetectedSpeaker, speakerLabelsRef, rememberSpeaker, normalizeConversationTurn, loadSpeakerProfiles } = useSpeakerMemory();
+  const { latencyStats, setLatencyStats, latencyHistory, setLatencyHistory, latencySummary, updateLatency, recordLatencyTurn } = useLatencyStats();
+  const { authToken, setAuthToken, username, setUsername, password, setPassword, login, logout, ensureAuthToken } = useAuth({ apiUrl: liveApiUrl, onStatus: setStatus });
   const { selfTest, runSelfTest } = useSelfTest({
-    apiUrl: API_URL,
-    wsAudioUrl: WS_AUDIO_URL,
+    apiUrl: liveApiUrl,
+    wsAudioUrl: `${liveWsUrl}/ws/audio`,
     authToken,
     onStatus: (message) => setStatus(message),
   });
-  const [username, setUsername] = useState('demo');
-  const [password, setPassword] = useState('demo');
-  const [sessionId, setSessionId] = useState(INITIAL_SESSION_ID);
-  const [sharedSession, setSharedSession] = useState(null);
-  const [conversationTurns, setConversationTurns] = useConversationHistory();
-  const [analytics, setAnalytics] = useState(null);
-  const { diagnostics, diagnosticsStatus, loadDiagnostics } = useDiagnostics(API_URL);
-  const [wsDebug, setWsDebug] = useState({ url: WS_AUDIO_URL, close: '-', error: '-' });
+  const { sessionId, setSessionId, updateSessionId, sharedSession, setSharedSession, speakerMode, setSpeakerMode } = useStreamSession();
+  const [appMode, setAppMode] = React.useState('solo'); // 'solo' | 'conversation'
+  const [conversationTurns, setConversationTurns, appendConversationTurn] = useConversationHistory(50, { normalizeConversationTurn });
+  const { analytics, setAnalytics, loadAnalytics } = useAnalytics({ apiUrl: liveApiUrl, authToken, onStatus: setStatus });
+  const { diagnostics, diagnosticsStatus, loadDiagnostics } = useDiagnostics(liveApiUrl);
+  const { wsDebug, setWsDebug } = useWsDebug(WS_AUDIO_URL);
   // selfTest + runSelfTest come from useSelfTest below (after authToken is declared).
   // Initial PWA-installed status (true if launched from the home screen).
   const initialPwaInstalled =
     window.matchMedia?.('(display-mode: standalone)').matches ||
     window.navigator?.standalone === true;
   const updateAvailable = useServiceWorkerUpdate({
-    apiUrl: API_URL,
+    apiUrl: liveApiUrl,
     expectedRelease: EXPECTED_BACKEND_RELEASE,
   });
-  const [micLevel, setMicLevel] = useState(0);
-  const [copiedKey, copyToClipboard] = useCopyToClipboard();
-  const haptic = useHaptic();
+  const { micLevel, micMeterRef, startMicMeter, stopMicMeter, stopTracks, startSilenceDetector, stopSilenceDetector } = useMicMeter();
+  const { toasts, toast, dismiss } = useToast();
+  const [copiedKey, _copyToClipboard] = useCopyToClipboard();
+  const copyToClipboard = (text, key) => {
+    _copyToClipboard(text, key);
+    toast('Copied to clipboard', 'success', 2000);
+  };
+  const hapticRaw = useHaptic();
+  const haptic = React.useCallback((ms) => {
+    if (settings.soundEffects !== false) hapticRaw(ms);
+  }, [hapticRaw, settings.soundEffects]);
   const { installPrompt, pwaInstalled, installApp } = useInstallPrompt({
     onStatus: (message) => setStatus(message),
   });
@@ -234,21 +356,16 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [ocrText, setOcrText] = useState('');
-  const [clarifyVisible, setClarifyVisible] = useState(false);
-  const [clarifyMessage, setClarifyMessage] = useState('');
-  const [brainUi, setBrainUi] = useState({
-    visible: false,
-    message: '',
-    mode: '',
-    strategy: '',
-    hints: {},
-    repairOptions: [],
-    highlightTerms: [],
-    riskScore: null,
+  const { cameraActive, ocrText, videoRef, startCamera, stopCamera, captureAndTranslateFrame } = useCamera({
+    apiUrl: liveApiUrl,
+    authToken,
+    targetLanguage,
+    setStatus,
+    onResult: (data) => {
+      setResult(data);
+      setLiveTranslation(data.translated_text || '');
+    },
   });
-  const [reconnectToastVisible, setReconnectToastVisible] = useState(false);
 
   // conversation history persistence is in useConversationHistory above.
 
@@ -372,16 +489,6 @@ function App() {
     }
   }
 
-  function shouldSkipBrainTts(payload = null) {
-    const hints = payload ? extractBrainPlan(payload).hints : brainHintsRef.current;
-    return Boolean(hints?.skip_tts || hints?.tts_mode === 'skip');
-  }
-
-  function resetBrainRuntimeUi() {
-    brainHintsRef.current = {};
-    brainPlanRef.current = null;
-    setBrainUi((current) => ({ ...current, visible: false, message: '', repairOptions: [], highlightTerms: [], skipTts: false, speakerShift: false }));
-  }
 
   function clearInterpreterScreen() {
     if (streaming || processing || playing || ttsPlaying) return;
@@ -415,56 +522,30 @@ function App() {
     setStatus(`${languageName(nextSource)} to ${languageName(nextTarget)}`);
     setPipelineStage('Direction switched');
   }
-  const mediaRecorderRef = useRef(null);
-  const micMeterRef = useRef({});
-  const streamRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
-  const socketRef = useRef(null);
-  const duplexRefs = useRef({ A: {}, B: {} });
-  const speakerLabelsRef = useRef({});
-  const brainHintsRef = useRef({});
-  const brainPlanRef = useRef(null);
-  const recordingStoppedRef = useRef(false);
-  const streamFinalizePendingRef = useRef(false);
-  const streamFinalizeTimerRef = useRef(null);
-  const streamStartedAtRef = useRef(0);
-  const streamRecordingStartedAtRef = useRef(0);
-  const firstAudioSeenRef = useRef(false);
-  const streamHeartbeatRef = useRef({ timer: null, missed: 0 });
-  const streamReconnectRef = useRef({ enabled: false, options: null, attempts: 0 });
-  const holdToTalkTimerRef = useRef(null);
-  const holdToTalkActiveRef = useRef(false);
-  const holdToTalkReleasePendingRef = useRef(false);
-  const ignoreNextMicClickRef = useRef(false);
-  const ttsQueueRef = useRef([]);
-  const lastTtsItemRef = useRef(null);
-  const ttsPlayingRef = useRef(false);
-  const audioSendQueueRef = useRef([]);
-  const wakeLockRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const persistentAudioRef = useRef(null);
-  const mobileAudioUnlockedRef = useRef(false);
-  const warmupOscRef = useRef(null);
-  const warmupGainRef = useRef(null);
-  const streamSafetyTimeoutRef = useRef(null);
-  const currentTtsFinishRef = useRef(null);
-  const canplayTimeoutRef = useRef(null);
-  const silenceDetectRafRef = useRef(0);
-  const silenceSeenSpeechRef = useRef(false);
-  const silenceStartRef = useRef(0);
-  const resumeAfterTtsRef = useRef(false);
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const speechRecognitionRef = useRef(null);
-  const speechFastPathActiveRef = useRef(false);
-  const speechFinalTextRef = useRef('');
-  const speechInterimTextRef = useRef('');
-  const speechAssistSocketRef = useRef(null);
-  const speechAssistRestartTimerRef = useRef(null);
-  const speechAssistStopRequestedRef = useRef(false);
-  const speechLastSentTextRef = useRef('');
-  const speechLastSentAtRef = useRef(0);
-  const voiceWarmupRef = useRef({ inFlight: false, lastAtByLanguage: {} });
+  const {
+    mediaRecorderRef, streamRecorderRef, chunksRef, socketRef,
+    recordingStoppedRef, streamFinalizePendingRef, streamFinalizeTimerRef,
+    streamStartedAtRef, streamRecordingStartedAtRef, firstAudioSeenRef,
+    streamReconnectRef, streamSafetyTimeoutRef, resumeAfterTtsRef,
+  } = useStreamRefs();
+  const { streamHeartbeatRef, clearStreamHeartbeat, markStreamPong, startStreamHeartbeat } = useStreamHeartbeat({ socketRef, setConnectionStatus, setPipelineStage, setStatus });
+  const { holdToTalkTimerRef, holdToTalkActiveRef, holdToTalkReleasePendingRef, ignoreNextMicClickRef } = useHoldToTalk();
+  const { audioSendQueueRef, sendAudioPacket, queueAudioPacket, flushAudioSendQueue, drainQueue: drainAudioSendQueue } = useAudioSendQueue({ debugLog });
+  const { requestWakeLock, releaseWakeLock } = useWakeLock();
+  const {
+    speechRecognitionRef, speechFastPathActiveRef,
+    speechFinalTextRef, speechInterimTextRef,
+    speechAssistSocketRef, speechAssistRestartTimerRef, speechAssistStopRequestedRef,
+    speechLastSentTextRef, speechLastSentAtRef,
+  } = useSpeechFastPath();
+  const { voiceWarmupRef, resolveAudioUrl, prefetchAudioUrl, warmVoiceCache } = useVoiceWarmup({
+    apiUrl: liveApiUrl,
+    authToken,
+    targetLanguage,
+    warmupPhrases: VOICE_WARMUP_PHRASES,
+    cooldownMs: VOICE_WARMUP_COOLDOWN_MS,
+    prefetchTimeoutMs: VOICE_PREFETCH_TIMEOUT_MS,
+  });
   const appStateRef = useRef({});
 
   useEffect(() => {
@@ -473,54 +554,12 @@ function App() {
 
   // haptic comes from useHaptic() above.
 
-  async function ensureAudioContext() {
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextCtor) return null;
-    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-      audioContextRef.current = new AudioContextCtor();
-    }
-    const state = audioContextRef.current.state;
-    setAudioContextState(state);
-    if (state === 'suspended') {
-      try {
-        await audioContextRef.current.resume?.();
-      } catch (e) {
-        console.warn('AudioContext resume failed (no user gesture):', e);
-      }
-    }
-    return audioContextRef.current;
-  }
-
-  async function requestWakeLock() {
-    try {
-      wakeLockRef.current = await navigator.wakeLock?.request?.('screen') || null;
-    } catch {
-      wakeLockRef.current = null;
-    }
-  }
-
-  async function releaseWakeLock() {
-    try {
-      await wakeLockRef.current?.release?.();
-    } catch {
-    } finally {
-      wakeLockRef.current = null;
-    }
-  }
 
   // backend/frontend release polling lives in useServiceWorkerUpdate above.
 
   useEffect(() => {
     return () => {
-      stopAudioWarmup();
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        try { audioContextRef.current.close(); } catch (e) {}
-      }
-      if (persistentAudioRef.current) {
-        try { document.body.removeChild(persistentAudioRef.current); } catch (e) {}
-        persistentAudioRef.current = null;
-        mobileAudioUnlockedRef.current = false;
-      }
+      destroyPersistentAudio();
       if (canplayTimeoutRef.current) {
         window.clearTimeout(canplayTimeoutRef.current);
         canplayTimeoutRef.current = null;
@@ -529,39 +568,7 @@ function App() {
     };
   }, []);
 
-  useEffect(() => {
-    fetch(`${API_URL}/languages`)
-      .then((response) => response.json())
-      .then((data) => {
-        setLanguages(data.languages || languages);
-        setConnectionStatus('online');
-      })
-      .catch(() => {
-        setStatus('Backend offline');
-        setConnectionStatus('offline');
-      });
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const checkHealth = async () => {
-      try {
-        const response = await fetch(`${API_URL}/health`, { cache: 'no-store' });
-        if (!response.ok) throw new Error('Backend health check failed');
-        if (!cancelled) setConnectionStatus('online');
-      } catch {
-        if (!cancelled) setConnectionStatus('offline');
-      }
-    };
-
-    checkHealth();
-    const timer = window.setInterval(checkHealth, HEALTH_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, []);
-
+  // Connection status polling and language loading are handled by useConnectionStatus above.
   // First diagnostics fetch happens inside useDiagnostics on mount.
 
   useEffect(() => {
@@ -580,160 +587,7 @@ function App() {
   // mic permission lifecycle is in useMicPermission above.
   // PWA install lifecycle is in useInstallPrompt above.
 
-  function createPersistentAudio() {
-    if (persistentAudioRef.current) return persistentAudioRef.current;
-    const audio = document.createElement('audio');
-    audio.setAttribute('playsinline', '');
-    audio.setAttribute('webkit-playsinline', '');
-    audio.setAttribute('preload', 'auto');
-    audio.setAttribute('disableRemotePlayback', '');
-    audio.setAttribute('x-webkit-airplay', 'deny');
-    audio.crossOrigin = 'anonymous';
-    audio.style.cssText = 'position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;';
-    document.body.appendChild(audio);
-    persistentAudioRef.current = audio;
-    return audio;
-  }
 
-  /*
-    iOS Safari requires audio.play() to be called SYNCHRONOUSLY inside a user
-    gesture handler. An async handler that awaits something before calling
-    play() will fail because the gesture context expires.
-    This function must be called DIRECTLY from onPointerDown / onClick with
-    NO await before it.
-  */
-  function synchronousAudioUnlock() {
-    /*
-      iOS Safari requires audio.play() to be called SYNCHRONOUSLY inside a user
-      gesture handler. An async handler that awaits something before calling
-      play() will fail because the gesture context expires.
-      We also create the AudioContext here so it's born inside the gesture.
-    */
-    if (mobileAudioUnlockedRef.current) {
-      // Already unlocked — don't change audio.src or interrupt playback
-      return;
-    }
-
-    const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
-    if (AudioContextCtor && !audioContextRef.current) {
-      audioContextRef.current = new AudioContextCtor();
-    }
-    const context = audioContextRef.current;
-    if (context) {
-      if (context.state === 'suspended') {
-        context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
-      }
-      // Start a silent oscillator to keep the AudioContext warm on iOS.
-      // iOS Safari auto-suspends the context after a few seconds of inactivity.
-      // A 40 Hz sine at gain 0.0001 is inaudible but keeps the context running.
-      if (!warmupOscRef.current) {
-        try {
-          const osc = context.createOscillator();
-          osc.frequency.value = 40;
-          const gain = context.createGain();
-          gain.gain.value = 0.0001;
-          osc.connect(gain);
-          gain.connect(context.destination);
-          osc.start();
-          warmupOscRef.current = osc;
-          warmupGainRef.current = gain;
-          debugLog('AudioContext warmup oscillator started');
-        } catch (e) {
-          console.warn('Failed to start warmup oscillator:', e);
-        }
-      }
-    }
-
-    const audio = createPersistentAudio();
-    // Build a valid silent WAV programmatically so iOS Safari accepts it
-    const sampleRate = 22050;
-    const seconds = 0.05;
-    const numSamples = Math.floor(sampleRate * seconds);
-    const dataSize = numSamples * 2; // mono 16-bit
-    const fileSize = 36 + dataSize;
-    const wavBuf = new ArrayBuffer(8 + fileSize);
-    const view = new DataView(wavBuf);
-    const writeStr = (off, str) => { for (let i = 0; i < str.length; i++) view.setUint8(off + i, str.charCodeAt(i)); };
-    writeStr(0, 'RIFF');
-    view.setUint32(4, fileSize, true);
-    writeStr(8, 'WAVE');
-    writeStr(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);   // PCM
-    view.setUint16(22, 1, true);   // mono
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);  // 16-bit
-    writeStr(36, 'data');
-    view.setUint32(40, dataSize, true);
-    // ArrayBuffer is already zero-filled (silence)
-    const silentUrl = URL.createObjectURL(new Blob([wavBuf], { type: 'audio/wav' }));
-    audio.src = silentUrl;
-    // Prime the element with muted playback during the user gesture.
-    // iOS Safari requires this to grant autoplay permission for the element.
-    // After priming, we can play unmuted audio from the same element.
-    audio.muted = true;
-    audio.volume = 1;
-    let unlockPromise;
-    try {
-      unlockPromise = audio.play();
-    } catch (e) {
-      console.warn('Audio unlock play threw:', e);
-      try { URL.revokeObjectURL(silentUrl); } catch (e) {}
-      return;
-    }
-    if (unlockPromise && unlockPromise.then) {
-      unlockPromise.then(() => {
-        debugLog('Audio unlocked successfully (muted priming)');
-        mobileAudioUnlockedRef.current = true;
-        setMobileAudioUnlocked(true);
-      }).catch((e) => {
-        console.warn('Audio unlock play failed:', e);
-        // Do NOT mark as unlocked — allow retry on next user gesture
-      }).finally(() => {
-        try { URL.revokeObjectURL(silentUrl); } catch (e) {}
-      });
-    } else {
-      // Old browsers without promise-based play()
-      mobileAudioUnlockedRef.current = true;
-      setMobileAudioUnlocked(true);
-      try { URL.revokeObjectURL(silentUrl); } catch (e) {}
-    }
-  }
-
-  async function unlockMobileAudio() {
-    // CRITICAL: synchronousAudioUnlock must be called SYNCHRONOUSLY before any
-    // await to preserve the iOS user gesture context. An await before play()
-    // causes the gesture to expire and autoplay permission to be denied.
-    synchronousAudioUnlock();
-    const context = await ensureAudioContext();
-    if (context && context.state === 'suspended') {
-      await context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
-    }
-  }
-
-  async function ensureAudioUnlocked() {
-    if (!mobileAudioUnlockedRef.current) {
-      await unlockMobileAudio();
-    } else {
-      const context = await ensureAudioContext();
-      if (context && context.state === 'suspended') {
-        await context.resume().catch((e) => console.warn('AudioContext resume failed:', e));
-      }
-    }
-  }
-
-  function stopAudioWarmup() {
-    if (warmupOscRef.current) {
-      try { warmupOscRef.current.stop(); } catch (e) {}
-      warmupOscRef.current = null;
-    }
-    if (warmupGainRef.current) {
-      try { warmupGainRef.current.disconnect(); } catch (e) {}
-      warmupGainRef.current = null;
-    }
-  }
 
   async function playSpeakerTestSound() {
     try {
@@ -770,7 +624,7 @@ function App() {
       await ensureAudioUnlocked();
       setPipelineStage('Loading test voice');
       setStatus('Loading test voice...');
-      const response = await fetch(`${API_URL}/debug/tts-sample.wav?ts=${Date.now()}`, { cache: 'no-store' });
+      const response = await fetch(`${liveApiUrl}/debug/tts-sample.wav?ts=${Date.now()}`, { cache: 'no-store' });
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Voice test unavailable'));
       const buffer = await response.arrayBuffer();
       const url = URL.createObjectURL(new Blob([buffer], { type: response.headers.get('content-type') || 'audio/wav' }));
@@ -787,83 +641,7 @@ function App() {
     }
   }
 
-  function resolveAudioUrl(audioUrl) {
-    const rawUrl = String(audioUrl || '').trim();
-    if (!rawUrl) return '';
-    try {
-      const baseUrl = API_URL || window.location.origin;
-      return new URL(rawUrl, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
-    } catch (error) {
-      console.warn('Unable to resolve audio URL:', error);
-      return rawUrl;
-    }
-  }
 
-  function revokeTtsItemUrl(item) {
-    if (item?.url && item.objectUrl) {
-      URL.revokeObjectURL(item.url);
-    }
-  }
-
-  function hasPlayableAudioPayload(data) {
-    return Boolean(data?.audio_url || data?.audio_base64);
-  }
-
-  async function prefetchAudioUrl(audioUrl, reason = 'warmup') {
-    const directAudioUrl = resolveAudioUrl(audioUrl);
-    if (!directAudioUrl) return false;
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), VOICE_PREFETCH_TIMEOUT_MS);
-    try {
-      const response = await fetch(directAudioUrl, {
-        cache: 'force-cache',
-        signal: controller.signal,
-      });
-      window.clearTimeout(timeoutId);
-      return response.ok;
-    } catch (error) {
-      window.clearTimeout(timeoutId);
-      if (error?.name !== 'AbortError') {
-        console.warn('voice audio prefetch failed:', reason, error);
-      }
-      return false;
-    }
-  }
-
-  async function warmVoiceCache(reason = 'idle') {
-    const current = voiceWarmupRef.current;
-    const now = Date.now();
-    const language = targetLanguage || 'es';
-    const textToWarm = VOICE_WARMUP_PHRASES[language] || VOICE_WARMUP_PHRASES.es;
-    const lastAt = current.lastAtByLanguage?.[language] || 0;
-    if (current.inFlight || now - lastAt < VOICE_WARMUP_COOLDOWN_MS) return false;
-    current.inFlight = true;
-    current.lastAtByLanguage = { ...(current.lastAtByLanguage || {}), [language]: now };
-    try {
-      const response = await fetch(`${API_URL}/tts`, {
-        method: 'POST',
-        headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
-        cache: 'no-store',
-        body: JSON.stringify({
-          text: textToWarm,
-          language,
-          response_format: 'url',
-          warmup_reason: reason,
-        }),
-      });
-      if (!response.ok) return false;
-      const data = await response.json().catch(() => null);
-      if (data?.audio_url) {
-        await prefetchAudioUrl(data.audio_url, reason);
-      }
-      return true;
-    } catch (error) {
-      console.warn('voice warmup failed:', error);
-      return false;
-    } finally {
-      current.inFlight = false;
-    }
-  }
 
   async function testMicrophoneAndPlayback() {
     try {
@@ -871,7 +649,7 @@ function App() {
       setPipelineStage('Testing microphone');
       setStatus('Tap to record, then playback...');
 
-      const stream = await requestAudioStream();
+      const stream = await requestAudioStream(settings.micDeviceId !== 'default' ? settings.micDeviceId : undefined);
       const mediaRecorder = createAudioRecorder(stream);
       const chunks = [];
 
@@ -933,25 +711,24 @@ function App() {
     }
   }
 
-  async function translateText() {
-    if (processing || !text.trim()) return;
+  async function translateText(textOverride) {
+    const textToSend = textOverride ?? text;
+    if (processing || !textToSend.trim()) return;
+    if (textOverride) setText(textOverride);
     setProcessing(true);
     setStatus('Translating text...');
     resetBrainRuntimeUi();
     try {
-      const response = await fetch(`${API_URL}/translate/text`, {
+      const response = await fetch(`${liveApiUrl}/translate/text`, {
         method: 'POST',
         headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          text,
-          source_language: sourceLanguage,
-          target_language: targetLanguage,
-          synthesize_audio: false,
-          session_id: sessionId,
-          device_id: INITIAL_DEVICE_ID,
-          speaker_name: INITIAL_SPEAKER_NAME,
-          speaker_mode: speakerMode,
-        }),
+        body: JSON.stringify(buildTranslatePayload({
+          text: textToSend,
+          sourceLanguage, targetLanguage, sessionId,
+          deviceId: INITIAL_DEVICE_ID, speakerName: INITIAL_SPEAKER_NAME, speakerMode,
+          translationMode: settings.translationMode, translationProvider: settings.translationProvider,
+          googleTtsApiKey: settings.googleTtsApiKey || undefined,
+        })),
       });
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Text translation failed'));
       const data = await response.json();
@@ -968,6 +745,9 @@ function App() {
         setClarifyVisible(true);
       } else {
         setStatus(brainUpdate?.message || 'Text translated');
+        if (settings.ttsVoice === 'browser' && data.translated_text) {
+          browserTtsSpeak(data.translated_text, targetLanguage, settings.ttsSpeed ?? 1.0);
+        }
       }
     } catch (error) {
       setStatus(error.message || 'Text translation failed');
@@ -1007,10 +787,7 @@ function App() {
       }, playDelay);
       return true;
     }
-    const binary = atob(data.audio_base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const buffer = base64ToArrayBuffer(data.audio_base64);
     if (buffer.byteLength < 100) return false;
     const url = URL.createObjectURL(new Blob([buffer], { type: mimeType }));
     const item = { url, buffer, mimeType, objectUrl: true };
@@ -1038,7 +815,7 @@ function App() {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), FAST_TTS_TIMEOUT_MS);
     try {
-      const response = await fetch(`${API_URL}/tts`, {
+      const response = await fetch(`${liveApiUrl}/tts`, {
         method: 'POST',
         headers: authHeaders(activeAuthToken, { 'Content-Type': 'application/json' }),
         signal: controller.signal,
@@ -1087,21 +864,18 @@ function App() {
     const timeoutId = window.setTimeout(() => controller.abort(), FAST_SPEECH_TIMEOUT_MS);
     try {
       const activeAuthToken = await ensureAuthToken();
-      const response = await fetch(`${API_URL}/translate/text`, {
+      const response = await fetch(`${liveApiUrl}/translate/text`, {
         method: 'POST',
         headers: authHeaders(activeAuthToken, { 'Content-Type': 'application/json' }),
         signal: controller.signal,
-        body: JSON.stringify({
+        body: JSON.stringify(buildTranslatePayload({
           text: spokenText,
-          source_language: sourceLanguage,
-          target_language: targetLanguage,
-          synthesize_audio: true,
-          audio_response_format: 'url',
-          session_id: sessionId,
-          device_id: INITIAL_DEVICE_ID,
-          speaker_name: INITIAL_SPEAKER_NAME,
-          speaker_mode: speakerMode,
-        }),
+          sourceLanguage, targetLanguage, sessionId,
+          deviceId: INITIAL_DEVICE_ID, speakerName: INITIAL_SPEAKER_NAME, speakerMode,
+          translationMode: settings.translationMode, translationProvider: settings.translationProvider,
+          googleTtsApiKey: settings.googleTtsApiKey || undefined,
+          synthesizeAudio: true, audioResponseFormat: 'url',
+        })),
       });
       window.clearTimeout(timeoutId);
       const backendResponseMs = Math.round(performance.now() - requestStartedAt);
@@ -1160,165 +934,23 @@ function App() {
     }
   }
 
-  async function startCamera() {
-    try {
-      if (streamRef.current) return;
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      streamRef.current = stream;
-      const el = videoRef.current || document.createElement('video');
-      el.setAttribute('playsinline', '');
-      el.muted = true;
-      el.srcObject = stream;
-      await el.play();
-      videoRef.current = el;
-      setCameraActive(true);
-      setStatus('Camera ready');
-    } catch (e) {
-      setStatus('Camera permission denied');
-    }
-  }
 
-  async function stopCamera() {
-    try { streamRef.current?.getTracks()?.forEach((t) => t.stop()); } catch {}
-    streamRef.current = null;
-    setCameraActive(false);
-  }
 
-  async function captureAndTranslateFrame() {
-    if (!videoRef.current) { setStatus('Open camera first'); return; }
-    try {
-      const video = videoRef.current;
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 360;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
-      const form = new FormData();
-      form.append('image', blob, 'frame.png');
-      form.append('source_language', 'auto');
-      form.append('target_language', targetLanguage);
-      form.append('synthesize_audio', 'false');
-      setStatus('OCR translating...');
-      const resp = await fetch(`${API_URL}/translate/image`, { method: 'POST', headers: authHeaders(authToken), body: form });
-      if (!resp.ok) throw new Error(await responseErrorMessage(resp, 'OCR failed'));
-      const data = await resp.json();
-      setOcrText(data.ocr_text || '');
-      setResult({ source_text: data.ocr_text || '', translated_text: data.translated_text || '' });
-      setLiveTranslation(data.translated_text || '');
-      setStatus('Image translated');
-    } catch (e) {
-      setStatus(e.message || 'OCR failed');
-    }
-  }
-
-  async function login() {
-    const response = await fetch(`${API_URL}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!response.ok) {
-      setStatus('Login failed');
-      return;
-    }
-    const data = await response.json();
-    localStorage.setItem('translator_token', data.access_token);
-    setAuthToken(data.access_token);
-    setStatus(`Logged in as ${username}`);
-  }
-
-  async function ensureAuthToken() {
-    if (authToken) return authToken;
-    return '';
-  }
-
-  async function loadAnalytics() {
-    if (!authToken) {
-      setStatus('Log in to view analytics');
-      return;
-    }
-    const response = await fetch(`${API_URL}/analytics`, { headers: authHeaders(authToken) });
-    if (!response.ok) {
-      setStatus('Analytics unavailable');
-      return;
-    }
-    setAnalytics(await response.json());
-    setStatus('Analytics refreshed');
-  }
 
   // diagnostics + loadDiagnostics come from useDiagnostics(API_URL) above.
 
   // selfTest + runSelfTest are in useSelfTest above.
 
-  function logout() {
-    localStorage.removeItem('translator_token');
-    setAuthToken('');
-    setStatus('Logged out');
-  }
 
-  function updateSessionId(value) {
-    const normalized = normalizeSessionId(value) || crypto.randomUUID();
-    setSessionId(normalized);
-    localStorage.setItem('translator_session_id', normalized);
-  }
 
   async function shareConversationRoom() {
     const mechanism = await shareRoomUrl({ sessionId, copyToClipboard });
     setStatus(mechanism === 'share' ? 'Room link shared' : 'Room link copied');
+    toast(mechanism === 'share' ? 'Room link shared' : 'Room link copied', 'success', 2400);
   }
 
-  function rememberSpeaker(data = {}) {
-    const speakerId = data.speaker || '';
-    const label = data.speaker_label || speakerLabelsRef.current[speakerId] || fallbackSpeakerLabel(speakerId);
-    if (speakerId) {
-      speakerLabelsRef.current = { ...speakerLabelsRef.current, [speakerId]: label };
-    }
-    if (label && label !== 'Person') setDetectedSpeaker(label);
-    return label;
-  }
 
-  function normalizeConversationTurn(turn, index = 0) {
-    const speakerId = turn.speaker || '';
-    const label = turn.speaker_label || speakerLabelsRef.current[speakerId] || fallbackSpeakerLabel(speakerId);
-    if (speakerId) {
-      speakerLabelsRef.current = { ...speakerLabelsRef.current, [speakerId]: label };
-    }
-    return {
-      id: `${turn.created_at || Date.now()}-${speakerId || index}-${index}`,
-      speaker: speakerId,
-      speaker_label: label,
-      source_text: turn.source_text || '',
-      translated_text: turn.translated_text || '',
-      created_at: turn.created_at || Date.now() / 1000,
-    };
-  }
 
-  function appendConversationTurn(turn) {
-    const normalized = normalizeConversationTurn(turn);
-    setConversationTurns((current) => {
-      const nextKey = `${normalized.speaker}-${normalized.created_at}-${normalized.source_text}`;
-      const withoutDuplicate = current.filter((item) => `${item.speaker}-${item.created_at}-${item.source_text}` !== nextKey);
-      return [...withoutDuplicate, normalized].slice(-6);
-    });
-  }
-
-  function updateLatency(metric, ms) {
-    setLatencyStats((current) => ({ ...current, [metric]: formatLatencyValue(ms) }));
-  }
-
-  function recordLatencyTurn(entry) {
-    if (!Number.isFinite(entry.total) || entry.total <= 0) return;
-    setLatencyHistory((current) => [
-      ...current,
-      {
-        total: Math.round(entry.total),
-        backend: Number.isFinite(entry.backend) ? Math.round(entry.backend) : null,
-        audio: Number.isFinite(entry.audio) ? Math.round(entry.audio) : null,
-        created_at: Date.now(),
-      },
-    ].slice(-LATENCY_HISTORY_LIMIT));
-  }
 
   function resetStreamState() {
     if (streamSafetyTimeoutRef.current) {
@@ -1340,57 +972,18 @@ function App() {
     streamFinalizePendingRef.current = false;
     streamRecordingStartedAtRef.current = 0;
     holdToTalkReleasePendingRef.current = false;
-    audioSendQueueRef.current = [];
-    ttsQueueRef.current = [];
-    setTtsQueueLength(0);
-    setTtsChunksBuffer([]);
-    if (currentTtsFinishRef.current) {
-      const fn = currentTtsFinishRef.current;
-      currentTtsFinishRef.current = null;
-      fn();
-    }
-    if (canplayTimeoutRef.current) {
-      window.clearTimeout(canplayTimeoutRef.current);
-      canplayTimeoutRef.current = null;
-    }
+    drainAudioSendQueue();
+    clearTtsQueue();
   }
 
   function activePacketMs() {
-    if (lowBandwidthMode) return 500;
-    if (isIosOrSafariRecorder()) return EXPERIMENTAL_IOS_STREAMING ? 110 : Math.max(STREAM_PACKET_MS, 400);
-    return Math.min(STREAM_PACKET_MS, 80);
+    return activePacketMsUtil({ lowBandwidthMode, streamPacketMs: STREAM_PACKET_MS, experimentalIosStreaming: EXPERIMENTAL_IOS_STREAMING });
   }
 
-  function sendAudioPacket(socket, packet) {
-    if (socket.readyState !== WebSocket.OPEN) return false;
-    try {
-      debugLog('sending audio chunk', packet.meta.bytes, packet.meta.mime_type);
-      socket.send(JSON.stringify(packet.meta));
-      socket.send(packet.buffer);
-      return true;
-    } catch (e) {
-      console.error('WebSocket send failed:', e);
-      return false;
-    }
-  }
-
-  function queueAudioPacket(packet) {
-    const queue = audioSendQueueRef.current;
-    if (queue.length >= MAX_BUFFERED_AUDIO_CHUNKS) queue.shift();
-    queue.push(packet);
-  }
-
-  function flushAudioSendQueue(socket) {
-    const queue = audioSendQueueRef.current;
-    while (queue.length > 0 && socket.readyState === WebSocket.OPEN) {
-      const packet = queue[0];
-      if (!sendAudioPacket(socket, packet)) break;
-      queue.shift();
-    }
-  }
 
   async function sendRecorderChunk(socket, event, recorder) {
     if (event.data.size <= 0) return;
+    if (ttsPlayingRef.current) return;
     debugLog('AUDIO CHUNK:', event.data);
     if (audioSendQueueRef.current.length >= MAX_AUDIO_SEND_QUEUE && socket.readyState === WebSocket.OPEN) {
       audioSendQueueRef.current.shift();
@@ -1412,43 +1005,6 @@ function App() {
     if (!sendAudioPacket(socket, packet)) queueAudioPacket(packet);
   }
 
-  function stopTracks(stream) {
-    stopMicMeter();
-    stream?.getTracks().forEach((track) => track.stop());
-  }
-
-  function clearStreamHeartbeat() {
-    if (streamHeartbeatRef.current?.timer) {
-      window.clearInterval(streamHeartbeatRef.current.timer);
-    }
-    streamHeartbeatRef.current = { timer: null, missed: 0 };
-  }
-
-  function markStreamPong() {
-    streamHeartbeatRef.current.missed = 0;
-    setConnectionStatus('online');
-  }
-
-  function startStreamHeartbeat(socket) {
-    clearStreamHeartbeat();
-    streamHeartbeatRef.current = { timer: null, missed: 0 };
-    const timer = window.setInterval(() => {
-      if (socketRef.current !== socket) {
-        clearStreamHeartbeat();
-        return;
-      }
-      if (socket.readyState !== WebSocket.OPEN) return;
-      streamHeartbeatRef.current.missed += 1;
-      if (streamHeartbeatRef.current.missed > STREAM_HEARTBEAT_MAX_MISSES) {
-        setPipelineStage('Connection heartbeat missed');
-        setStatus('Reconnecting stream...');
-        socket.close();
-        return;
-      }
-      socket.send(JSON.stringify({ type: 'ping' }));
-    }, STREAM_HEARTBEAT_MS);
-    streamHeartbeatRef.current.timer = timer;
-  }
 
   function disableStreamReconnect() {
     streamReconnectRef.current = { ...streamReconnectRef.current, enabled: false };
@@ -1506,9 +1062,6 @@ function App() {
     );
   }
 
-  function isFatalStreamError(message = '') {
-    return /quota|too many active|not authorized|unauthorized|forbidden|exceeds|buffer limit/i.test(String(message || ''));
-  }
 
   function stopContinuousStream(nextStatus = 'Interpreter stopped') {
     const socket = socketRef.current;
@@ -1838,16 +1391,9 @@ function App() {
   function applySharedSession(session) {
     if (!session) return;
     setSharedSession(session);
-    Object.values(session.speakers || {}).forEach((profile) => {
-      if (profile?.speaker) {
-        speakerLabelsRef.current = {
-          ...speakerLabelsRef.current,
-          [profile.speaker]: profile.speaker_label || fallbackSpeakerLabel(profile.speaker),
-        };
-      }
-    });
+    loadSpeakerProfiles(session.speakers);
     if (session.history?.length) {
-      setConversationTurns(session.history.map((turn, index) => normalizeConversationTurn(turn, index)).slice(-6));
+      setConversationTurns(session.history.map((turn, index) => normalizeConversationTurn(turn, index)).slice(-CONVERSATION_DISPLAY_LIMIT));
     }
     const latest = session.history?.[session.history.length - 1];
     if (latest) {
@@ -1867,95 +1413,6 @@ function App() {
     }
   }
 
-  function startMicMeter(stream) {
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx || !stream) return;
-      const ctx = micMeterRef.current.ctx || new Ctx();
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      // Smaller FFT + low smoothing = real-time response.
-      analyser.fftSize = 256;
-      analyser.smoothingTimeConstant = 0.15;
-      source.connect(analyser);
-      // Use time-domain (waveform) data — reacts instantly, unlike FFT bins
-      // which need a few frames to settle and feel laggy.
-      const data = new Uint8Array(analyser.fftSize);
-      micMeterRef.current = { ctx, analyser, source, data, raf: 0, stopped: false, smoothed: 0 };
-      const tick = () => {
-        if (micMeterRef.current.stopped) return;
-        analyser.getByteTimeDomainData(data);
-        let peak = 0;
-        let sumSq = 0;
-        for (let i = 0; i < data.length; i += 1) {
-          const v = (data[i] - 128) / 128; // -1..1
-          const a = Math.abs(v);
-          if (a > peak) peak = a;
-          sumSq += v * v;
-        }
-        const rms = Math.sqrt(sumSq / data.length);
-        // Blend RMS (loudness) with peak (transients) so taps & consonants pop.
-        const raw = Math.min(1, rms * 2.4 + peak * 0.6);
-        // Asymmetric smoothing: snap up fast, decay slowly. Feels live.
-        const prev = micMeterRef.current.smoothed || 0;
-        const smoothed = raw > prev ? raw : prev * 0.78 + raw * 0.22;
-        micMeterRef.current.smoothed = smoothed;
-        setMicLevel(smoothed);
-        micMeterRef.current.raf = requestAnimationFrame(tick);
-      };
-      tick();
-    } catch (err) {
-      console.warn('mic meter failed to start', err);
-    }
-  }
-
-  function stopMicMeter() {
-    const m = micMeterRef.current;
-    if (!m) return;
-    m.stopped = true;
-    if (m.raf) cancelAnimationFrame(m.raf);
-    try { m.source && m.source.disconnect(); } catch (e) { console.warn('Mic meter source disconnect error:', e); }
-    try { m.analyser && m.analyser.disconnect(); } catch (e) { console.warn('Mic meter analyser disconnect error:', e); }
-    try { m.ctx && m.ctx.state !== 'closed' && m.ctx.close(); } catch (e) { console.warn('Mic meter context close error:', e); }
-    micMeterRef.current = {};
-    setMicLevel(0);
-  }
-
-  function stopSilenceDetector() {
-    if (silenceDetectRafRef.current) {
-      cancelAnimationFrame(silenceDetectRafRef.current);
-      silenceDetectRafRef.current = 0;
-    }
-    silenceSeenSpeechRef.current = false;
-    silenceStartRef.current = 0;
-  }
-
-  function startSilenceDetector() {
-    stopSilenceDetector();
-    const tick = () => {
-      if (recordingStoppedRef.current || mediaRecorderRef.current?.state !== 'recording') {
-        stopSilenceDetector();
-        return;
-      }
-      const level = micMeterRef.current?.smoothed || 0;
-      if (!silenceSeenSpeechRef.current && level > 0.12) {
-        silenceSeenSpeechRef.current = true;
-        silenceStartRef.current = 0;
-      } else if (silenceSeenSpeechRef.current && level < 0.045) {
-        if (!silenceStartRef.current) {
-          silenceStartRef.current = performance.now();
-        } else if (performance.now() - silenceStartRef.current > 260) {
-          stopSilenceDetector();
-          try { stopRecording(); } catch (e) {}
-          return;
-        }
-      } else if (level >= 0.045) {
-        silenceStartRef.current = 0;
-      }
-      silenceDetectRafRef.current = requestAnimationFrame(tick);
-    };
-    silenceDetectRafRef.current = requestAnimationFrame(tick);
-  }
 
   async function startRecording() {
     debugLog('startRecording: called');
@@ -1971,6 +1428,7 @@ function App() {
     } catch (error) {
       setMicPermission('denied');
       setStatus(mediaErrorMessage(error));
+      setCurrentError(mapTechnicalError(error));
       return;
     }
     setMicPermission('available');
@@ -2014,7 +1472,7 @@ function App() {
     }
     setRecording(true);
     setStatus('Listening...');
-    startSilenceDetector();
+    startSilenceDetector({ shouldStop: () => recordingStoppedRef.current || mediaRecorderRef.current?.state !== 'recording', onSilence: stopRecording });
   }
 
   function stopRecording() {
@@ -2048,8 +1506,8 @@ function App() {
     resetBrainRuntimeUi();
 
     try {
-      debugLog('UPLOAD: posting audio to', `${API_URL}/translate/audio`, 'size', blob.size);
-      const response = await fetch(`${API_URL}/translate/audio`, { method: 'POST', headers: authHeaders(authToken), body: formData });
+      debugLog('UPLOAD: posting audio to', `${liveApiUrl}/translate/audio`, 'size', blob.size);
+      const response = await fetch(`${liveApiUrl}/translate/audio`, { method: 'POST', headers: authHeaders(authToken), body: formData });
       debugLog('UPLOAD: response status', response.status);
       if (!response.ok) {
         const errText = await responseErrorMessage(response, 'Audio translation failed');
@@ -2077,10 +1535,7 @@ function App() {
       }
       if (data.audio_base64) {
         await ensureAudioUnlocked().catch((e) => console.warn('uploadRecording audio unlock failed:', e));
-        const binary = atob(data.audio_base64);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+        const buffer = base64ToArrayBuffer(data.audio_base64);
         debugLog('UPLOAD: decoded audio buffer size', buffer.byteLength);
         // Validate WAV header
         if (buffer.byteLength >= 12) {
@@ -2129,7 +1584,7 @@ function App() {
     delete cleanOptions.reconnect;
     let stream;
     try {
-      stream = await requestAudioStream();
+      stream = await requestAudioStream(settings.micDeviceId !== 'default' ? settings.micDeviceId : undefined);
       logAudioStream(stream);
     } catch (error) {
       disableStreamReconnect();
@@ -2167,8 +1622,9 @@ function App() {
       return;
     }
     const activeAuthToken = await ensureAuthToken();
-    const socketUrl = withAuthToken(WS_AUDIO_URL, activeAuthToken);
-    setWsDebug({ url: WS_AUDIO_URL, close: 'connecting', error: '-' });
+    const wsEndpoint = `${liveWsUrl}/ws/audio`;
+    const socketUrl = withAuthToken(wsEndpoint, activeAuthToken);
+    setWsDebug({ url: wsEndpoint, close: 'connecting', error: '-' });
     const socket = new WebSocket(socketUrl);
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
@@ -2318,8 +1774,20 @@ function App() {
         rememberSpeaker(data);
         setLiveTranslation(data.text);
         setPipelineStage('Translation ready');
+        // Browser TTS fallback: speak live translations directly when backend
+        // has no voice for this language (avoids needing Google TTS API key)
+        const useBrowserTts = settings.ttsVoice === 'browser' ||
+          (settings.partialTts !== false && !PIPER_SUPPORTED_LANGS.has(targetLanguage));
+        if (useBrowserTts && data.text && !ttsPlayingRef.current) {
+          browserTtsSpeak(data.text, targetLanguage, settings.ttsSpeed ?? 1.0);
+        }
       }
       if (data.type === 'tts_start') {
+        if (data.partial) {
+          setPlaying(true);
+          setPipelineStage('Partial voice...');
+          return;
+        }
         if (shouldSkipBrainTts(data)) {
           ttsQueueRef.current = [];
           setTtsQueueLength(0);
@@ -2330,6 +1798,7 @@ function App() {
           setStatus('Confirmation needed before voice');
           return;
         }
+        audioSendQueueRef.current = [];
         setPlaying(true);
         setPipelineStage(`Streaming voice: 0/${data.chunks}`);
         if (!data.partial && isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING && !shouldKeepContinuousStream(socket)) {
@@ -2339,6 +1808,15 @@ function App() {
         }
       }
       if (data.type === 'tts_audio_chunk') {
+        if (data.partial) {
+          // If already playing, skip this chunk -- interrupting mid-word causes choppiness.
+          // When idle, play immediately for the smoothest experience.
+          if (!ttsPlayingRef.current) {
+            ensureAudioUnlocked().catch((e) => console.warn('partial TTS unlock failed:', e));
+            enqueueTtsChunk(data.audio_base64, data.mime_type);
+          }
+          return;
+        }
         if (shouldSkipBrainTts(data)) {
           setPipelineStage('Voice skipped');
           return;
@@ -2353,6 +1831,10 @@ function App() {
         enqueueTtsChunk(data.audio_base64, data.mime_type);
       }
       if (data.type === 'tts_end') {
+        if (data.partial) {
+          // Partial TTS finished -- keep playing state until final TTS arrives
+          return;
+        }
         if (shouldSkipBrainTts(data)) {
           ttsQueueRef.current = [];
           setTtsQueueLength(0);
@@ -2364,16 +1846,17 @@ function App() {
           return;
         }
         setPipelineStage('Voice stream complete');
-        setTtsChunksBuffer((chunks) => {
-          if (chunks.length === 0) {
-            debugLog('No TTS chunks to play');
-            return [];
-          }
-          debugLog(`Playing ${chunks.length} TTS chunks sequentially to bypass concatenation error`);
-          let index = 0;
-          const playNextChunk = () => {
-            if (index >= chunks.length) {
-              debugLog('All chunks played');
+        // If the queue is already playing or has items, let it finish naturally.
+        // Only replay from ttsChunksBuffer if nothing is currently playing and
+        // the queue is empty (i.e. playback never started or already finished).
+        if (ttsPlayingRef.current || ttsQueueRef.current.length > 0) {
+          debugLog('TTS queue already playing, letting it finish naturally');
+          setTtsChunksBuffer([]);
+        } else {
+          setTtsChunksBuffer((chunks) => {
+            if (chunks.length === 0) {
+              debugLog('No TTS chunks to play');
+              // Nothing played — update UI to reflect completion
               setPlaying(false);
               setTtsPlaying(false);
               if (shouldKeepContinuousStream(socket)) {
@@ -2383,26 +1866,42 @@ function App() {
                 setPipelineStage('Voice played');
                 setStatus('Voice played');
               }
-              return;
+              return [];
             }
-            const chunk = chunks[index];
-            const url = URL.createObjectURL(new Blob([chunk], { type: 'audio/wav' }));
-            const item = { url, buffer: chunk, mimeType: 'audio/wav', objectUrl: true };
-            revokeTtsItemUrl(lastTtsItemRef.current);
-            lastTtsItemRef.current = item;
-            setAudioReplayAvailable(true);
-            debugLog(`Playing chunk ${index + 1}/${chunks.length}, size: ${chunk.byteLength} bytes`);
-            playTtsItem(item, { revokeOnFinish: true, manual: false, onEnd: () => {
-              index++;
-              playNextChunk();
-            }});
-          };
-          ensureAudioUnlocked().catch((e) => console.warn('TTS end audio unlock failed:', e));
-          debugLog('Starting sequential TTS playback');
-          playNextChunk();
-          return [];
-        });
-        setTtsQueueLength(0);
+            debugLog(`Playing ${chunks.length} TTS chunks sequentially (queue was idle)`);
+            let index = 0;
+            const playNextChunk = () => {
+              if (index >= chunks.length) {
+                debugLog('All chunks played');
+                setPlaying(false);
+                setTtsPlaying(false);
+                if (shouldKeepContinuousStream(socket)) {
+                  setPipelineStage('Listening');
+                  setStatus('Listening for the next speaker...');
+                } else {
+                  setPipelineStage('Voice played');
+                  setStatus('Voice played');
+                }
+                return;
+              }
+              const chunk = chunks[index];
+              const url = URL.createObjectURL(new Blob([chunk], { type: 'audio/wav' }));
+              const item = { url, buffer: chunk, mimeType: 'audio/wav', objectUrl: true };
+              revokeTtsItemUrl(lastTtsItemRef.current);
+              lastTtsItemRef.current = item;
+              setAudioReplayAvailable(true);
+              debugLog(`Playing chunk ${index + 1}/${chunks.length}, size: ${chunk.byteLength} bytes`);
+              playTtsItem(item, { revokeOnFinish: true, manual: false, onEnd: () => {
+                index++;
+                playNextChunk();
+              }});
+            };
+            ensureAudioUnlocked().catch((e) => console.warn('TTS end audio unlock failed:', e));
+            debugLog('Starting sequential TTS playback');
+            playNextChunk();
+            return [];
+          });
+        }
         if (!data.partial && resumeAfterTtsRef.current && (isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING) && !shouldKeepContinuousStream(socket)) {
           resumeAfterTtsRef.current = false;
           window.setTimeout(() => {
@@ -2448,6 +1947,7 @@ function App() {
         const brainUpdate = applyBrainPayload(data, 'final');
         rememberSpeaker(data);
         setResult(data);
+        if (data.translated_text) setLiveTranslation(data.translated_text);
         if (data.session) {
           applySharedSession(data.session);
         } else {
@@ -2458,7 +1958,7 @@ function App() {
         if (keepContinuous) {
           setStreaming(true);
           setInstantListening(false);
-          if (!ttsPlayingRef.current && !playing) {
+          if (!ttsPlayingRef.current && !appStateRef.current.playing) {
             setPipelineStage(data.clarify ? 'Clarification needed' : 'Listening');
             setStatus(brainUpdate?.message || (data.clarify ? 'Clarification needed. Listening...' : 'Listening for the next speaker...'));
           }
@@ -2542,15 +2042,15 @@ function App() {
       return;
     }
     ensureAudioContext().catch((e) => console.warn('enqueueTtsChunk AudioContext failed:', e));
-    const binary = atob(audioBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    const buffer = base64ToArrayBuffer(audioBase64);
     const bufferCopy = buffer.slice(0);
+    const url = URL.createObjectURL(new Blob([bufferCopy], { type: mimeType || 'audio/wav' }));
+    const item = { url, buffer: bufferCopy, mimeType: mimeType || 'audio/wav', objectUrl: true };
+    ttsQueueRef.current.push(item);
+    setTtsQueueLength(ttsQueueRef.current.length);
     setTtsChunksBuffer((prev) => [...prev, bufferCopy]);
-    setTtsQueueLength((prev) => prev + 1);
+    // Trigger playback immediately if not already playing
+    playNextTtsChunk();
   }
 
   function playTtsItem(item, { revokeOnFinish = true, manual = false, onEnd } = {}) {
@@ -2752,7 +2252,7 @@ function App() {
       return;
     }
 
-    debugLog('playTtsItem: trying AudioContext path');
+    debugLog('playTtsItem: trying AudioContext path with crossfade');
     ensureAudioContext()
       .then((context) => {
         debugLog('playTtsItem: AudioContext state', context?.state);
@@ -2761,23 +2261,65 @@ function App() {
           playWithHtmlAudio();
           return;
         }
+        
+        // Create gain node routed through master gain for volume control
+        const { gainNode } = getOrCreateAudioNodes(context);
+        
         return context.decodeAudioData(item.buffer.slice(0))
-          .then((audioBuffer) => {
-            debugLog('playTtsItem: decoded audio buffer, duration', audioBuffer.duration);
+          .then(async (rawAudioBuffer) => {
+            // Trim trailing silence and match volume for seamless transitions
+            const targetRMS = lastChunkRMSRef.current;
+            const { buffer: audioBuffer, trimmedDuration, rms } = await createTrimmedBuffer(context, rawAudioBuffer, targetRMS);
+            lastChunkRMSRef.current = rms; // Store for next chunk matching
+            const duration = trimmedDuration;
+            
+            debugLog('playTtsItem: decoded buffer, original:', rawAudioBuffer.duration.toFixed(3), 'trimmed:', duration.toFixed(3));
+            
             const source = context.createBufferSource();
             source.buffer = audioBuffer;
-            source.connect(context.destination);
+            source.playbackRate.value = settings.ttsSpeed ?? 1.0;
+            source.connect(gainNode);
+            
+            // Track duration for adaptive timing
+            recentDurationsRef.current.push(duration);
+            if (recentDurationsRef.current.length > 5) {
+              recentDurationsRef.current.shift();
+            }
+            
+            // S-curve crossfade for natural transitions
+            const now = context.currentTime;
+            const hasMoreChunks = ttsQueueRef.current.length > 0 || nextAudioBufferRef.current;
+            applySCurveFade(gainNode, now, duration, true, hasMoreChunks);
+            
+            if (hasMoreChunks) {
+              debugLog('playTtsItem: scheduled S-curve fade out, duration:', duration.toFixed(3));
+            }
+            
             source.onended = () => {
               window.clearTimeout(sourceSafetyTimeout);
               setLastAudioError(null);
+              // Reset gain for next playback
+              gainNode.gain.cancelScheduledValues(context.currentTime);
+              gainNode.gain.setValueAtTime(0, context.currentTime);
               finish();
             };
-            source.start(0);
+            
+            source.start(now);
+            
+            // Initialize lookahead with jitter buffer compensation
+            preloadLookaheadChunks();
+            if (ttsQueueRef.current.length > 0 && nextAudioBufferRef.current) {
+              // Use trimmed duration for precise scheduling
+              const jitterCompensation = jitterBufferMs / 1000;
+              schedulePreciseNextChunk(context, now + duration + jitterCompensation);
+            }
+            
             const sourceSafetyTimeout = window.setTimeout(() => {
               console.warn('AudioBufferSource safety timeout fired, forcing finish');
               finish();
-            }, Math.ceil(audioBuffer.duration * 1000) + 1000);
-            debugLog('playTtsItem: AudioBufferSource started');
+            }, Math.ceil(duration * 1000) + 1000);
+            
+            debugLog('playTtsItem: started with silence-trimmed crossfade');
           })
           .catch((error) => {
             console.error('AudioContext decode failed, using HTML audio fallback:', error);
@@ -2804,9 +2346,294 @@ function App() {
     playTtsItem(item, { revokeOnFinish: false, manual: true });
   }
 
-  function playNextTtsChunk() {
-    if (ttsPlayingRef.current || ttsQueueRef.current.length === 0) {
-      if (!ttsPlayingRef.current && ttsQueueRef.current.length === 0 && playing) {
+  // Audio scheduling for gapless playback - ADVANCED SMOOTHNESS
+  const nextAudioBufferRef = useRef(null);
+  const nextNextAudioBufferRef = useRef(null); // Lookahead: 2 chunks ahead
+  const gainNodeRef = useRef(null);
+  const masterGainRef = useRef(null); // Limiter to prevent clipping
+  const crossfadeDuration = 0.15; // 150ms crossfade for perfectly smooth transitions
+  const overlapDuration = 0.05; // 50ms overlap between chunks
+  const jitterBufferMs = 50; // Small jitter buffer for network stability
+  const recentDurationsRef = useRef([]); // Track durations for adaptive timing
+  const silenceThresholdDb = -60; // Silence detection threshold in dB
+  const minSilenceMs = 30; // Minimum silence to trim in ms
+
+  function getOrCreateAudioNodes(context) {
+    if (!masterGainRef.current || masterGainRef.current.context !== context) {
+      // Create master limiter with compressor for smooth dynamics
+      masterGainRef.current = context.createGain();
+      masterGainRef.current.gain.value = 0.92; // More headroom for crossfades
+      
+      // Add compressor for consistent volume
+      const compressor = context.createDynamicsCompressor();
+      compressor.threshold.value = -3; // Start compression at -3dB
+      compressor.knee.value = 4; // Smooth knee
+      compressor.ratio.value = 3; // Moderate compression
+      compressor.attack.value = 0.003; // Fast attack
+      compressor.release.value = 0.1; // Smooth release
+      
+      masterGainRef.current.connect(compressor);
+      compressor.connect(context.destination);
+    }
+    if (!gainNodeRef.current || gainNodeRef.current.context !== context) {
+      gainNodeRef.current = context.createGain();
+      gainNodeRef.current.connect(masterGainRef.current);
+    }
+    return { masterGain: masterGainRef.current, gainNode: gainNodeRef.current };
+  }
+
+  // S-curve fade for more natural transitions (ease-in-out)
+  function applySCurveFade(gainNode, startTime, duration, fadeIn, fadeOut) {
+    const fadeDuration = Math.min(crossfadeDuration, duration * 0.3);
+    
+    if (fadeIn) {
+      // S-curve fade in: starts slow, speeds up, slows down
+      gainNode.gain.setValueAtTime(0, startTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, startTime + fadeDuration * 0.3);
+      gainNode.gain.linearRampToValueAtTime(1, startTime + fadeDuration);
+    }
+    
+    if (fadeOut) {
+      // S-curve fade out
+      const fadeStart = startTime + duration - fadeDuration;
+      gainNode.gain.setValueAtTime(1, fadeStart);
+      gainNode.gain.linearRampToValueAtTime(0.3, fadeStart + fadeDuration * 0.7);
+      gainNode.gain.linearRampToValueAtTime(0, startTime + duration);
+    }
+  }
+
+  // Analyze audio buffer to find trailing silence
+  function findTrailingSilence(audioBuffer, thresholdDb = silenceThresholdDb) {
+    const threshold = Math.pow(10, thresholdDb / 20);
+    const sampleRate = audioBuffer.sampleRate;
+    const channelData = audioBuffer.getChannelData(0); // Use first channel
+    const minSamples = Math.floor((minSilenceMs / 1000) * sampleRate);
+    
+    // Find last non-silent sample
+    let lastNonSilentIndex = channelData.length - 1;
+    for (let i = channelData.length - 1; i >= 0; i--) {
+      if (Math.abs(channelData[i]) > threshold) {
+        lastNonSilentIndex = i;
+        break;
+      }
+    }
+    
+    // Ensure minimum samples remain
+    const endIndex = Math.max(lastNonSilentIndex + 1, minSamples);
+    const silenceSamples = channelData.length - endIndex;
+    const silenceDuration = silenceSamples / sampleRate;
+    
+    return { silenceDuration, endIndex, hasTrailingSilence: silenceSamples > minSamples };
+  }
+
+  // Calculate RMS (Root Mean Square) volume of audio buffer
+  function calculateRMS(audioBuffer, startSample = 0, endSample = null) {
+    const channelData = audioBuffer.getChannelData(0);
+    const end = endSample || channelData.length;
+    let sum = 0;
+    let count = 0;
+    
+    for (let i = startSample; i < end; i++) {
+      sum += channelData[i] * channelData[i];
+      count++;
+    }
+    
+    return Math.sqrt(sum / count);
+  }
+
+  // Find nearest zero crossing to avoid clicks
+  function findNearestZeroCrossing(audioBuffer, targetSample, searchRadius = 50) {
+    const channelData = audioBuffer.getChannelData(0);
+    const sampleRate = audioBuffer.sampleRate;
+    const maxSearch = Math.min(searchRadius, Math.floor(0.005 * sampleRate)); // Max 5ms search
+    
+    let bestIndex = targetSample;
+    let minAmplitude = Math.abs(channelData[targetSample]);
+    
+    // Search forward and backward
+    for (let offset = 1; offset <= maxSearch; offset++) {
+      // Check forward
+      if (targetSample + offset < channelData.length) {
+        const ampForward = Math.abs(channelData[targetSample + offset]);
+        if (ampForward < minAmplitude) {
+          minAmplitude = ampForward;
+          bestIndex = targetSample + offset;
+        }
+      }
+      // Check backward
+      if (targetSample - offset >= 0) {
+        const ampBackward = Math.abs(channelData[targetSample - offset]);
+        if (ampBackward < minAmplitude) {
+          minAmplitude = ampBackward;
+          bestIndex = targetSample - offset;
+        }
+      }
+    }
+    
+    return bestIndex;
+  }
+
+  // Create trimmed audio buffer without trailing silence, aligned to zero crossing
+  async function createTrimmedBuffer(context, originalBuffer, targetRMS = null) {
+    const { silenceDuration, endIndex, hasTrailingSilence } = findTrailingSilence(originalBuffer);
+    
+    // Find optimal end point at zero crossing to prevent clicks
+    const optimalEndIndex = findNearestZeroCrossing(originalBuffer, endIndex);
+    
+    // Calculate RMS for volume matching
+    const bufferRMS = calculateRMS(originalBuffer, 0, optimalEndIndex);
+    const volumeScale = targetRMS ? (targetRMS / bufferRMS) : 1.0;
+    const clampedScale = Math.min(Math.max(volumeScale, 0.7), 1.3); // Limit to reasonable range
+    
+    if (!hasTrailingSilence && clampedScale === 1.0) {
+      // No changes needed
+      return { buffer: originalBuffer, trimmedDuration: originalBuffer.duration, rms: bufferRMS };
+    }
+    
+    // Create new buffer without trailing silence, aligned to zero crossing
+    const trimmedBuffer = context.createBuffer(
+      originalBuffer.numberOfChannels,
+      optimalEndIndex,
+      originalBuffer.sampleRate
+    );
+    
+    // Copy data with volume adjustment
+    for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
+      const originalData = originalBuffer.getChannelData(channel);
+      const trimmedData = trimmedBuffer.getChannelData(channel);
+      for (let i = 0; i < optimalEndIndex; i++) {
+        trimmedData[i] = originalData[i] * clampedScale;
+      }
+    }
+    
+    debugLog('Optimized buffer: trimmed', silenceDuration.toFixed(3), 's, RMS scale:', clampedScale.toFixed(3), 'zero-cross:', optimalEndIndex);
+    
+    return { buffer: trimmedBuffer, trimmedDuration: trimmedBuffer.duration, rms: bufferRMS * clampedScale };
+  }
+
+  // Last chunk RMS for volume matching between phrases
+  const lastChunkRMSRef = useRef(null);
+
+  // Calculate adaptive timing based on recent chunk durations
+  function getAdaptiveOverlapDuration() {
+    const recent = recentDurationsRef.current;
+    if (recent.length < 3) return overlapDuration;
+    
+    // Average recent durations
+    const avgDuration = recent.reduce((a, b) => a + b, 0) / recent.length;
+    // Adjust overlap: longer chunks need slightly more overlap
+    const adaptive = Math.min(0.08, Math.max(0.02, avgDuration * 0.05));
+    return adaptive;
+  }
+
+  function preloadLookaheadChunks() {
+    ensureAudioContext().then((ctx) => {
+      if (!ctx) return;
+      
+      // Preload first next chunk
+      if (ttsQueueRef.current.length > 0 && !nextAudioBufferRef.current) {
+        const nextItem = ttsQueueRef.current[0];
+        if (nextItem?.buffer) {
+          ctx.decodeAudioData(nextItem.buffer.slice(0)).then((buffer) => {
+            nextAudioBufferRef.current = buffer;
+            debugLog('Preloaded chunk+1, duration:', buffer.duration);
+          }).catch(() => { nextAudioBufferRef.current = null; });
+        }
+      }
+      
+      // Preload second next chunk (lookahead)
+      if (ttsQueueRef.current.length > 1 && !nextNextAudioBufferRef.current) {
+        const nextNextItem = ttsQueueRef.current[1];
+        if (nextNextItem?.buffer) {
+          ctx.decodeAudioData(nextNextItem.buffer.slice(0)).then((buffer) => {
+            nextNextAudioBufferRef.current = buffer;
+            debugLog('Preloaded chunk+2, duration:', buffer.duration);
+          }).catch(() => { nextNextAudioBufferRef.current = null; });
+        }
+      }
+    });
+  }
+
+  function shiftLookaheadBuffers() {
+    // Shift: next becomes current (consumed), nextNext becomes next
+    nextAudioBufferRef.current = nextNextAudioBufferRef.current;
+    nextNextAudioBufferRef.current = null;
+    // Preload new nextNext
+    preloadLookaheadChunks();
+  }
+
+  function schedulePreciseNextChunk(context, currentEndTime) {
+    if (ttsQueueRef.current.length === 0 || !nextAudioBufferRef.current) return;
+    
+    const nextStartTime = currentEndTime - overlapDuration;
+    const delayMs = Math.max(0, (nextStartTime - context.currentTime) * 1000);
+    
+    debugLog('Precise schedule: next chunk at', nextStartTime.toFixed(3), '(in', delayMs.toFixed(1), 'ms)');
+    
+    // Use setTimeout for the precise timing, then start with AudioContext
+    window.setTimeout(() => {
+      if (ttsPlayingRef.current && ttsQueueRef.current.length > 0) {
+        playNextTtsChunkPrecise(context);
+      }
+    }, delayMs);
+  }
+
+  function playNextTtsChunkPrecise(context) {
+    if (ttsQueueRef.current.length === 0 || !nextAudioBufferRef.current) return;
+    
+    const item = ttsQueueRef.current.shift();
+    setTtsQueueLength(ttsQueueRef.current.length);
+    
+    const { gainNode } = getOrCreateAudioNodes(context);
+    const audioBuffer = nextAudioBufferRef.current;
+    const duration = audioBuffer.duration;
+    
+    const source = context.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(gainNode);
+    
+    const now = context.currentTime;
+    
+    // Smooth fade in
+    gainNode.gain.cancelScheduledValues(now);
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(1, now + crossfadeDuration);
+    
+    // Schedule fade out before end if we have more chunks
+    if (ttsQueueRef.current.length > 0) {
+      const fadeOutStart = Math.max(crossfadeDuration, duration - crossfadeDuration);
+      gainNode.gain.setValueAtTime(1, now + fadeOutStart);
+      gainNode.gain.linearRampToValueAtTime(0, now + duration);
+    } else {
+      // Last chunk: fade out at end
+      gainNode.gain.setValueAtTime(1, now + duration - crossfadeDuration);
+      gainNode.gain.linearRampToValueAtTime(0, now + duration);
+    }
+    
+    source.onended = () => {
+      if (ttsQueueRef.current.length === 0) {
+        ttsPlayingRef.current = false;
+        setTtsPlaying(false);
+        setPlaying(false);
+        gainNode.gain.setValueAtTime(0, context.currentTime);
+      }
+    };
+    
+    source.start(now);
+    
+    // Schedule next chunk and shift lookahead
+    shiftLookaheadChunks();
+    if (ttsQueueRef.current.length > 0) {
+      schedulePreciseNextChunk(context, now + duration);
+      preloadLookaheadChunks();
+    }
+    
+    debugLog('Precise playback started, duration:', duration, ', queue:', ttsQueueRef.current.length);
+  }
+
+  function playNextTtsChunk(scheduled = false) {
+    if (ttsQueueRef.current.length === 0) {
+      if (!ttsPlayingRef.current && appStateRef.current.playing) {
         setPlaying(false);
         setTtsQueueLength(0);
         if (socketRef.current && shouldKeepContinuousStream(socketRef.current)) {
@@ -2826,13 +2653,6 @@ function App() {
     playTtsItem(item, { revokeOnFinish: false });
   }
 
-  function updateDuplexSpeaker(speaker, patch) {
-    setDuplex((current) => ({
-      ...current,
-      [speaker]: { ...current[speaker], ...patch },
-    }));
-  }
-
   async function toggleDuplexSpeaker(speaker) {
     const refs = duplexRefs.current[speaker];
     if (refs.socket) {
@@ -2849,19 +2669,38 @@ function App() {
       return;
     }
 
+    // Mutual exclusion: stop the other speaker before starting this one
+    const otherSpeaker = speaker === 'A' ? 'B' : 'A';
+    const otherRefs = duplexRefs.current[otherSpeaker];
+    if (otherRefs.socket) {
+      otherRefs.manualClose = true;
+      otherRefs.shouldReconnect = false;
+      otherRefs.finalizePending = true;
+      if (otherRefs.recorder?.state === 'recording') {
+        otherRefs.recorder.requestData?.();
+        otherRefs.recorder.stop();
+      } else if (otherRefs.socket.readyState === WebSocket.OPEN) {
+        otherRefs.socket.send(JSON.stringify({ type: 'finalize' }));
+      }
+      updateDuplexSpeaker(otherSpeaker, { active: false, stage: 'Paused' });
+    }
+    // Also stop any playing TTS so the mic is clean
+    window.speechSynthesis?.cancel();
+
     let stream;
     try {
-      stream = await requestAudioStream();
+      stream = await requestAudioStream(settings.micDeviceId !== 'default' ? settings.micDeviceId : undefined);
       debugLog('MIC STREAM ACTIVE:', stream);
       logAudioStream(stream);
     } catch (error) {
       setMicPermission('denied');
       updateDuplexSpeaker(speaker, { active: false, stage: mediaErrorMessage(error) });
+      setCurrentError(mapTechnicalError(error));
       return;
     }
     setMicPermission('available');
     const activeAuthToken = await ensureAuthToken();
-    const socket = new WebSocket(withAuthToken(WS_AUDIO_URL, activeAuthToken));
+    const socket = new WebSocket(withAuthToken(`${liveWsUrl}/ws/audio`, activeAuthToken));
     const source = speaker === 'A' ? sourceLanguage : targetLanguage;
     const target = speaker === 'A' ? targetLanguage : sourceLanguage;
     refs.manualClose = false;
@@ -2964,8 +2803,24 @@ function App() {
           updateDuplexSpeaker(speaker, { stage: 'Voice skipped for confirmation' });
           return;
         }
+        // Pause the OTHER speaker's mic while TTS plays to prevent echo
+        const otherSpk = speaker === 'A' ? 'B' : 'A';
+        const otherR = duplexRefs.current[otherSpk];
+        if (otherR.recorder?.state === 'recording') {
+          otherR.recorder.pause?.();
+          otherR._pausedForTts = true;
+        }
         ensureAudioUnlocked().catch((e) => console.warn('Duplex TTS chunk audio unlock failed:', e));
         enqueueTtsChunk(data.audio_base64, data.mime_type);
+      }
+      if (data.type === 'tts_end' && !data.partial) {
+        // Resume the other speaker's mic after TTS finishes
+        const otherSpk = speaker === 'A' ? 'B' : 'A';
+        const otherR = duplexRefs.current[otherSpk];
+        if (otherR._pausedForTts && otherR.recorder?.state === 'paused') {
+          otherR.recorder.resume?.();
+          otherR._pausedForTts = false;
+        }
       }
       if (data.type === 'error') {
         refs.manualClose = true;
@@ -2990,6 +2845,14 @@ function App() {
           speaker_label: label,
           stage: brainUpdate?.message || 'Complete',
         });
+        // Append to shared conversation history so turns persist
+        if (data.source_text || data.translated_text) {
+          appendConversationTurn({
+            ...data,
+            speaker_label: label || `Person ${speaker}`,
+            conversationSpeaker: speaker,
+          });
+        }
         if (refs.recorder?.state === 'recording') {
           refs.finalizePending = false;
           refs.recorder.stop();
@@ -3031,7 +2894,7 @@ function App() {
   const statusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
   const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
   const activeSpeakerLabel = detectedSpeaker && detectedSpeaker !== '-' && detectedSpeaker !== 'Person' ? detectedSpeaker : '';
-  const recentConversationTurns = conversationTurns.slice(-4);
+  const recentConversationTurns = settings.showConversationHistory !== false ? conversationTurns.slice(-4) : [];
   const latencyTotalMs = Number.parseInt(String(latencyStats.end_to_end || ''), 10);
   const { average: latencyAverageMs } = summarizeLatencyHistory(latencyHistory);
   const sourceLanguageLabel = languages[sourceLanguage] || sourceLanguage.toUpperCase();
@@ -3067,6 +2930,7 @@ function App() {
       Icon: Volume2,
       onClick: playTranslationAudio,
       disabled: !audioReplayAvailable || playing || ttsPlaying,
+      active: playing || ttsPlaying,
     },
     {
       key: 'clear',
@@ -3074,11 +2938,13 @@ function App() {
       Icon: Trash2,
       onClick: clearInterpreterScreen,
       disabled: streaming || processing || playing || ttsPlaying || !hasVisibleConversation,
+      danger: true,
     },
   ];
 
   return (
     <main className="app-shell">
+      <a href="#main-content" className="skip-to-content">Skip to main content</a>
       <SystemBanners
         updateAvailable={updateAvailable}
         reconnectToastVisible={reconnectToastVisible}
@@ -3097,8 +2963,64 @@ function App() {
           copiedKey={copiedKey}
           showInstallAction={showInstallAction}
           installApp={installApp}
+          volume={volume}
+          onVolumeChange={handleVolumeChange}
+          onOpenSettings={() => setSettingsOpen(true)}
+          updateAvailable={updateAvailable}
+        />
+        <ConnectionQualityIndicator
+          connectionStatus={connectionStatus}
+          latencyMs={latencySummary.average}
+          reconnectAttempt={streamReconnectRef.current || 0}
+          maxReconnectAttempts={STREAM_RECONNECT_MAX_ATTEMPTS}
+          isReconnecting={streaming && connectionStatus !== 'online'}
         />
 
+        {/* Mode toggle */}
+        <div className="neo-mode-toggle">
+          {[
+            { id: 'solo',         label: 'Solo',         icon: '🎤' },
+            { id: 'conversation', label: 'Conversation', icon: '👥' },
+          ].map(({ id, label, icon }) => (
+            <button
+              key={id}
+              type="button"
+              className={`neo-mode-btn${appMode === id ? ' active' : ''}`}
+              onClick={() => setAppMode(id)}
+            >
+              <span className="neo-mode-icon">{icon}</span>
+              <span>{label}</span>
+            </button>
+          ))}
+          <span className={`neo-mode-slider ${appMode === 'conversation' ? 'shifted' : ''}`} />
+        </div>
+
+        {appMode === 'conversation' ? (
+          <>
+            <LanguageDock
+              sourceLanguageLabel={sourceLanguageLabel}
+              targetLanguageLabel={targetLanguageLabel}
+              sourceLanguage={sourceLanguage}
+              targetLanguage={targetLanguage}
+              setSourceLanguage={setSourceLanguage}
+              setTargetLanguage={setTargetLanguage}
+              recording={recording}
+              processing={processing}
+              brainUi={brainUi}
+              quickActions={quickActions}
+            />
+            <ConversationMode
+              wsAudioUrl={`${liveWsUrl}/ws/audio`}
+              authToken={authToken}
+              withAuthToken={withAuthToken}
+              sourceLanguage={sourceLanguage}
+              targetLanguage={targetLanguage}
+              sourceLanguageLabel={sourceLanguageLabel}
+              targetLanguageLabel={targetLanguageLabel}
+            />
+          </>
+        ) : (
+          <>
         <MicPanel
           micState={micState}
           micLevel={micLevel}
@@ -3123,17 +3045,6 @@ function App() {
           playTranslationAudio={playTranslationAudio}
         />
 
-        <LanguageDock
-          sourceLanguageLabel={sourceLanguageLabel}
-          targetLanguageLabel={targetLanguageLabel}
-          targetLanguage={targetLanguage}
-          setTargetLanguage={setTargetLanguage}
-          recording={recording}
-          processing={processing}
-          brainUi={brainUi}
-          quickActions={quickActions}
-        />
-
         <TranslationStack
           brainUi={brainUi}
           brainModeLabel={brainModeLabel}
@@ -3143,10 +3054,12 @@ function App() {
           hasSourceText={hasSourceText}
           transcriptState={transcriptState}
           sourceLanguageLabel={sourceLanguageLabel}
+          sourceLanguageCode={sourceLanguage}
           sourceText={sourceText}
           hasTranslatedText={hasTranslatedText}
           translationState={translationState}
           targetLanguageLabel={targetLanguageLabel}
+          targetLanguageCode={targetLanguage}
           translatedText={translatedText}
           copyToClipboard={copyToClipboard}
           copiedKey={copiedKey}
@@ -3154,6 +3067,7 @@ function App() {
           videoRef={videoRef}
           ocrText={ocrText}
           recentConversationTurns={recentConversationTurns}
+          onClearConversation={clearInterpreterScreen}
           clarifyVisible={clarifyVisible}
           clarifyMessage={clarifyMessage}
           result={result}
@@ -3164,9 +3078,41 @@ function App() {
           streaming={streaming}
           processing={processing}
           handleMicClick={handleMicClick}
+          enableTypingAnimation={true}
+          isTranslationActive={processing && !streaming}
+          onTextTranslate={(inputText) => translateText(inputText)}
         />
+        {recentConversationTurns.length > 0 && (
+          <ConversationActions
+            conversationTurns={recentConversationTurns}
+            onClear={clearInterpreterScreen}
+            onCopy={(text) => copyToClipboard(text, 'conversation')}
+            disabled={streaming || processing || playing || ttsPlaying}
+          />
+        )}
 
-        {false && showDebugPanel && (
+          </>
+        )}
+
+        <SettingsPanel
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          settings={settings}
+          updateSetting={(key, val) => {
+            updateSetting(key, val);
+            if (key === 'debugMode') setShowDebugPanel(val);
+          }}
+          onClearHistory={() => { clearInterpreterScreen(); }}
+          onClearSession={() => {
+            clearInterpreterScreen();
+            localStorage.removeItem('translator_device_id');
+            localStorage.removeItem('translator_speaker_name');
+            try { sessionStorage.clear(); } catch {}
+          }}
+          diagnostics={diagnostics}
+          apiUrl={liveApiUrl}
+        />
+        {settings.debugMode && showDebugPanel && (
           <DebugPanel
             onClose={() => setShowDebugPanel(false)}
             loadDiagnostics={loadDiagnostics}
@@ -3186,9 +3132,11 @@ function App() {
           />
         )}
 
+      <ToastRegion toasts={toasts} dismiss={dismiss} />
       </section>
+      <OnboardingTour />
       <Assistant
-        apiUrl={API_URL}
+        apiUrl={liveApiUrl}
         authToken={authToken}
         getTranslationContext={() => {
           if (!result) return null;

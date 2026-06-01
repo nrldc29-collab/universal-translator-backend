@@ -1,10 +1,10 @@
 /**
- * useServiceWorkerUpdate — poll `${apiUrl}/debug/version` every minute
+ * useServiceWorkerUpdate -- poll `${apiUrl}/debug/version` every minute
  * and surface a value when the backend reports a release that differs
  * from `expectedRelease`, so the parent can show an "Update available"
  * banner with a Reload button.
  *
- * Returns `updateAvailable` — either `null` (in sync) or
+ * Returns `updateAvailable` -- either `null` (in sync) or
  * `{ frontend, backend }`.
  */
 
@@ -38,7 +38,7 @@ export default function useServiceWorkerUpdate({ apiUrl, expectedRelease } = {})
           setUpdateAvailable(null);
         }
       } catch {
-        // ignore network errors — we'll try again on the next tick
+        // ignore network errors -- we'll try again on the next tick
       }
     }
 

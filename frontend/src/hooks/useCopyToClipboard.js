@@ -1,5 +1,5 @@
 /**
- * useCopyToClipboard — copy text to the clipboard and track which "key"
+ * useCopyToClipboard -- copy text to the clipboard and track which "key"
  * was most recently copied so callers can flash a "Copied!" indicator.
  *
  * Returns `[copiedKey, copyToClipboard]`. `copiedKey` flips back to null

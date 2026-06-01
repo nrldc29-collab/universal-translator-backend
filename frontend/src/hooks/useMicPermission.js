@@ -1,5 +1,5 @@
 /**
- * useMicPermission — track the microphone permission state.
+ * useMicPermission -- track the microphone permission state.
  *
  * Possible values: `checking`, `available`, `denied`, `unavailable`.
  *

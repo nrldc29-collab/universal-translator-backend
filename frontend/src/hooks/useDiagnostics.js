@@ -1,5 +1,5 @@
 /**
- * useDiagnostics — fetch `/diagnostics` from the backend and expose the
+ * useDiagnostics -- fetch `/diagnostics` from the backend and expose the
  * structured response plus a status string (`checking` / `online` /
  * `offline`) that the UI uses to render a health indicator.
  *

@@ -1,16 +1,16 @@
 /**
- * useInterpreterState — single source of truth for the seven boolean
+ * useInterpreterState -- single source of truth for the seven boolean
  * flags that describe where the live-translation pipeline currently is:
  *
- *   recording          — mic is capturing audio (record-and-upload path)
- *   streaming          — mic is streaming audio over the /ws/audio socket
- *   processing         — backend is busy (STT, translation, or TTS)
- *   playing            — translated audio is currently audible
- *   interpreterMode    — continuous duplex interpreter mode is active
- *   instantListening   — instant-on speech-recognition path is active
- *   liveAssistActive   — the NAIA live-assist socket is open
+ *   recording          -- mic is capturing audio (record-and-upload path)
+ *   streaming          -- mic is streaming audio over the /ws/audio socket
+ *   processing         -- backend is busy (STT, translation, or TTS)
+ *   playing            -- translated audio is currently audible
+ *   interpreterMode    -- continuous duplex interpreter mode is active
+ *   instantListening   -- instant-on speech-recognition path is active
+ *   liveAssistActive   -- the NAIA live-assist socket is open
  *
- * These flags are coupled — for example, when `streaming` becomes true,
+ * These flags are coupled -- for example, when `streaming` becomes true,
  * `recording` is also true, and `processing` flips between transcript
  * chunks. A reducer keeps the transitions explicit and discourages
  * accidentally setting two flags out of sync.
@@ -21,9 +21,9 @@
  * named action; legacy code can keep using the shims.
  *
  * Exported actions:
- *   SET_FLAG     — { type, flag, value }
- *   SET_FLAGS    — { type, flags: { ... } }
- *   RESET        — reset every flag back to its initial false value
+ *   SET_FLAG     -- { type, flag, value }
+ *   SET_FLAGS    -- { type, flags: { ... } }
+ *   RESET        -- reset every flag back to its initial false value
  */
 
 import { useCallback, useMemo, useReducer } from 'react';

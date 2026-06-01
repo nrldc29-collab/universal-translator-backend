@@ -1,46 +1,20 @@
 /**
- * MicPanel — the central mic orb, live-state HUD, voice meter, status
- * card, and "Translating..." spinner.
- *
- * Pure presentation: all state and handlers come from the parent (App).
- * The component is split into small render helpers so the orb's 9-bar
- * grille and the voice meter don't clutter the main return.
+ * MicPanel -- single mic orb with live HUD, voice meter, and status.
  */
-
 import React from 'react';
-import { Activity, Clock3, Mic, UserRound } from 'lucide-react';
+import { Activity, Clock3, Mic, UserRound, Zap } from 'lucide-react';
 
 export default function MicPanel({
-  // mic orb state
-  micState,
-  micLevel,
-  perceivedListening,
-  micLabel,
-  micHint,
-  // event handlers
-  handleMicClick,
-  handleMicPointerDown,
-  handleMicPointerUp,
-  // disabled flags
-  playing,
-  processing,
-  streaming,
-  recording,
-  // live HUD
-  liveHudMode,
-  liveHudItems = [],
-  // status row
-  statusTone,
-  statusText,
-  speakerSummary,
-  timingLabel,
-  // play-voice fallback
-  audioReplayAvailable,
-  autoPlayFailed,
-  playTranslationAudio,
+  micState, micLevel, perceivedListening, micLabel, micHint,
+  handleMicClick, handleMicPointerDown, handleMicPointerUp,
+  playing, processing, streaming, recording,
+  liveHudMode, liveHudItems = [],
+  statusTone, statusText, speakerSummary, timingLabel,
+  audioReplayAvailable, autoPlayFailed, playTranslationAudio,
 }) {
   return (
     <section className="mic-panel">
+      {/* Main orb */}
       <button
         className={`mic-orb ${micState} ${perceivedListening ? 'listening-pulse' : ''}`}
         style={{ '--voice-level': Math.max(0.02, Math.min(1, micLevel || 0)) }}
@@ -48,53 +22,46 @@ export default function MicPanel({
         onPointerDown={handleMicPointerDown}
         onPointerUp={handleMicPointerUp}
         onPointerCancel={handleMicPointerUp}
-        onContextMenu={(event) => event.preventDefault()}
+        onContextMenu={e => e.preventDefault()}
         disabled={playing || (processing && !streaming)}
         aria-label={micLabel}
         aria-live="polite"
+        type="button"
       >
         <span className="voice-field" aria-hidden="true" />
         <span className="energy-rim" aria-hidden="true" />
         <span className="orb-ring" />
         <span className="orb-spin" />
         <MicGrille micLevel={micLevel} />
-        <Mic className="mic-icon" size={62} strokeWidth={2.3} aria-hidden="true" />
-        <span className="sr-only">{micLabel}</span>
-        <span className="rec-led">
-          <svg width="28" height="28" viewBox="0 0 28 28">
-            <circle
-              cx="14"
-              cy="14"
-              r="12"
-              fill="#ef4444"
-              filter="drop-shadow(0 0 6px rgba(239,68,68,.7))"
-            />
-            <circle cx="14" cy="14" r="5" fill="#ffffff" opacity="0.9" />
-          </svg>
-        </span>
+        <Mic className="mic-icon" size={58} strokeWidth={2.2} aria-hidden="true" />
+        {perceivedListening && (
+          <span className="rec-led" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 26 26">
+              <circle cx="13" cy="13" r="11" fill="#ef4444" filter="drop-shadow(0 0 6px rgba(239,68,68,.8))" />
+              <circle cx="13" cy="13" r="4.5" fill="#fff" opacity=".9" />
+            </svg>
+          </span>
+        )}
       </button>
-      <p className="mic-hint">{micHint}</p>
+
+      {/* Label + hint */}
       <p className="mic-label">{micLabel}</p>
+      <p className="mic-hint">{micHint}</p>
+
+      {/* Live HUD */}
       <LiveHud mode={liveHudMode} items={liveHudItems} />
+
+      {/* Voice meter */}
       {(streaming || recording) && <VoiceMeter micLevel={micLevel} />}
-      <StatusPanel
-        tone={statusTone}
-        text={statusText}
-        speakerSummary={speakerSummary}
-        timingLabel={timingLabel}
-      />
+
+      {/* Status */}
+      <StatusPanel tone={statusTone} text={statusText} speakerSummary={speakerSummary} timingLabel={timingLabel} />
+
+      {/* Replay fallback */}
       {audioReplayAvailable && autoPlayFailed && (
-        <button
-          className="play-voice-button compact-voice-action"
-          type="button"
-          onClick={playTranslationAudio}
-          disabled={playing}
-        >
-          Play Voice
+        <button className="neo-play-btn" type="button" onClick={playTranslationAudio} disabled={playing}>
+          <Zap size={13} /> Play Voice
         </button>
-      )}
-      {processing && !streaming && !playing && (
-        <p className="thinking">Translating...</p>
       )}
     </section>
   );
@@ -103,15 +70,10 @@ export default function MicPanel({
 function MicGrille({ micLevel }) {
   return (
     <span className="mic-grille" aria-hidden="true">
-      {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => {
-        const centerBoost = 1 - Math.abs(4 - i) * 0.1;
-        const height = 22 + Math.max(0.02, micLevel || 0) * 70 * centerBoost;
-        return (
-          <span
-            key={i}
-            style={{ height: `${Math.min(92, height)}%`, '--delay': `${i * 38}ms` }}
-          />
-        );
+      {[0,1,2,3,4,5,6,7,8].map(i => {
+        const boost = 1 - Math.abs(4-i) * 0.1;
+        const h = 22 + Math.max(0.02, micLevel||0) * 70 * boost;
+        return <span key={i} style={{ height:`${Math.min(92,h)}%`, '--delay':`${i*38}ms` }} />;
       })}
     </span>
   );
@@ -119,24 +81,15 @@ function MicGrille({ micLevel }) {
 
 function LiveHud({ mode, items }) {
   return (
-    <div
-      className="live-hud"
-      data-mode={String(mode || '').toLowerCase()}
-      aria-label="Live interpreter state"
-    >
+    <div className="live-hud" data-mode={String(mode||'').toLowerCase()} aria-label="Live state">
       <span className="live-mode-chip">{mode}</span>
       <div className="live-flow" aria-hidden="true">
-        {items.map((item) => (
-          <span
-            key={item.key}
+        {items.map(item => (
+          <span key={item.key}
             className={`live-flow-step ${item.active ? 'active' : ''}`}
-            style={
-              item.key === 'listen'
-                ? { '--level': Math.max(0.08, Math.min(1, item.level || 0)) }
-                : undefined
-            }
+            style={item.key==='listen' ? { '--level': Math.max(0.08, Math.min(1, item.level||0)) } : undefined}
           >
-            <item.Icon size={12} strokeWidth={2.6} aria-hidden="true" />
+            <item.Icon size={11} strokeWidth={2.6} aria-hidden="true" />
             <b>{item.label}</b>
           </span>
         ))}
@@ -148,14 +101,11 @@ function LiveHud({ mode, items }) {
 function VoiceMeter({ micLevel }) {
   return (
     <div className="voice-meter" aria-hidden="true">
-      {[0, 1, 2, 3, 4, 5, 6].map((i) => {
-        const threshold = (i + 1) / 8;
+      {[0,1,2,3,4,5,6].map(i => {
+        const threshold = (i+1)/8;
         const active = micLevel >= threshold * 0.6;
-        const heightPx = Math.max(
-          6,
-          Math.min(28, 6 + micLevel * 28 * (i === 3 ? 1 : 0.65 + Math.abs(3 - i) * 0.08)),
-        );
-        return <span key={i} className={active ? 'active' : ''} style={{ height: heightPx }} />;
+        const h = Math.max(6, Math.min(28, 6 + micLevel*28*(i===3?1:0.65+Math.abs(3-i)*0.08)));
+        return <span key={i} className={active?'active':''} style={{ height:h }} />;
       })}
     </div>
   );
@@ -165,23 +115,13 @@ function StatusPanel({ tone, text, speakerSummary, timingLabel }) {
   return (
     <div className="status-panel" data-tone={tone} aria-live="polite">
       <div className="status-primary">
-        <Activity size={14} strokeWidth={2.6} aria-hidden="true" />
+        <Activity size={13} strokeWidth={2.6} aria-hidden="true" />
         <span>{text}</span>
       </div>
       {(speakerSummary || timingLabel) && (
-        <div className="status-meta" aria-label="Interpreter details">
-          {speakerSummary && (
-            <span>
-              <UserRound size={12} strokeWidth={2.5} aria-hidden="true" />
-              {speakerSummary}
-            </span>
-          )}
-          {timingLabel && (
-            <span>
-              <Clock3 size={12} strokeWidth={2.5} aria-hidden="true" />
-              {timingLabel}
-            </span>
-          )}
+        <div className="status-meta">
+          {speakerSummary && <span><UserRound size={11} strokeWidth={2.5} />{speakerSummary}</span>}
+          {timingLabel && <span><Clock3 size={11} strokeWidth={2.5} />{timingLabel}</span>}
         </div>
       )}
     </div>
