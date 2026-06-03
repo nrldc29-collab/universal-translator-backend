@@ -174,3 +174,30 @@ def test_low_confidence_final_skips_tts(tmp_path, monkeypatch):
     finals = client.messages_of_type("final")
     assert finals, "expected a final message"
     assert finals[-1].get("audio_output_path") is None
+
+
+def test_partial_transcript_is_translated_live(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    pipeline = _make_pipeline(tmp_path)
+    # A multi-word partial (>= min words) followed by the final transcript.
+    provider_ws = FakeProviderWS([
+        json.dumps({"type": "transcript", "is_final": False, "text": "hello world friend nice to meet you"}),
+        json.dumps({"type": "transcript", "is_final": True, "text": "hello world friend nice to meet you today"}),
+    ])
+    client = FakeClientWS({
+        "source_language": "en",
+        "target_language": "es",
+        "speaker_mode": "manual",
+        "session_id": "s3",
+    })
+
+    _run_handler(pipeline, client, provider_ws, stt_conf=0.95, tr_conf=0.95)
+
+    # The partial source text is still forwarded.
+    assert client.messages_of_type("partial_transcription"), "expected partial_transcription"
+    # The partial is now also translated live (text-only, no partial TTS).
+    partial_translations = client.messages_of_type("partial_translation")
+    assert partial_translations, "expected a live partial_translation"
+    assert all(p.get("text") for p in partial_translations)
+    # No TTS should fire for partials specifically; TTS only on the final turn.
+    assert client.messages_of_type("final"), "expected a final message"

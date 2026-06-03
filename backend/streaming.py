@@ -1367,6 +1367,8 @@ async def websocket_streaming_stt_translation(
     provider_ws = None
     provider_receiver_task = None
     provider_language = None
+    last_partial_translation = ""
+    last_partial_source = ""
     send_lock = asyncio.Lock()
 
     async def send_json(payload: dict) -> None:
@@ -1466,10 +1468,59 @@ async def websocket_streaming_stt_translation(
         await send_json({"type": "tts_end", "speaker": speaker, "speaker_label": speaker_label})
         return first_audio_path
 
-    async def emit_translated_final(source_text: str) -> None:
+    async def emit_translated_partial(source_text: str) -> None:
+        """Show a live translation as the speaker is still talking.
+
+        Mirrors the default near-zero-latency path: forward the partial source
+        text, then translate once the partial is long enough (or ends a clause),
+        de-duplicating against the last partial we already sent. TTS is left to
+        the finalized turn to keep partial latency low.
+        """
+        nonlocal last_partial_translation, last_partial_source
         source_text = normalize_live_text(source_text)
         if not source_text:
             return
+        await send_json({"type": "partial_transcription", "speaker": speaker, "speaker_label": speaker_label, "text": source_text})
+
+        ends_clause = bool(re.search(r"[.!?;:,]\s*$", source_text.strip()))
+        if not ends_clause and len(source_text.split()) < get_partial_translation_min_words():
+            return
+        if source_text == last_partial_source:
+            return
+        last_partial_source = source_text
+
+        try:
+            raw_partial = await run_pipeline_step(
+                "partial translation",
+                pipeline.translator.translate,
+                source_text,
+                source_language,
+                target_language,
+            )
+        except (PipelineStepTimeout, RuntimeError, ValueError, OSError) as exc:
+            logger.debug("streaming_stt_partial_translation_failed error=%s", exc)
+            return
+
+        if not speaker_memory.get_language(speaker):
+            speaker_memory.register(speaker, language=source_language or detect_language_heuristic(source_text))
+        refined_partial = refine_translation(
+            source_text,
+            raw_partial,
+            memory.get_context(),
+            speaker_memory.get_context(speaker),
+        )
+        if refined_partial and refined_partial != last_partial_translation:
+            last_partial_translation = refined_partial
+            await send_json({"type": "partial_translation", "speaker": speaker, "speaker_label": speaker_label, "text": refined_partial})
+            await send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": refined_partial})
+
+    async def emit_translated_final(source_text: str) -> None:
+        nonlocal last_partial_translation, last_partial_source
+        source_text = normalize_live_text(source_text)
+        if not source_text:
+            return
+        last_partial_translation = ""
+        last_partial_source = ""
 
         await send_json({
             "type": "final_transcription",
@@ -1620,7 +1671,7 @@ async def websocket_streaming_stt_translation(
             await send_json({"type": "stage", "stage": "stt_provider_connected", "message": "Streaming STT provider connected."})
         elif event_type == "transcript.partial":
             if text:
-                await send_json({"type": "partial_transcription", "speaker": speaker, "speaker_label": speaker_label, "text": text})
+                await emit_translated_partial(text)
         elif event_type == "transcript.final":
             if text:
                 await emit_translated_final(text)
@@ -1710,6 +1761,8 @@ async def websocket_streaming_stt_translation(
                         device_id = session_state.get("device_id")
                     if previous_source_language != source_language:
                         await close_provider()
+                    last_partial_translation = ""
+                    last_partial_source = ""
                     await send_json({
                         "type": "speaker_detected",
                         "speaker": speaker,
