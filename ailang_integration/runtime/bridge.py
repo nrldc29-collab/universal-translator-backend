@@ -9,6 +9,47 @@ from threading import RLock
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+class AILangModelUnavailable(RuntimeError):
+    """Raised when no live AI model is reachable for a generative prompt.
+
+    Callers (AILang agents / the pipeline) treat this as a signal to fall back
+    to the base translation instead of surfacing a stub. This prevents the
+    bridge from leaking its own prompt text as if it were a translation.
+    """
+
+
+# Structured JSON stubs returned when no live model is available, so analysis
+# agents can still run with neutral defaults while offline.
+_STUB_ANALYZE = '{"domain": "general", "formality": "neutral", "model": "fast", "instructions": [], "require_confirmation": false}'
+_STUB_EXTRACT = '{"people": [], "places": [], "objects": [], "pronoun_map": {"he": null, "she": null, "they": null, "it": null}}'
+_STUB_COMPARE = '{"similarity_score": 0.8, "key_differences": [], "meaning_preserved": true, "critical_loss": false}'
+
+
+def _offline_fallback(alias_str: str, prompt: str) -> str:
+    """Return a safe stub for structured prompts when offline, or raise for
+    generative prompts so the caller falls back to the base translation.
+
+    Echoing the prompt back (the previous behavior) leaked internal prompt text
+    such as "[AI:fast] Ensure this French uses vous (formal)..." into the
+    user-facing translation.
+    """
+    lowered = (prompt or "").lower()
+    if "analyze" in lowered or "detect" in lowered:
+        return _STUB_ANALYZE
+    if "extract" in lowered or "entities" in lowered:
+        return _STUB_EXTRACT
+    if "compare" in lowered or "similarity" in lowered:
+        return _STUB_COMPARE
+    if "resolve" in lowered or "reference" in lowered:
+        # Reference resolution: passthrough the original text unchanged.
+        return prompt
+    raise AILangModelUnavailable(
+        f"No AILang model available for '{alias_str}' generative prompt"
+    )
+
+
 _bridge_instance: Optional["AILangBridge"] = None
 _bridge_lock = RLock()
 
@@ -129,10 +170,8 @@ class AILangBridge:
             
             try:
                 # Try direct OpenAI call first for best results
-                import os
-                import json
                 openai_key = os.environ.get("OPENAI_API_KEY")
-                if openai_key and openai_key and not openai_key.startswith("your_api"):
+                if openai_key and not openai_key.startswith("your_api"):
                     try:
                         from openai import OpenAI
                         client = OpenAI(api_key=openai_key)
@@ -157,52 +196,32 @@ class AILangBridge:
                         logger.warning("OpenAI package not available, falling back to CIP")
                     except Exception as e:
                         logger.warning(f"OpenAI call failed: {e}, falling back to CIP")
-                
+
                 # Fallback to CIP brain
                 from backend.cip_client import call_cip_brain
                 result_dict = call_cip_brain(prompt, "en", session_id="ailang_bridge", fallback_translation="", context={"prompt": prompt})
                 if result_dict and "translation" in result_dict and result_dict["translation"]:
-                    result = result_dict["translation"]
-                else:
-                    # Fallback to stub if CIP returns nothing
-                    if "analyze" in prompt.lower() or "detect" in prompt.lower():
-                        result = '{"domain": "general", "formality": "neutral", "model": "fast", "instructions": [], "require_confirmation": false}'
-                    elif "extract" in prompt.lower() or "entities" in prompt.lower():
-                        result = '{"people": [], "places": [], "objects": [], "pronoun_map": {"he": null, "she": null, "they": null, "it": null}}'
-                    elif "resolve" in prompt.lower() or "reference" in prompt.lower():
-                        result = prompt  # Return original text if no resolution available
-                    elif "compare" in prompt.lower() or "similarity" in prompt.lower():
-                        result = '{"similarity_score": 0.8, "key_differences": [], "meaning_preserved": true, "critical_loss": false}'
-                    else:
-                        result = f"[AI:{alias_str}] {prompt[:100]}..."
+                    self._record_latency(start_time)
+                    return result_dict["translation"]
+                # No live model: return a structured stub, or raise for generative
+                # prompts so the caller keeps the base translation (never leak the
+                # prompt text as a fake translation).
+                result = _offline_fallback(alias_str, prompt)
                 self._record_latency(start_time)
                 return result
+            except AILangModelUnavailable:
+                self._call_errors += 1
+                raise
             except (ImportError, Exception) as e:
                 logger.warning(f"AI call failed for model '{alias_str}': {e}")
                 self._call_errors += 1
-                # Return a structured stub for analysis functions
-                if "analyze" in prompt.lower() or "detect" in prompt.lower():
-                    return '{"domain": "general", "formality": "neutral", "model": "fast", "instructions": [], "require_confirmation": false}'
-                elif "extract" in prompt.lower() or "entities" in prompt.lower():
-                    return '{"people": [], "places": [], "objects": [], "pronoun_map": {"he": null, "she": null, "they": null, "it": null}}'
-                elif "resolve" in prompt.lower() or "reference" in prompt.lower():
-                    return prompt  # Return original text if no resolution available
-                elif "compare" in prompt.lower() or "similarity" in prompt.lower():
-                    return '{"similarity_score": 0.8, "key_differences": [], "meaning_preserved": true, "critical_loss": false}'
-                return f"[AI:{alias_str}] {prompt[:100]}..."
+                return _offline_fallback(alias_str, prompt)
+        except AILangModelUnavailable:
+            raise
         except Exception as e:
             self._call_errors += 1
             logger.error(f"Unexpected error in _route_ai_call: {e}", exc_info=True)
-            # Return safe fallback on error
-            if "analyze" in prompt.lower() or "detect" in prompt.lower():
-                return '{"domain": "general", "formality": "neutral", "model": "fast", "instructions": [], "require_confirmation": false}'
-            elif "extract" in prompt.lower() or "entities" in prompt.lower():
-                return '{"people": [], "places": [], "objects": [], "pronoun_map": {"he": null, "she": null, "they": null, "it": null}}'
-            elif "resolve" in prompt.lower() or "reference" in prompt.lower():
-                return prompt
-            elif "compare" in prompt.lower() or "similarity" in prompt.lower():
-                return '{"similarity_score": 0.8, "key_differences": [], "meaning_preserved": true, "critical_loss": false}'
-            return f"[AI_ERROR:{model_alias}] {str(e)[:100]}"
+            return _offline_fallback(str(model_alias), prompt)
 
     def _record_latency(self, start_time: float) -> None:
         latency_ms = (time.time() - start_time) * 1000
