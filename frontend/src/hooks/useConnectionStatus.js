@@ -14,7 +14,7 @@ export function useConnectionStatus({ apiUrl, pollIntervalMs, onLanguages, onOff
         onOffline?.();
         setConnectionStatus('offline');
       });
-  }, []);
+  }, [apiUrl, onLanguages, onOffline]);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,7 +33,7 @@ export function useConnectionStatus({ apiUrl, pollIntervalMs, onLanguages, onOff
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [apiUrl, pollIntervalMs]);
 
   return { connectionStatus, setConnectionStatus };
 }
