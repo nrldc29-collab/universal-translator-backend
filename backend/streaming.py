@@ -1388,6 +1388,84 @@ async def websocket_streaming_stt_translation(
             provider_ws = None
         provider_language = None
 
+    async def synthesize_final_tts(text: str, semantic_context: dict, client_hints: dict) -> str | None:
+        """Voice a finalized translation using the same pacing/chunking as the
+        default Whisper path. Returns the first synthesized audio path (if any).
+
+        TTS failures are non-fatal: the stream stays alive and the client still
+        has the text translation, matching the resilience of the live-text path.
+        """
+        if client_hints.get("skip_tts") or not is_speakable_live_delta(text):
+            await send_json({"type": "stage", "stage": "tts_skipped", "message": "No voice output for this segment."})
+            return None
+
+        intent = semantic_context.get("last_intent") or semantic_context.get("intent") or "statement"
+        urgency = "high" if semantic_context.get("conversation_mood") == "urgent" else None
+        tts_pacing = build_tts_pacing(text, intent, urgency)
+        await send_json({"type": "tts_style", "speaker": speaker, "speaker_label": speaker_label, **tts_pacing})
+
+        tts_chunks: list[str] = []
+        for tts_segment in tts_pacing["segments"]:
+            tts_chunks.extend(chunk_text_for_tts(tts_segment))
+        if not tts_chunks:
+            return None
+
+        await send_json({"type": "stage", "stage": "tts", "message": "Translation ready. Streaming voice..."})
+        await send_json({
+            "type": "tts_start",
+            "speaker": speaker,
+            "speaker_label": speaker_label,
+            "chunks": len(tts_chunks),
+            "latency_budget_ms": client_hints.get("latency_budget_ms"),
+        })
+
+        first_audio_path = None
+        tts_started_at = time()
+        for index, chunk in enumerate(tts_chunks, start=1):
+            try:
+                chunk_output_path = await tts_circuit_breaker.call(
+                    run_pipeline_step,
+                    "streaming STT TTS",
+                    lambda c=chunk, idx=index: pipeline.tts.synthesize(
+                        c,
+                        f"models/tts/{uuid4()}-{idx}.wav",
+                        language=target_language,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 - keep stream alive on TTS failure
+                logger.warning("streaming_stt_tts_failed chunk=%d/%d error=%s", index, len(tts_chunks), exc)
+                await send_json({"type": "stage", "stage": "tts_warning", "message": f"TTS synthesis failed for chunk {index}."})
+                continue
+            try:
+                tts_audio_bytes = Path(chunk_output_path).read_bytes()
+            except OSError as exc:
+                logger.warning("streaming_stt_tts_read_failed chunk=%d error=%s", index, exc)
+                continue
+            if len(tts_audio_bytes) < 100:
+                Path(chunk_output_path).unlink(missing_ok=True)
+                continue
+            if first_audio_path is None:
+                first_audio_path = chunk_output_path
+            observability.increment("tts_playback_chunks_total")
+            await send_json({"type": "latency", "metric": "tts", "ms": round((time() - tts_started_at) * 1000)})
+            await send_json({
+                "type": "tts_audio_chunk",
+                "speaker": speaker,
+                "speaker_label": speaker_label,
+                "index": index,
+                "total": len(tts_chunks),
+                "text": chunk,
+                "tts_style": tts_pacing["style"],
+                "emotion": tts_pacing["emotion"],
+                "intent": tts_pacing["intent"],
+                "urgency": tts_pacing["urgency"],
+                "audio_base64": base64.b64encode(tts_audio_bytes).decode("ascii"),
+                "mime_type": "audio/wav",
+            })
+
+        await send_json({"type": "tts_end", "speaker": speaker, "speaker_label": speaker_label})
+        return first_audio_path
+
     async def emit_translated_final(source_text: str) -> None:
         source_text = normalize_live_text(source_text)
         if not source_text:
@@ -1465,12 +1543,14 @@ async def websocket_streaming_stt_translation(
                 "client_hints": cip_client_hints,
                 "translated_by": cip.get("translation_source"),
             })
+        audio_output_path = None
         if cip_clarify:
             await send_json({"type": "clarify", "message": cip_decision.get("message") or "Can you rephrase that?", "stage": "cip_clarification"})
         elif conf_score < 0.4:
             await send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
         else:
             await send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": translated_text})
+            audio_output_path = await synthesize_final_tts(translated_text, semantic_context, cip_client_hints)
 
         memory.add(speaker, source_text, translated_text, {"cip": cip})
         speaker_memory.add_message(speaker, source_text)
@@ -1488,7 +1568,7 @@ async def websocket_streaming_stt_translation(
             source_text=source_text,
             improved_text=improved_text,
             translated_text=translated_text,
-            audio_output_path=None,
+            audio_output_path=audio_output_path,
         )
         await send_json({"type": "session_sync", "session": shared_session})
         await send_json({
