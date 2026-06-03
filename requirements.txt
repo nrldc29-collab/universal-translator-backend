@@ -14,6 +14,8 @@ torchaudio==2.11.0
 requests==2.34.2
 websockets==14.1
 pytest==9.0.3
+# Drives the repo's `async def test_*` / @pytest.mark.asyncio tests (asyncio_mode=auto).
+pytest-asyncio==1.4.0
 # NAIA assistant integration (bundled under naia/)
 anthropic==0.103.1
 httpx==0.27.2
