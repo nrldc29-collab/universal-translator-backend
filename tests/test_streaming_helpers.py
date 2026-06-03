@@ -14,9 +14,35 @@ from backend.streaming_helpers import (
     live_translation_delta,
     is_speakable_live_delta,
     audio_suffix_for_mime,
+    resolve_stream_audio_mode,
     extract_client_voice_active,
     parse_provider_event,
 )
+
+
+class TestResolveStreamAudioMode:
+    def test_default_is_pcm16(self):
+        assert resolve_stream_audio_mode() == (True, ".wav")
+
+    def test_explicit_pcm16_format(self):
+        assert resolve_stream_audio_mode("pcm16") == (True, ".wav")
+        assert resolve_stream_audio_mode("s16le") == (True, ".wav")
+        assert resolve_stream_audio_mode(".raw") == (True, ".wav")
+
+    def test_compressed_format_needs_transcode(self):
+        assert resolve_stream_audio_mode("m4a") == (False, ".m4a")
+        assert resolve_stream_audio_mode("webm") == (False, ".webm")
+
+    def test_mime_type_pcm_is_pcm16(self):
+        assert resolve_stream_audio_mode(None, "audio/pcm") == (True, ".wav")
+        assert resolve_stream_audio_mode(None, "audio/L16") == (True, ".wav")
+
+    def test_mime_type_compressed_needs_transcode(self):
+        assert resolve_stream_audio_mode(None, "audio/mp4") == (False, ".m4a")
+        assert resolve_stream_audio_mode(None, "audio/webm") == (False, ".webm")
+
+    def test_format_takes_precedence_over_mime(self):
+        assert resolve_stream_audio_mode("m4a", "audio/pcm") == (False, ".m4a")
 
 
 # ---------------------------------------------------------------------------

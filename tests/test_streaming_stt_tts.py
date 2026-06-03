@@ -9,6 +9,7 @@ low-confidence final correctly skips voice output.
 import asyncio
 import json
 import sys
+import wave
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -262,3 +263,125 @@ def test_auto_detection_disabled_keeps_source_language(tmp_path, monkeypatch):
     _run_handler(pipeline, client, provider_ws, stt_conf=0.95, tr_conf=0.95)
 
     assert not client.messages_of_type("language_switched"), "switch must not fire when disabled"
+
+
+def _write_pcm16_wav(path, pcm_bytes, sample_rate=16000):
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(pcm_bytes)
+    return str(path)
+
+
+def test_non_pcm16_chunks_are_transcoded_before_forwarding(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    pipeline = _make_pipeline(tmp_path)
+    # The "m4a" frame the mobile client sends; its raw bytes must NOT reach the
+    # provider directly — they should be transcoded to PCM16 first.
+    m4a_chunk = b"\x00\x01\x02\x03" * 32
+    expected_pcm = b"\x10\x00\x20\x00\x30\x00\x40\x00" * 8
+
+    provider_ws = FakeProviderWS([
+        json.dumps({"type": "transcript", "is_final": True, "text": "hello world friend"}),
+    ])
+    client = FakeClientWS({
+        "source_language": "en",
+        "target_language": "es",
+        "speaker_mode": "manual",
+        "session_id": "s6",
+        "audio_format": "m4a",
+    })
+    # FakeClientWS sends a fixed audio frame; here that frame stands in for m4a.
+    client._steps[1] = {"bytes": m4a_chunk}
+
+    wav_path = _write_pcm16_wav(tmp_path / "decoded.wav", expected_pcm)
+
+    def fake_transcode(audio_bytes, suffix=".webm"):
+        assert audio_bytes == m4a_chunk
+        assert suffix == ".m4a"
+        return wav_path
+
+    async def _go():
+        async def fake_connect(*args, **kwargs):
+            return provider_ws
+
+        async def fake_cip(*args, **kwargs):
+            return None
+
+        with patch.object(streaming, "call_cip_brain", side_effect=fake_cip), \
+             patch.object(streaming, "transcode_bytes_to_wav", side_effect=fake_transcode), \
+             patch("websockets.connect", side_effect=fake_connect), \
+             patch.object(streaming, "estimate_stt_confidence", return_value=0.95), \
+             patch.object(streaming, "estimate_translation_confidence", return_value=0.95):
+            await streaming.websocket_streaming_stt_translation(
+                client, pipeline, ConversationBrain(),
+                ConversationMemory(), SpeakerMemory(), "tester",
+            )
+
+    asyncio.run(asyncio.wait_for(_go(), timeout=10.0))
+
+    audio_frames = [m for m in provider_ws.sent if isinstance(m, (bytes, bytearray))]
+    assert audio_frames, "expected audio forwarded to the provider"
+    assert m4a_chunk not in audio_frames, "raw m4a must not be forwarded as PCM16"
+    assert any(bytes(frame) == expected_pcm for frame in audio_frames), \
+        "expected decoded PCM16 frames forwarded to the provider"
+
+    # The client is told it is being transcoded.
+    listening = client.messages_of_type("listening")
+    assert listening and listening[-1].get("audio_format") == "m4a"
+
+
+def test_chunk_meta_sets_audio_format_for_mobile(tmp_path, monkeypatch):
+    """Mobile declares audio/m4a via chunk_meta (not in config); the handler
+    should pick it up and transcode without any client-side config change."""
+    monkeypatch.chdir(tmp_path)
+    pipeline = _make_pipeline(tmp_path)
+    m4a_chunk = b"\x05\x06\x07\x08" * 32
+    expected_pcm = b"\x11\x00\x22\x00\x33\x00\x44\x00" * 8
+
+    provider_ws = FakeProviderWS([
+        json.dumps({"type": "transcript", "is_final": True, "text": "hello world friend"}),
+    ])
+    # Config has NO audio_format (mirrors mobile's `start`). Instead a chunk_meta
+    # message announces audio/m4a right before the audio frame.
+    client = FakeClientWS({
+        "source_language": "en",
+        "target_language": "es",
+        "speaker_mode": "manual",
+        "session_id": "s7",
+    })
+    client._steps = [
+        client._steps[0],
+        {"text": json.dumps({"type": "chunk_meta", "mime_type": "audio/m4a"})},
+        {"bytes": m4a_chunk},
+    ]
+
+    wav_path = _write_pcm16_wav(tmp_path / "decoded2.wav", expected_pcm)
+
+    def fake_transcode(audio_bytes, suffix=".webm"):
+        assert suffix == ".m4a"
+        return wav_path
+
+    async def _go():
+        async def fake_connect(*args, **kwargs):
+            return provider_ws
+
+        async def fake_cip(*args, **kwargs):
+            return None
+
+        with patch.object(streaming, "call_cip_brain", side_effect=fake_cip), \
+             patch.object(streaming, "transcode_bytes_to_wav", side_effect=fake_transcode), \
+             patch("websockets.connect", side_effect=fake_connect), \
+             patch.object(streaming, "estimate_stt_confidence", return_value=0.95), \
+             patch.object(streaming, "estimate_translation_confidence", return_value=0.95):
+            await streaming.websocket_streaming_stt_translation(
+                client, pipeline, ConversationBrain(),
+                ConversationMemory(), SpeakerMemory(), "tester",
+            )
+
+    asyncio.run(asyncio.wait_for(_go(), timeout=10.0))
+
+    audio_frames = [bytes(m) for m in provider_ws.sent if isinstance(m, (bytes, bytearray))]
+    assert m4a_chunk not in audio_frames, "raw m4a must not be forwarded as PCM16"
+    assert expected_pcm in audio_frames, "expected decoded PCM16 forwarded after chunk_meta"

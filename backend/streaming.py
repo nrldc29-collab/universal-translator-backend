@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import unicodedata
+import wave
 from contextlib import suppress
 from pathlib import Path
 from time import time
@@ -99,7 +100,7 @@ class CircuitBreaker:
 tts_circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=15.0)
 translation_circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=10.0)
 stt_circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=5.0)
-from speech.audio_decode import transcode_to_wav
+from speech.audio_decode import transcode_bytes_to_wav, transcode_to_wav
 
 # Pure helpers + pipeline-step plumbing live in a sibling module so this
 # file can focus on the WebSocket handlers below.
@@ -115,6 +116,7 @@ from backend.streaming_helpers import (
     normalize_live_text,
     normalized_word,
     parse_provider_event,
+    resolve_stream_audio_mode,
     run_pipeline_step,
     should_translate_partial,
     stream_debug_log,
@@ -1375,11 +1377,31 @@ async def websocket_streaming_stt_translation(
     provider_language = None
     last_partial_translation = ""
     last_partial_source = ""
+    input_is_pcm16 = True
+    input_audio_suffix = ".wav"
     send_lock = asyncio.Lock()
 
     async def send_json(payload: dict) -> None:
         async with send_lock:
             await websocket.send_json(payload)
+
+    async def chunk_to_pcm16(chunk: bytes) -> bytes | None:
+        """Transcode a single compressed/containered audio chunk (e.g. a mobile
+        ``.m4a`` clip) to raw little-endian PCM16 mono @ 16 kHz so it can be fed
+        to the streaming STT provider, which expects raw PCM frames."""
+
+        def _convert() -> bytes | None:
+            wav_path = transcode_bytes_to_wav(chunk, suffix=input_audio_suffix)
+            if not wav_path:
+                return None
+            try:
+                with suppress(Exception), wave.open(wav_path, "rb") as wav_file:
+                    return wav_file.readframes(wav_file.getnframes())
+                return None
+            finally:
+                Path(wav_path).unlink(missing_ok=True)
+
+        return await run_in_threadpool(_convert)
 
     await send_json({"type": "ready", "message": "Streaming STT connected."})
 
@@ -1783,6 +1805,10 @@ async def websocket_streaming_stt_translation(
                     previous_source_language = source_language
                     source_language = data.get("source_language", source_language)
                     target_language = data.get("target_language", target_language)
+                    input_is_pcm16, input_audio_suffix = resolve_stream_audio_mode(
+                        data.get("audio_format"),
+                        data.get("mime_type"),
+                    )
                     speaker_mode = data.get("speaker_mode", speaker_mode)
                     session_id = data.get("session_id", session_id)
                     device_id = data.get("device_id", device_id)
@@ -1852,7 +1878,12 @@ async def websocket_streaming_stt_translation(
                         "speaker_mode": speaker_mode,
                         "detection": speaker_detection,
                         "device_id": device_id,
-                        "message": "Receiving PCM16 audio chunks via streaming STT provider.",
+                        "audio_format": "pcm16" if input_is_pcm16 else input_audio_suffix.lstrip("."),
+                        "message": (
+                            "Receiving PCM16 audio chunks via streaming STT provider."
+                            if input_is_pcm16
+                            else f"Receiving {input_audio_suffix.lstrip('.')} audio; transcoding to PCM16 for the STT provider."
+                        ),
                     })
                     await send_json({"type": "config_ack", "source_language": source_language, "target_language": target_language})
 
@@ -1871,6 +1902,15 @@ async def websocket_streaming_stt_translation(
                             **result.__dict__,
                         })
 
+                elif msg_type == "chunk_meta":
+                    # Clients (e.g. mobile) announce the encoding of the next audio
+                    # frame here. Honor it so compressed chunks get transcoded to
+                    # PCM16 before reaching the provider.
+                    declared_format = data.get("audio_format")
+                    declared_mime = data.get("mime_type")
+                    if declared_format or declared_mime:
+                        input_is_pcm16, input_audio_suffix = resolve_stream_audio_mode(declared_format, declared_mime)
+
                 elif msg_type == "finalize":
                     if provider_ws is not None:
                         await provider_ws.send(json.dumps({"type": "flush"}))
@@ -1884,9 +1924,17 @@ async def websocket_streaming_stt_translation(
 
             if "bytes" not in message or message["bytes"] is None:
                 continue
-            pcm16_audio = message["bytes"]
-            if not pcm16_audio:
+            chunk_bytes = message["bytes"]
+            if not chunk_bytes:
                 continue
+
+            if input_is_pcm16:
+                pcm16_audio = chunk_bytes
+            else:
+                pcm16_audio = await chunk_to_pcm16(chunk_bytes)
+                if not pcm16_audio:
+                    await send_json({"type": "error", "message": "Could not decode audio chunk for transcription.", "recoverable": True})
+                    continue
 
             try:
                 await ensure_provider_connected()

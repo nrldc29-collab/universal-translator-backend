@@ -146,6 +146,36 @@ def audio_suffix_for_mime(mime_type: str | None) -> str:
     return ".webm"
 
 
+# Format hints that mean "already raw little-endian PCM16 samples", which the
+# streaming STT provider can consume directly without transcoding.
+PCM16_FORMAT_HINTS = {"pcm16", "pcm", "pcm_s16le", "s16le", "raw", "l16", "lpcm"}
+
+
+def resolve_stream_audio_mode(audio_format=None, mime_type=None):
+    """Decide how to treat inbound streaming audio frames.
+
+    Returns ``(is_pcm16, suffix)`` where ``is_pcm16`` means the frames are raw
+    PCM16 and can be forwarded to the STT provider as-is, and ``suffix`` is the
+    container suffix to use when transcoding compressed/containered audio (e.g.
+    mobile ``.m4a`` chunks) to PCM16 first.
+
+    The default (nothing declared) is PCM16, preserving the existing web
+    streaming client's behavior. A ``wav`` container is treated as non-PCM so it
+    gets re-muxed to raw 16 kHz mono PCM (dropping the header / resampling).
+    """
+    fmt = (audio_format or "").strip().lower().lstrip(".")
+    mime = (mime_type or "").strip().lower()
+    if fmt:
+        if fmt in PCM16_FORMAT_HINTS:
+            return True, ".wav"
+        return False, "." + fmt
+    if mime:
+        if "pcm" in mime or "l16" in mime or "lpcm" in mime:
+            return True, ".wav"
+        return False, audio_suffix_for_mime(mime)
+    return True, ".wav"
+
+
 def extract_client_voice_active(payload: dict):
     """Return the client-side VAD signal from a stream payload."""
 
@@ -210,6 +240,8 @@ __all__ = [
     "live_translation_delta",
     "is_speakable_live_delta",
     "audio_suffix_for_mime",
+    "resolve_stream_audio_mode",
+    "PCM16_FORMAT_HINTS",
     "extract_client_voice_active",
     "parse_provider_event",
     "PipelineStepTimeout",
