@@ -660,6 +660,36 @@ export function extractBrainPlan(payload = {}) {
   };
 }
 
+/**
+ * Derive a display label and degraded flag from a backend `mode` event so the
+ * UI can show the active live mode and surface weak-network fallbacks.
+ */
+export function describeLiveMode(payload = {}) {
+  const mode = payload.mode || 'unknown';
+  const recommendFallback = Boolean(payload.recommend_fallback);
+  const labels = {
+    streaming_stt: 'Live streaming',
+    degraded: 'Degraded — backup mode',
+    unknown: 'Connecting',
+  };
+  return {
+    mode,
+    degraded: recommendFallback || mode === 'degraded',
+    recommendFallback,
+    label: labels[mode] || mode,
+    hint: payload.reason || '',
+  };
+}
+
+/**
+ * Format a `peer_message` (another speaker's routed translation) for display.
+ */
+export function formatPeerTurn(payload = {}) {
+  const label = payload.speaker_label || payload.speaker || 'Speaker';
+  const text = (payload.translated_text || '').trim();
+  return text ? `${label}: ${text}` : '';
+}
+
 export function compactRepairLabel(option = {}) {
   if (option.type === 'auto_switch_source_language') {
     return `Using ${String(option.language || '').toUpperCase()}`;

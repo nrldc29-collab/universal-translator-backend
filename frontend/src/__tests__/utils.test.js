@@ -5,6 +5,8 @@ import {
   uniqueStrings,
   extractBrainPlan,
   compactRepairLabel,
+  describeLiveMode,
+  formatPeerTurn,
   languageName,
   isFatalStreamError,
   speechRecognitionLanguage,
@@ -124,6 +126,43 @@ describe('compactRepairLabel', () => {
 
   it('returns Switch to XX for switch_source_language', () => {
     expect(compactRepairLabel({ type: 'switch_source_language', language: 'fr' })).toBe('Switch to FR');
+  });
+});
+
+describe('describeLiveMode', () => {
+  it('describes the best streaming mode as healthy', () => {
+    const m = describeLiveMode({ type: 'mode', mode: 'streaming_stt', recommend_fallback: false });
+    expect(m.mode).toBe('streaming_stt');
+    expect(m.degraded).toBe(false);
+    expect(m.label).toBe('Live streaming');
+  });
+
+  it('flags degraded when fallback is recommended', () => {
+    const m = describeLiveMode({ type: 'mode', mode: 'degraded', recommend_fallback: true, reason: 'down' });
+    expect(m.degraded).toBe(true);
+    expect(m.recommendFallback).toBe(true);
+    expect(m.hint).toBe('down');
+  });
+
+  it('handles missing fields gracefully', () => {
+    const m = describeLiveMode();
+    expect(m.mode).toBe('unknown');
+    expect(m.label).toBe('Connecting');
+    expect(m.degraded).toBe(false);
+  });
+});
+
+describe('formatPeerTurn', () => {
+  it('formats a peer translation with the speaker label', () => {
+    expect(formatPeerTurn({ speaker_label: 'Person 2', translated_text: 'hola mundo' })).toBe('Person 2: hola mundo');
+  });
+
+  it('returns empty string when there is no translation', () => {
+    expect(formatPeerTurn({ speaker_label: 'Person 2', translated_text: '   ' })).toBe('');
+  });
+
+  it('falls back to a generic speaker name', () => {
+    expect(formatPeerTurn({ translated_text: 'hi' })).toBe('Speaker: hi');
   });
 
   it('returns label strings for known types', () => {

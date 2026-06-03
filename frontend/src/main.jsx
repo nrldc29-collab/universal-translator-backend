@@ -119,6 +119,8 @@ import {
   uniqueStrings,
   extractBrainPlan,
   compactRepairLabel,
+  describeLiveMode,
+  formatPeerTurn,
   languageName as languageNameUtil,
   shareRoomUrl,
   base64ToArrayBuffer,
@@ -1747,6 +1749,22 @@ function App() {
       if (data.type === 'stage') {
         setPipelineStage(data.message);
         setStatus(data.message);
+      }
+      if (data.type === 'mode') {
+        const liveMode = describeLiveMode(data);
+        setPipelineStage(liveMode.degraded ? `${liveMode.label} (tap to switch mode)` : liveMode.label);
+        if (liveMode.degraded) {
+          setStatus(liveMode.hint || 'Connection weak — using a backup mode');
+        }
+      }
+      if (data.type === 'peer_message') {
+        rememberSpeaker(data);
+        const peerTurn = formatPeerTurn(data);
+        if (peerTurn) {
+          setLiveTranslation(data.translated_text || '');
+          setConversationBrain(peerTurn);
+          setPipelineStage('Incoming translation from other speaker');
+        }
       }
       if (data.type === 'turn') {
         const label = rememberSpeaker(data);
