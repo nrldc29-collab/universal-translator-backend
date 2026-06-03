@@ -195,6 +195,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const liveApiUrl = (settings.backendUrl || '').trim().replace(/\/+$/, '') || API_URL;
   const liveWsUrl = liveApiUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
+  const { authToken, setAuthToken, username, setUsername, password, setPassword, login, logout, ensureAuthToken } = useAuth({ apiUrl: liveApiUrl, onStatus: setStatus });
   const { connectionStatus, setConnectionStatus } = useConnectionStatus({
     apiUrl: liveApiUrl,
     pollIntervalMs: HEALTH_POLL_MS,
@@ -312,6 +313,7 @@ function App() {
   // interpreterMode is part of useInterpreterState (declared above).
   const { detectedSpeaker, setDetectedSpeaker, speakerLabelsRef, rememberSpeaker, normalizeConversationTurn, loadSpeakerProfiles } = useSpeakerMemory();
   const { latencyStats, setLatencyStats, latencyHistory, setLatencyHistory, latencySummary, updateLatency, recordLatencyTurn } = useLatencyStats();
+  const { authToken, setAuthToken, username, setUsername, password, setPassword, login, logout, ensureAuthToken } = useAuth({ apiUrl: liveApiUrl, onStatus: setStatus });
   const { selfTest, runSelfTest } = useSelfTest({
     apiUrl: liveApiUrl,
     wsAudioUrl: `${liveWsUrl}/ws/audio`,
