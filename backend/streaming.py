@@ -20,7 +20,9 @@ from backend.stream_session import StreamSessionState
 from backend.audio import process_wav_for_stt, compute_rms
 from backend.cip_bridge import choose_translation, get_cip_confidence, get_cip_decision, is_cip_clarification
 from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
+from backend.communication_brain import detect_language_mix
 from backend.config import (
+    get_auto_language_detection,
     get_client_vad_mode,
     get_client_vad_threshold,
     get_max_active_streams_per_user,
@@ -117,6 +119,10 @@ from backend.streaming_helpers import (
     should_translate_partial,
     stream_debug_log,
 )
+
+# Languages the heuristic auto-detector can confidently switch between. Kept in
+# sync with the hint vocabularies in ``backend.communication_brain``.
+SUPPORTED_AUTODETECT_LANGUAGES = {"en", "es", "fr", "ht"}
 
 
 async def websocket_text_translation(websocket: WebSocket, pipeline: AnaiTranslatorPipeline):
@@ -1514,6 +1520,56 @@ async def websocket_streaming_stt_translation(
             await send_json({"type": "partial_translation", "speaker": speaker, "speaker_label": speaker_label, "text": refined_partial})
             await send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": refined_partial})
 
+    async def maybe_switch_source_language(source_text: str) -> dict | None:
+        """Auto-detect the spoken language and switch the source language when it
+        confidently differs from the configured one.
+
+        Returns a client-hint dict (so the web client updates its language UI via
+        ``applyBrainPayload``) or ``None`` when no switch happened. The provider
+        WebSocket is *not* closed here: it would cancel the currently running
+        receive loop. Instead we mutate ``source_language`` so the next audio
+        frame triggers ``ensure_provider_connected`` to reconnect with the new
+        language model.
+        """
+        nonlocal source_language, target_language
+        mix = detect_language_mix(source_text, source_language)
+        detected = mix.get("detected")
+        if not mix.get("source_language_mismatch"):
+            return None
+        base_source = (source_language or "").split("-")[0].lower()
+        if detected not in SUPPORTED_AUTODETECT_LANGUAGES or detected == base_source:
+            return None
+
+        previous_source = source_language
+        source_language = detected
+        # Avoid a source == target collision by flipping the target back to the
+        # language the source speaker was previously using.
+        if (target_language or "").split("-")[0].lower() == detected:
+            target_language = previous_source
+
+        speaker_memory.set_language(speaker, source_language)
+        session_registry.bind(
+            session_id,
+            speaker,
+            identity,
+            source_language,
+            target_language,
+            device_id=device_id,
+            speaker_label=speaker_label,
+            detection=speaker_detection,
+        )
+        await send_json({
+            "type": "language_switched",
+            "speaker": speaker,
+            "speaker_label": speaker_label,
+            "source_language": source_language,
+            "previous_source_language": previous_source,
+            "target_language": target_language,
+            "detected": detected,
+            "confidence": mix.get("confidence"),
+        })
+        return {"language_auto_repaired": True, "repaired_source_language": source_language}
+
     async def emit_translated_final(source_text: str) -> None:
         nonlocal last_partial_translation, last_partial_source
         source_text = normalize_live_text(source_text)
@@ -1521,6 +1577,7 @@ async def websocket_streaming_stt_translation(
             return
         last_partial_translation = ""
         last_partial_source = ""
+        language_switch = await maybe_switch_source_language(source_text) if get_auto_language_detection() else None
 
         await send_json({
             "type": "final_transcription",
@@ -1574,6 +1631,8 @@ async def websocket_streaming_stt_translation(
         cip_response_plan = cip.get("response_plan") if isinstance(cip, dict) and isinstance(cip.get("response_plan"), dict) else {}
         cip_turn_policy = cip_response_plan.get("turn_policy") if isinstance(cip_response_plan.get("turn_policy"), dict) else {}
         cip_client_hints = cip_response_plan.get("client_hints") if isinstance(cip_response_plan.get("client_hints"), dict) else {}
+        if language_switch:
+            cip_client_hints = {**cip_client_hints, **language_switch}
         translated_text = "" if cip_clarify else choose_translation(cip, translated_text)
         tr_conf = estimate_translation_confidence(source_text, translated_text)
         cip_conf = get_cip_confidence(cip)

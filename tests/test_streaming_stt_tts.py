@@ -201,3 +201,64 @@ def test_partial_transcript_is_translated_live(tmp_path, monkeypatch):
     assert all(p.get("text") for p in partial_translations)
     # No TTS should fire for partials specifically; TTS only on the final turn.
     assert client.messages_of_type("final"), "expected a final message"
+
+
+def test_auto_detects_and_switches_source_language(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AUTO_LANGUAGE_DETECTION", "1")
+    pipeline = _make_pipeline(tmp_path)
+    # Configured source is English, but the speaker clearly speaks Spanish
+    # (multiple Spanish hint words => detect_language_mix flags a mismatch).
+    provider_ws = FakeProviderWS([
+        json.dumps({
+            "type": "transcript",
+            "is_final": True,
+            "text": "hola necesito ayuda donde gracias",
+        }),
+    ])
+    client = FakeClientWS({
+        "source_language": "en",
+        "target_language": "es",
+        "speaker_mode": "manual",
+        "session_id": "s4",
+    })
+
+    _run_handler(pipeline, client, provider_ws, stt_conf=0.95, tr_conf=0.95)
+
+    switches = client.messages_of_type("language_switched")
+    assert switches, "expected a language_switched event"
+    switch = switches[-1]
+    assert switch["previous_source_language"] == "en"
+    assert switch["source_language"] == "es"
+    # source==target collision resolved by flipping target back to the old source.
+    assert switch["target_language"] == "en"
+
+    # The web client should be able to auto-update its source via the final hints.
+    finals = client.messages_of_type("final")
+    assert finals, "expected a final message"
+    hints = finals[-1].get("cip_client_hints") or {}
+    assert hints.get("language_auto_repaired") is True
+    assert hints.get("repaired_source_language") == "es"
+
+
+def test_auto_detection_disabled_keeps_source_language(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AUTO_LANGUAGE_DETECTION", "0")
+    pipeline = _make_pipeline(tmp_path)
+    provider_ws = FakeProviderWS([
+        json.dumps({
+            "type": "transcript",
+            "is_final": True,
+            "text": "hola necesito ayuda donde gracias",
+        }),
+    ])
+    client = FakeClientWS({
+        "source_language": "en",
+        "target_language": "es",
+        "speaker_mode": "manual",
+        "session_id": "s5",
+    })
+
+    _run_handler(pipeline, client, provider_ws, stt_conf=0.95, tr_conf=0.95)
+
+    assert not client.messages_of_type("language_switched"), "switch must not fire when disabled"

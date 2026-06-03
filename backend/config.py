@@ -356,6 +356,13 @@ def get_stt_provider_api_key() -> str:
     return os.getenv("STT_PROVIDER_API_KEY", "").strip()
 
 
+def get_auto_language_detection() -> bool:
+    """Auto-detect the spoken source language on the streaming-STT path and
+    switch the STT model / translation direction when it confidently differs
+    from the configured source language."""
+    return _to_bool("AUTO_LANGUAGE_DETECTION", True)
+
+
 # ---------------------------------------------------------------------------
 # Google Cloud Text-to-Speech
 # ---------------------------------------------------------------------------

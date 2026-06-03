@@ -36,6 +36,16 @@ class SpeakerMemory:
         with self._lock:
             return self.speakers.get(speaker_id, {}).get("language")
 
+    def set_language(self, speaker_id: str, language: str):
+        """Force-set the speaker's language (e.g. after auto-detection).
+
+        Unlike :meth:`register`, this overrides any previously stored language.
+        """
+        self.register(speaker_id)
+        with self._lock:
+            self.speakers[speaker_id]["language"] = language
+            self.speakers[speaker_id]["last_seen"] = time()
+
     def get_context(self, speaker_id: str) -> Dict[str, Any]:
         with self._lock:
             profile = self.speakers.get(speaker_id, {})
