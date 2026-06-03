@@ -263,6 +263,11 @@ def get_partial_tts_mode() -> bool:
     return _to_bool("PARTIAL_TTS_MODE", False)
 
 
+def get_tts_phrase_cache_size() -> int:
+    """Max number of short phrases to cache synthesized audio for. 0 disables."""
+    return _to_int("TTS_PHRASE_CACHE_SIZE", 256, minimum=0)
+
+
 def get_vad_recent_chunks() -> int:
     return _to_int("VAD_RECENT_CHUNKS", 2, minimum=1)
 

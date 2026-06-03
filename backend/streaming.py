@@ -45,6 +45,7 @@ from backend.observability import observability
 from backend.pipeline import TranslationResult
 from backend.security import usage_limiter
 from backend.sessions import session_registry
+from backend.tts_cache import phrase_cache
 from backend.tts_pacing import build_tts_pacing
 from fastapi import WebSocket
 from fastapi.concurrency import run_in_threadpool
@@ -1457,30 +1458,36 @@ async def websocket_streaming_stt_translation(
         audio_chunks: list[dict] = []
         tts_started_at = time()
         for index, chunk in enumerate(tts_chunks, start=1):
-            try:
-                chunk_output_path = await tts_circuit_breaker.call(
-                    run_pipeline_step,
-                    "streaming STT TTS",
-                    lambda c=chunk, idx=index: pipeline.tts.synthesize(
-                        c,
-                        f"models/tts/{uuid4()}-{idx}.wav",
-                        language=target_language,
-                    ),
-                )
-            except Exception as exc:  # noqa: BLE001 - keep stream alive on TTS failure
-                logger.warning("streaming_stt_tts_failed chunk=%d/%d error=%s", index, len(tts_chunks), exc)
-                await send_json({"type": "stage", "stage": "tts_warning", "message": f"TTS synthesis failed for chunk {index}."})
-                continue
-            try:
-                tts_audio_bytes = Path(chunk_output_path).read_bytes()
-            except OSError as exc:
-                logger.warning("streaming_stt_tts_read_failed chunk=%d error=%s", index, exc)
-                continue
-            if len(tts_audio_bytes) < 100:
-                Path(chunk_output_path).unlink(missing_ok=True)
-                continue
-            if first_audio_path is None:
-                first_audio_path = chunk_output_path
+            cached_audio = phrase_cache.get(chunk, target_language)
+            if cached_audio is not None:
+                tts_audio_bytes = cached_audio
+                observability.increment("tts_phrase_cache_hits_total")
+            else:
+                try:
+                    chunk_output_path = await tts_circuit_breaker.call(
+                        run_pipeline_step,
+                        "streaming STT TTS",
+                        lambda c=chunk, idx=index: pipeline.tts.synthesize(
+                            c,
+                            f"models/tts/{uuid4()}-{idx}.wav",
+                            language=target_language,
+                        ),
+                    )
+                except Exception as exc:  # noqa: BLE001 - keep stream alive on TTS failure
+                    logger.warning("streaming_stt_tts_failed chunk=%d/%d error=%s", index, len(tts_chunks), exc)
+                    await send_json({"type": "stage", "stage": "tts_warning", "message": f"TTS synthesis failed for chunk {index}."})
+                    continue
+                try:
+                    tts_audio_bytes = Path(chunk_output_path).read_bytes()
+                except OSError as exc:
+                    logger.warning("streaming_stt_tts_read_failed chunk=%d error=%s", index, exc)
+                    continue
+                if len(tts_audio_bytes) < 100:
+                    Path(chunk_output_path).unlink(missing_ok=True)
+                    continue
+                if first_audio_path is None:
+                    first_audio_path = chunk_output_path
+                phrase_cache.put(chunk, target_language, tts_audio_bytes)
             observability.increment("tts_playback_chunks_total")
             await send_json({"type": "latency", "metric": "tts", "ms": round((time() - tts_started_at) * 1000)})
             audio_base64 = base64.b64encode(tts_audio_bytes).decode("ascii")

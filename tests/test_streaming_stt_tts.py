@@ -203,6 +203,47 @@ def test_low_confidence_ambiguous_word_offers_choose_meaning(tmp_path, monkeypat
     assert any(o.get("type") == "choose_meaning" and o.get("word") == "bank" for o in options)
 
 
+def test_repeated_phrase_served_from_tts_cache(tmp_path, monkeypatch):
+    """Step 6: a repeated translated phrase is served from the phrase cache,
+    so the TTS engine is only invoked once across two identical finals."""
+    monkeypatch.chdir(tmp_path)
+    from backend.tts_cache import phrase_cache
+
+    phrase_cache.clear()
+    pipeline = _make_pipeline(tmp_path)
+    # Both finals translate to the same single-chunk phrase ("hola mundo amigo").
+    provider_ws = FakeProviderWS([
+        json.dumps({"type": "transcript", "is_final": True, "text": "hello world friend"}),
+        json.dumps({"type": "transcript", "is_final": True, "text": "hello world friend again"}),
+    ])
+    client = FakeClientWS({
+        "source_language": "en",
+        "target_language": "es",
+        "speaker_mode": "manual",
+        "session_id": "s-cache",
+    })
+    # Disconnect only after the SECOND final has been emitted.
+    final_count = {"n": 0}
+
+    async def counting_send(payload):
+        client.sent.append(payload)
+        if payload.get("type") == "final":
+            final_count["n"] += 1
+            if final_count["n"] >= 2:
+                client._finished.set()
+
+    client.send_json = counting_send
+
+    _run_handler(pipeline, client, provider_ws, stt_conf=0.95, tr_conf=0.95)
+
+    # Both finals translate to the same phrase (chunked into 2 pieces). The first
+    # final synthesizes both chunks; the second is fully served from the cache,
+    # so the TTS engine is invoked twice total rather than four times.
+    assert pipeline.tts.synthesize.call_count == 2
+    assert phrase_cache.stats()["hits"] >= 2
+    phrase_cache.clear()
+
+
 def test_partial_transcript_is_translated_live(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     pipeline = _make_pipeline(tmp_path)
