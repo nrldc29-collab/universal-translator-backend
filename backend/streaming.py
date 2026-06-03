@@ -128,6 +128,10 @@ from backend.streaming_helpers import (
 # sync with the hint vocabularies in ``backend.communication_brain``.
 SUPPORTED_AUTODETECT_LANGUAGES = {"en", "es", "fr", "ht"}
 
+# Consecutive STT-provider failures before the streaming path tells the client
+# to degrade (e.g. fall back to browser speech recognition or text-only).
+PROVIDER_FAILURE_THRESHOLD = 3
+
 
 async def websocket_text_translation(websocket: WebSocket, pipeline: AnaiTranslatorPipeline):
     await websocket.accept()
@@ -1382,11 +1386,26 @@ async def websocket_streaming_stt_translation(
     input_is_pcm16 = True
     input_audio_suffix = ".wav"
     peer_token = None
+    provider_failure_streak = 0
+    degraded = False
     send_lock = asyncio.Lock()
 
     async def send_json(payload: dict) -> None:
         async with send_lock:
             await websocket.send_json(payload)
+
+    async def emit_mode(mode: str, reason: str, recommend_fallback: bool = False) -> None:
+        """Tell the client which live mode is active so it can surface it and,
+        when the provider is failing, drop to a backup mode (browser speech
+        recognition or text-only translation)."""
+        await send_json({
+            "type": "mode",
+            "mode": mode,
+            "healthy": not recommend_fallback,
+            "recommend_fallback": recommend_fallback,
+            "input_audio": "pcm16" if input_is_pcm16 else input_audio_suffix.lstrip("."),
+            "reason": reason,
+        })
 
     async def chunk_to_pcm16(chunk: bytes) -> bytes | None:
         """Transcode a single compressed/containered audio chunk (e.g. a mobile
@@ -1794,6 +1813,7 @@ async def websocket_streaming_stt_translation(
         })
 
     async def handle_provider_event(raw_message) -> None:
+        nonlocal provider_failure_streak, degraded
         if isinstance(raw_message, bytes):
             raw_message = raw_message.decode("utf-8", errors="ignore")
         try:
@@ -1805,6 +1825,13 @@ async def websocket_streaming_stt_translation(
             event_type = "transcript.final"
         elif event_type == "transcript" and event.get("is_final") is False:
             event_type = "transcript.partial"
+        # The provider is responding, so reset the failure ladder and, if we had
+        # previously told the client to degrade, signal recovery to the best mode.
+        if event_type in {"session.started", "transcript.partial", "transcript.final"}:
+            provider_failure_streak = 0
+            if degraded:
+                degraded = False
+                await emit_mode("streaming_stt", "STT provider recovered.")
         text = normalize_live_text(event.get("text") or event.get("data", {}).get("text") or "")
         if event_type == "session.started":
             await send_json({"type": "stage", "stage": "stt_provider_connected", "message": "Streaming STT provider connected."})
@@ -1948,6 +1975,10 @@ async def websocket_streaming_stt_translation(
                         ),
                     })
                     await send_json({"type": "config_ack", "source_language": source_language, "target_language": target_language})
+                    await emit_mode(
+                        "streaming_stt",
+                        "Live streaming STT active." if input_is_pcm16 else "Live streaming STT active (transcoding input).",
+                    )
 
                 elif msg_type == "translate" and data.get("text"):
                     text = data["text"].strip()
@@ -2004,6 +2035,14 @@ async def websocket_streaming_stt_translation(
             except (ConnectionError, TimeoutError, RuntimeError) as exc:
                 logger.warning("Streaming STT error: %s", exc)
                 await send_json({"type": "error", "message": f"STT error: {exc}", "recoverable": True})
+                provider_failure_streak += 1
+                if provider_failure_streak >= PROVIDER_FAILURE_THRESHOLD and not degraded:
+                    degraded = True
+                    await emit_mode(
+                        "degraded",
+                        "Streaming STT provider is unavailable. Switch to browser speech recognition or text-only translation.",
+                        recommend_fallback=True,
+                    )
 
     except WebSocketDisconnect:
         observability.increment("websocket_disconnects_total")

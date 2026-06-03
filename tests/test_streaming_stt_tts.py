@@ -142,6 +142,11 @@ def test_final_transcript_produces_tts_audio(tmp_path, monkeypatch):
 
     _run_handler(pipeline, client, provider_ws, stt_conf=0.95, tr_conf=0.95)
 
+    # Step 7: clients are told the active mode on connect.
+    modes = client.messages_of_type("mode")
+    assert modes and modes[0]["mode"] == "streaming_stt"
+    assert modes[0]["recommend_fallback"] is False
+
     tts_starts = client.messages_of_type("tts_start")
     tts_chunks = client.messages_of_type("tts_audio_chunk")
     tts_ends = client.messages_of_type("tts_end")
@@ -242,6 +247,52 @@ def test_repeated_phrase_served_from_tts_cache(tmp_path, monkeypatch):
     assert pipeline.tts.synthesize.call_count == 2
     assert phrase_cache.stats()["hits"] >= 2
     phrase_cache.clear()
+
+
+def test_repeated_provider_failures_recommend_fallback(tmp_path, monkeypatch):
+    """Step 7: when the STT provider is unreachable, after a few failures the
+    handler tells the client to degrade to a backup mode."""
+    monkeypatch.chdir(tmp_path)
+    pipeline = _make_pipeline(tmp_path)
+
+    client = FakeClientWS({
+        "source_language": "en",
+        "target_language": "es",
+        "speaker_mode": "manual",
+        "session_id": "s-degrade",
+    })
+    # Config followed by three audio frames; the provider connect will fail each
+    # time, crossing the degradation threshold (3).
+    client._steps = [
+        client._steps[0],
+        {"bytes": b"\x00\x01" * 64},
+        {"bytes": b"\x00\x01" * 64},
+        {"bytes": b"\x00\x01" * 64},
+    ]
+
+    async def degraded_send(payload):
+        client.sent.append(payload)
+        if payload.get("type") == "mode" and payload.get("recommend_fallback"):
+            client._finished.set()
+
+    client.send_json = degraded_send
+
+    async def _go():
+        async def failing_connect(*args, **kwargs):
+            raise ConnectionError("provider down")
+
+        with patch("websockets.connect", side_effect=failing_connect):
+            await streaming.websocket_streaming_stt_translation(
+                client, pipeline, ConversationBrain(),
+                ConversationMemory(), SpeakerMemory(), "tester",
+            )
+
+    asyncio.run(asyncio.wait_for(_go(), timeout=10.0))
+
+    degraded = [m for m in client.sent if m.get("type") == "mode" and m.get("recommend_fallback")]
+    assert degraded, "expected a degraded mode recommending fallback"
+    assert degraded[-1]["mode"] == "degraded"
+    assert degraded[-1]["healthy"] is False
 
 
 def test_partial_transcript_is_translated_live(tmp_path, monkeypatch):
