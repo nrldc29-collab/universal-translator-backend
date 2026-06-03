@@ -423,5 +423,8 @@ def test_final_translation_is_routed_to_peer_devices(tmp_path, monkeypatch):
     assert msg["translated_text"].lower() == "hola mundo amigo"
     assert msg["device_id"] == "device-a"
     assert msg["target_language"] == "es"
+    # The peer should also receive the synthesized voice so it can play it.
+    assert msg.get("audio_chunks"), "expected peer to receive TTS audio chunks"
+    assert all(chunk.get("audio_base64") for chunk in msg["audio_chunks"])
     # The speaker's own socket must NOT receive its own peer_message.
     assert not client.messages_of_type("peer_message")

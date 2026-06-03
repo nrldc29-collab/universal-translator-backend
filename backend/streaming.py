@@ -1419,16 +1419,18 @@ async def websocket_streaming_stt_translation(
             provider_ws = None
         provider_language = None
 
-    async def synthesize_final_tts(text: str, semantic_context: dict, client_hints: dict) -> str | None:
+    async def synthesize_final_tts(text: str, semantic_context: dict, client_hints: dict) -> tuple[str | None, list[dict]]:
         """Voice a finalized translation using the same pacing/chunking as the
-        default Whisper path. Returns the first synthesized audio path (if any).
+        default Whisper path. Returns ``(first_audio_path, audio_chunks)`` where
+        ``audio_chunks`` are the base64 audio payloads (so they can also be
+        routed to peer devices in the same session).
 
         TTS failures are non-fatal: the stream stays alive and the client still
         has the text translation, matching the resilience of the live-text path.
         """
         if client_hints.get("skip_tts") or not is_speakable_live_delta(text):
             await send_json({"type": "stage", "stage": "tts_skipped", "message": "No voice output for this segment."})
-            return None
+            return None, []
 
         intent = semantic_context.get("last_intent") or semantic_context.get("intent") or "statement"
         urgency = "high" if semantic_context.get("conversation_mood") == "urgent" else None
@@ -1439,7 +1441,7 @@ async def websocket_streaming_stt_translation(
         for tts_segment in tts_pacing["segments"]:
             tts_chunks.extend(chunk_text_for_tts(tts_segment))
         if not tts_chunks:
-            return None
+            return None, []
 
         await send_json({"type": "stage", "stage": "tts", "message": "Translation ready. Streaming voice..."})
         await send_json({
@@ -1451,6 +1453,7 @@ async def websocket_streaming_stt_translation(
         })
 
         first_audio_path = None
+        audio_chunks: list[dict] = []
         tts_started_at = time()
         for index, chunk in enumerate(tts_chunks, start=1):
             try:
@@ -1479,6 +1482,14 @@ async def websocket_streaming_stt_translation(
                 first_audio_path = chunk_output_path
             observability.increment("tts_playback_chunks_total")
             await send_json({"type": "latency", "metric": "tts", "ms": round((time() - tts_started_at) * 1000)})
+            audio_base64 = base64.b64encode(tts_audio_bytes).decode("ascii")
+            audio_chunks.append({
+                "index": index,
+                "total": len(tts_chunks),
+                "text": chunk,
+                "audio_base64": audio_base64,
+                "mime_type": "audio/wav",
+            })
             await send_json({
                 "type": "tts_audio_chunk",
                 "speaker": speaker,
@@ -1490,12 +1501,12 @@ async def websocket_streaming_stt_translation(
                 "emotion": tts_pacing["emotion"],
                 "intent": tts_pacing["intent"],
                 "urgency": tts_pacing["urgency"],
-                "audio_base64": base64.b64encode(tts_audio_bytes).decode("ascii"),
+                "audio_base64": audio_base64,
                 "mime_type": "audio/wav",
             })
 
         await send_json({"type": "tts_end", "speaker": speaker, "speaker_label": speaker_label})
-        return first_audio_path
+        return first_audio_path, audio_chunks
 
     async def emit_translated_partial(source_text: str) -> None:
         """Show a live translation as the speaker is still talking.
@@ -1677,13 +1688,14 @@ async def websocket_streaming_stt_translation(
                 "translated_by": cip.get("translation_source"),
             })
         audio_output_path = None
+        tts_audio_chunks: list[dict] = []
         if cip_clarify:
             await send_json({"type": "clarify", "message": cip_decision.get("message") or "Can you rephrase that?", "stage": "cip_clarification"})
         elif conf_score < 0.4:
             await send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
         else:
             await send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": translated_text})
-            audio_output_path = await synthesize_final_tts(translated_text, semantic_context, cip_client_hints)
+            audio_output_path, tts_audio_chunks = await synthesize_final_tts(translated_text, semantic_context, cip_client_hints)
 
         memory.add(speaker, source_text, translated_text, {"cip": cip})
         speaker_memory.add_message(speaker, source_text)
@@ -1711,6 +1723,7 @@ async def websocket_streaming_stt_translation(
                 "translated_text": translated_text,
                 "source_language": source_language,
                 "target_language": target_language,
+                "audio_chunks": tts_audio_chunks,
             }
             for deliver in session_registry.peer_callbacks(session_id, identity, exclude_device_id=device_id):
                 with suppress(Exception):
