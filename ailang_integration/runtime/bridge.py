@@ -36,15 +36,16 @@ def _offline_fallback(alias_str: str, prompt: str) -> str:
     user-facing translation.
     """
     lowered = (prompt or "").lower()
-    if "analyze" in lowered or "detect" in lowered:
+    if "analyze" in lowered and ("domain" in lowered or "formality" in lowered):
         return _STUB_ANALYZE
-    if "extract" in lowered or "entities" in lowered:
+    if "extract named entities" in lowered or "extract entities" in lowered:
         return _STUB_EXTRACT
-    if "compare" in lowered or "similarity" in lowered:
+    if "compare" in lowered and "similarity" in lowered:
         return _STUB_COMPARE
-    if "resolve" in lowered or "reference" in lowered:
-        # Reference resolution: passthrough the original text unchanged.
-        return prompt
+    if "identify genuinely ambiguous" in lowered:
+        return "[]"
+    if "which interpretation is most likely" in lowered:
+        return '{"resolved_meaning": "", "confidence": 0.5, "reasoning": "offline"}'
     raise AILangModelUnavailable(
         f"No AILang model available for '{alias_str}' generative prompt"
     )
@@ -215,13 +216,19 @@ class AILangBridge:
             except (ImportError, Exception) as e:
                 logger.warning(f"AI call failed for model '{alias_str}': {e}")
                 self._call_errors += 1
-                return _offline_fallback(alias_str, prompt)
+                try:
+                    return _offline_fallback(alias_str, prompt)
+                except AILangModelUnavailable:
+                    raise
         except AILangModelUnavailable:
             raise
         except Exception as e:
             self._call_errors += 1
             logger.error(f"Unexpected error in _route_ai_call: {e}", exc_info=True)
-            return _offline_fallback(str(model_alias), prompt)
+            try:
+                return _offline_fallback(str(model_alias), prompt)
+            except AILangModelUnavailable:
+                raise
 
     def _record_latency(self, start_time: float) -> None:
         latency_ms = (time.time() - start_time) * 1000

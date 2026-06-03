@@ -16,11 +16,12 @@ from ailang_integration.runtime.bridge import (
 
 
 def test_offline_fallback_returns_stubs_for_structured_prompts():
-    assert "domain" in _offline_fallback("fast", "analyze this text")
-    assert "people" in _offline_fallback("fast", "extract entities from text")
-    assert "similarity_score" in _offline_fallback("fast", "compare these translations")
-    # Reference resolution passes the original text through unchanged.
-    assert _offline_fallback("fast", "resolve references: hi") == "resolve references: hi"
+    assert "domain" in _offline_fallback("fast", "analyze domain and formality for this text")
+    assert "people" in _offline_fallback(
+        "fast", "Extract named entities and pronouns from this text"
+    )
+    assert "similarity_score" in _offline_fallback("fast", "compare these translations for similarity")
+    assert _offline_fallback("fast", "Identify genuinely ambiguous words in this en text") == "[]"
 
 
 def test_offline_fallback_raises_for_generative_prompts():
@@ -28,6 +29,11 @@ def test_offline_fallback_raises_for_generative_prompts():
         _offline_fallback(
             "fast",
             "Ensure this French uses vous (formal). Keep meaning: [en->None] Hello",
+        )
+    with pytest.raises(AILangModelUnavailable):
+        _offline_fallback(
+            "fast",
+            "Given history, resolve any ambiguous pronouns in: Hello",
         )
 
 
@@ -59,7 +65,7 @@ def test_route_ai_call_never_leaks_prompt_when_offline(monkeypatch):
         )
 
     # Structured analysis prompts still get a usable JSON stub.
-    out = bridge._route_ai_call("fast", "analyze this text")
+    out = bridge._route_ai_call("fast", "analyze domain and formality for this text")
     assert out.lstrip().startswith("{")
     assert "domain" in out
     assert not out.startswith("[AI:")
