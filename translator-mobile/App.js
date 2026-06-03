@@ -5,6 +5,7 @@ import Constants from "expo-constants";
 import * as Network from "expo-network";
 import { apiToWsUrl, connectWS } from "./services/ws";
 import { startAudioStream, stopAudioStream, playTtsAudio } from "./services/audio-stream";
+import { describeLiveMode, formatPeerTurn, summarizeRepair } from "./services/stream-modes";
 import DuplexMode from "./components/DuplexMode";
 import SemanticContext from "./components/SemanticContext";
 import SettingsScreen from "./components/SettingsScreen";
@@ -212,6 +213,42 @@ export default function App() {
       case "stage":
         setStatus(message.message || message.type);
         break;
+      case "mode": {
+        const liveMode = describeLiveMode(message);
+        setStatus(liveMode.degraded ? (liveMode.hint || liveMode.label) : liveMode.label);
+        setStatusType(liveMode.degraded ? "warning" : "success");
+        break;
+      }
+      case "peer_message": {
+        const peerTurn = formatPeerTurn(message);
+        if (peerTurn) {
+          setConversationBrain(peerTurn);
+          setLiveTranslation("");
+          setResult((previous) => ({ ...previous, translated_text: message.translated_text || "" }));
+        }
+        const peerChunks = Array.isArray(message.audio_chunks) ? message.audio_chunks : [];
+        if (peerChunks.length) {
+          (async () => {
+            for (const chunk of peerChunks) {
+              if (chunk && chunk.audio_base64) {
+                try {
+                  await playTtsAudio(chunk.audio_base64, chunk.mime_type || "audio/wav");
+                } catch (error) {
+                  console.error("Peer audio playback error:", error);
+                }
+              }
+            }
+          })();
+        }
+        break;
+      }
+      case "repair": {
+        setStatus(message.message || "Repair requested");
+        setStatusType("warning");
+        const summary = summarizeRepair(message);
+        if (summary) setConversationBrain(`Repair: ${summary}`);
+        break;
+      }
       case "vad":
         if (message.speech_detected) {
           setStatus("Speech detected...");
