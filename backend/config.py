@@ -156,9 +156,24 @@ def get_allowed_origins() -> list[str]:
 
 
 def get_allowed_origin_regex() -> str:
+    # Allow local/private hosts plus the public tunnel/hosting providers the
+    # frontend already treats as valid backend hosts (see isSameOriginBackendHost
+    # in frontend/src/utils.js). Without this, a frontend served from a
+    # *.trycloudflare.com (etc.) tunnel talking to a backend on a different
+    # origin is blocked by CORS, which surfaces in the UI as "Backend offline".
     return os.getenv(
         "ALLOWED_ORIGIN_REGEX",
-        r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?",
+        r"https?://("
+        r"localhost"
+        r"|127\.0\.0\.1"
+        r"|192\.168\.\d{1,3}\.\d{1,3}"
+        r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+        r"|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}"
+        r"|[a-z0-9-]+\.trycloudflare\.com"
+        r"|[a-z0-9-]+\.up\.railway\.app"
+        r"|[a-z0-9-]+\.onrender\.com"
+        r"|[a-z0-9-]+\.fly\.dev"
+        r")(:\d+)?",
     )
 
 
