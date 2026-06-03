@@ -150,3 +150,37 @@ class TestPeerSubscriptions:
         # Excluding the new device id hides the callback.
         assert self.registry.peer_callbacks("sess", "user1", exclude_device_id="device-z") == []
         assert self.registry.peer_callbacks("sess", "user1", exclude_device_id="device-a") == [cb]
+
+    async def test_broadcast_delivers_to_other_devices_only(self):
+        received_a, received_b = [], []
+
+        async def cb_a(payload):
+            received_a.append(payload)
+
+        async def cb_b(payload):
+            received_b.append(payload)
+
+        self.registry.subscribe("sess", "user1", "device-a", cb_a)
+        self.registry.subscribe("sess", "user1", "device-b", cb_b)
+
+        delivered = await self.registry.broadcast("sess", "user1", "device-a", {"hello": "world"})
+        assert delivered == 1
+        assert received_b == [{"hello": "world"}]
+        assert received_a == []
+
+    async def test_broadcast_isolates_failing_peers(self):
+        received = []
+
+        async def bad(payload):
+            raise RuntimeError("peer gone")
+
+        async def good(payload):
+            received.append(payload)
+
+        self.registry.subscribe("sess", "user1", "device-bad", bad)
+        self.registry.subscribe("sess", "user1", "device-good", good)
+
+        delivered = await self.registry.broadcast("sess", "user1", "sender", {"x": 1})
+        # The failing peer is skipped; the healthy one still receives the payload.
+        assert delivered == 1
+        assert received == [{"x": 1}]

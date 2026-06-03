@@ -71,6 +71,19 @@ class SessionRegistry:
                 and (excluded is None or sub["device_id"] != excluded)
             ]
 
+    async def broadcast(self, session_id: str, identity: str, sender_device_id: str | None, payload: dict) -> int:
+        """Deliver ``payload`` to every other device in the session, isolating
+        per-peer failures so one bad connection can't block the rest. Returns
+        the number of peers the payload was delivered to."""
+        delivered = 0
+        for callback in self.peer_callbacks(session_id, identity, exclude_device_id=sender_device_id):
+            try:
+                await callback(payload)
+                delivered += 1
+            except Exception:  # noqa: BLE001 - a failing peer must not break routing
+                continue
+        return delivered
+
     def _shared_key(self, session_id: str, identity: str) -> str:
         return f"{identity}:{session_id}"
 

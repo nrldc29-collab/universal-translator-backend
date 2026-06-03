@@ -184,6 +184,7 @@ async def websocket_audio_translation(
     speaker_detection = "manual"
     device_id = None
     session_id = "default"
+    peer_token = None
     audio_chunks = bytearray()
     recent_chunks = []
     speech_started = False
@@ -1014,6 +1015,18 @@ async def websocket_audio_translation(
                 speaker_label=speaker_label,
             )
             await websocket.send_json({"type": "session_sync", "session": shared_session})
+            if translated_text:
+                await session_registry.broadcast(segment_session_id, identity, device_id, {
+                    "type": "peer_message",
+                    "speaker": speaker,
+                    "speaker_label": speaker_label,
+                    "speaker_index": speaker_index,
+                    "device_id": device_id,
+                    "source_text": source_text,
+                    "translated_text": translated_text,
+                    "source_language": segment_source_language,
+                    "target_language": segment_target_language,
+                })
             stream_debug_log("FINAL TRIGGERED")
             await websocket.send_json({
                 "type": "final",
@@ -1167,6 +1180,12 @@ async def websocket_audio_translation(
                         session_registry.disconnect(session_id, speaker, identity, device_id)
                         await websocket.send_json({"type": "error", "message": "Too many active streams for this user."})
                         continue
+                    # Speaker routing: subscribe this connection so finalized turns
+                    # can be delivered to the other devices in the same session.
+                    if peer_token is None:
+                        peer_token = session_registry.subscribe(session_id, identity, device_id, websocket.send_json)
+                    else:
+                        session_registry.update_subscriber_device(peer_token, device_id)
                     client_mime_type = payload.get("mime_type") or client_mime_type
                     audio_suffix = audio_suffix_for_mime(client_mime_type)
                     await websocket.send_json({
@@ -1328,6 +1347,7 @@ async def websocket_audio_translation(
         observability.increment("websocket_errors_total")
         raise
     finally:
+        session_registry.unsubscribe(peer_token)
         if partial_task is not None:
             partial_task.cancel()
             with suppress(asyncio.CancelledError, Exception):
@@ -1766,9 +1786,7 @@ async def websocket_streaming_stt_translation(
                 "target_language": target_language,
                 "audio_chunks": tts_audio_chunks,
             }
-            for deliver in session_registry.peer_callbacks(session_id, identity, exclude_device_id=device_id):
-                with suppress(Exception):
-                    await deliver(peer_payload)
+            await session_registry.broadcast(session_id, identity, device_id, peer_payload)
         result = TranslationResult(
             source_text=source_text,
             improved_text=improved_text,
