@@ -109,3 +109,44 @@ class TestSessionRegistry:
         assert len(self.registry.shared_sessions) == 1
         self.registry.cleanup()
         assert len(self.registry.shared_sessions) >= 0
+
+
+class TestPeerSubscriptions:
+    def setup_method(self):
+        self.registry = SessionRegistry()
+
+    def test_peer_callbacks_exclude_sender(self):
+        cb_a = lambda payload: None
+        cb_b = lambda payload: None
+        self.registry.subscribe("sess", "user1", "device-a", cb_a)
+        self.registry.subscribe("sess", "user1", "device-b", cb_b)
+
+        peers = self.registry.peer_callbacks("sess", "user1", exclude_device_id="device-a")
+        assert cb_b in peers
+        assert cb_a not in peers
+
+    def test_peer_callbacks_scoped_to_session_and_identity(self):
+        cb_same = lambda payload: None
+        cb_other_session = lambda payload: None
+        cb_other_identity = lambda payload: None
+        self.registry.subscribe("sess", "user1", "device-b", cb_same)
+        self.registry.subscribe("other", "user1", "device-c", cb_other_session)
+        self.registry.subscribe("sess", "user2", "device-d", cb_other_identity)
+
+        peers = self.registry.peer_callbacks("sess", "user1", exclude_device_id="device-a")
+        assert peers == [cb_same]
+
+    def test_unsubscribe_removes_callback(self):
+        cb = lambda payload: None
+        token = self.registry.subscribe("sess", "user1", "device-b", cb)
+        assert self.registry.peer_callbacks("sess", "user1") == [cb]
+        self.registry.unsubscribe(token)
+        assert self.registry.peer_callbacks("sess", "user1") == []
+
+    def test_update_subscriber_device(self):
+        cb = lambda payload: None
+        token = self.registry.subscribe("sess", "user1", "device-a", cb)
+        self.registry.update_subscriber_device(token, "device-z")
+        # Excluding the new device id hides the callback.
+        assert self.registry.peer_callbacks("sess", "user1", exclude_device_id="device-z") == []
+        assert self.registry.peer_callbacks("sess", "user1", exclude_device_id="device-a") == [cb]

@@ -1379,6 +1379,7 @@ async def websocket_streaming_stt_translation(
     last_partial_source = ""
     input_is_pcm16 = True
     input_audio_suffix = ".wav"
+    peer_token = None
     send_lock = asyncio.Lock()
 
     async def send_json(payload: dict) -> None:
@@ -1696,6 +1697,24 @@ async def websocket_streaming_stt_translation(
             device_id=device_id,
             speaker_label=speaker_label,
         )
+        # Speaker routing: deliver this speaker's translated turn to the other
+        # devices in the same session (the "two people talking" case). The
+        # translation is already in the listener's language.
+        if translated_text and not cip_clarify:
+            peer_payload = {
+                "type": "peer_message",
+                "speaker": speaker,
+                "speaker_label": speaker_label,
+                "speaker_index": speaker_index,
+                "device_id": device_id,
+                "source_text": source_text,
+                "translated_text": translated_text,
+                "source_language": source_language,
+                "target_language": target_language,
+            }
+            for deliver in session_registry.peer_callbacks(session_id, identity, exclude_device_id=device_id):
+                with suppress(Exception):
+                    await deliver(peer_payload)
         result = TranslationResult(
             source_text=source_text,
             improved_text=improved_text,
@@ -1848,6 +1867,10 @@ async def websocket_streaming_stt_translation(
                         await close_provider()
                     last_partial_translation = ""
                     last_partial_source = ""
+                    if peer_token is None:
+                        peer_token = session_registry.subscribe(session_id, identity, device_id, send_json)
+                    else:
+                        session_registry.update_subscriber_device(peer_token, device_id)
                     await send_json({
                         "type": "speaker_detected",
                         "speaker": speaker,
@@ -1949,4 +1972,5 @@ async def websocket_streaming_stt_translation(
         observability.increment("websocket_errors_total")
         raise
     finally:
+        session_registry.unsubscribe(peer_token)
         await close_provider()

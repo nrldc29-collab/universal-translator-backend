@@ -18,6 +18,7 @@ sys.path.insert(0, ".")
 import backend.streaming as streaming
 from backend.conversation import ConversationBrain
 from backend.memory import ConversationMemory
+from backend.sessions import session_registry
 from backend.speakers import SpeakerMemory
 from starlette.websockets import WebSocketDisconnect
 
@@ -385,3 +386,42 @@ def test_chunk_meta_sets_audio_format_for_mobile(tmp_path, monkeypatch):
     audio_frames = [bytes(m) for m in provider_ws.sent if isinstance(m, (bytes, bytearray))]
     assert m4a_chunk not in audio_frames, "raw m4a must not be forwarded as PCM16"
     assert expected_pcm in audio_frames, "expected decoded PCM16 forwarded after chunk_meta"
+
+
+def test_final_translation_is_routed_to_peer_devices(tmp_path, monkeypatch):
+    """Step 3 speaker routing: a speaker's finalized translation is delivered to
+    the other devices in the same session (the 'two people talking' case)."""
+    monkeypatch.chdir(tmp_path)
+    pipeline = _make_pipeline(tmp_path)
+    provider_ws = FakeProviderWS([
+        json.dumps({"type": "transcript", "is_final": True, "text": "hello world friend"}),
+    ])
+    client = FakeClientWS({
+        "source_language": "en",
+        "target_language": "es",
+        "speaker_mode": "manual",
+        "session_id": "routing-session",
+        "device_id": "device-a",
+    })
+
+    # A second device subscribed to the same session/identity should receive the
+    # speaker's translation; the speaker's own device must be excluded.
+    peer_messages = []
+
+    async def peer_collector(payload):
+        peer_messages.append(payload)
+
+    peer_token = session_registry.subscribe("routing-session", "tester", "device-b", peer_collector)
+    try:
+        _run_handler(pipeline, client, provider_ws, stt_conf=0.95, tr_conf=0.95)
+    finally:
+        session_registry.unsubscribe(peer_token)
+
+    routed = [m for m in peer_messages if m.get("type") == "peer_message"]
+    assert routed, "expected the peer device to receive a peer_message"
+    msg = routed[-1]
+    assert msg["translated_text"].lower() == "hola mundo amigo"
+    assert msg["device_id"] == "device-a"
+    assert msg["target_language"] == "es"
+    # The speaker's own socket must NOT receive its own peer_message.
+    assert not client.messages_of_type("peer_message")

@@ -29,7 +29,47 @@ class SessionRegistry:
     def __init__(self):
         self.sessions = {}
         self.shared_sessions = {}
+        # Live per-connection delivery callbacks, keyed by an opaque token, used
+        # to route one speaker's turn to the other devices in the same session.
+        self._subscribers = {}
         self._lock = RLock()
+
+    def subscribe(self, session_id: str, identity: str, device_id: str | None, callback) -> str:
+        """Register a live delivery callback for one connection. Returns a token
+        used to update the device mapping or unsubscribe on disconnect."""
+        token = str(uuid4())
+        with self._lock:
+            self._subscribers[token] = {
+                "session_id": session_id,
+                "identity": identity,
+                "device_id": normalize_device_id(device_id) if device_id else None,
+                "callback": callback,
+            }
+        return token
+
+    def update_subscriber_device(self, token: str, device_id: str | None) -> None:
+        with self._lock:
+            sub = self._subscribers.get(token)
+            if sub is not None:
+                sub["device_id"] = normalize_device_id(device_id) if device_id else None
+
+    def unsubscribe(self, token: str | None) -> None:
+        if not token:
+            return
+        with self._lock:
+            self._subscribers.pop(token, None)
+
+    def peer_callbacks(self, session_id: str, identity: str, exclude_device_id: str | None = None) -> list:
+        """Return delivery callbacks for the *other* devices in a session."""
+        excluded = normalize_device_id(exclude_device_id) if exclude_device_id else None
+        with self._lock:
+            return [
+                sub["callback"]
+                for sub in self._subscribers.values()
+                if sub["session_id"] == session_id
+                and sub["identity"] == identity
+                and (excluded is None or sub["device_id"] != excluded)
+            ]
 
     def _shared_key(self, session_id: str, identity: str) -> str:
         return f"{identity}:{session_id}"
