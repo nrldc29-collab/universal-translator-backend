@@ -173,9 +173,34 @@ def test_low_confidence_final_skips_tts(tmp_path, monkeypatch):
 
     assert client.messages_of_type("clarify"), "expected a clarify message"
     assert not client.messages_of_type("tts_audio_chunk"), "low confidence must skip TTS"
+    # Step 5: a structured repair request accompanies the clarify.
+    repairs = client.messages_of_type("repair")
+    assert repairs, "expected a structured repair event"
+    assert repairs[-1].get("options"), "repair event should carry options"
     finals = client.messages_of_type("final")
     assert finals, "expected a final message"
     assert finals[-1].get("audio_output_path") is None
+
+
+def test_low_confidence_ambiguous_word_offers_choose_meaning(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    pipeline = _make_pipeline(tmp_path)
+    provider_ws = FakeProviderWS([
+        json.dumps({"type": "transcript", "is_final": True, "text": "go to the bank"}),
+    ])
+    client = FakeClientWS({
+        "source_language": "en",
+        "target_language": "es",
+        "speaker_mode": "manual",
+        "session_id": "s-repair",
+    })
+
+    _run_handler(pipeline, client, provider_ws, stt_conf=0.05, tr_conf=0.05)
+
+    repairs = client.messages_of_type("repair")
+    assert repairs, "expected a repair event"
+    options = repairs[-1]["options"]
+    assert any(o.get("type") == "choose_meaning" and o.get("word") == "bank" for o in options)
 
 
 def test_partial_transcript_is_translated_live(tmp_path, monkeypatch):

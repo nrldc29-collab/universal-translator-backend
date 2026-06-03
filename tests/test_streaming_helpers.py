@@ -45,6 +45,27 @@ class TestResolveStreamAudioMode:
         assert resolve_stream_audio_mode("m4a", "audio/pcm") == (False, ".m4a")
 
 
+class TestBuildStreamingRepair:
+    def test_high_confidence_no_repair(self):
+        from backend.streaming_helpers import build_streaming_repair
+        assert build_streaming_repair("hello there friend", None, 0.9) == []
+
+    def test_prefers_cip_repair_options(self):
+        from backend.streaming_helpers import build_streaming_repair
+        plan = {"repair_options": [{"type": "repeat_terms", "terms": ["Maria"]}]}
+        assert build_streaming_repair("call maria", plan, 0.9) == plan["repair_options"]
+
+    def test_local_choose_meaning_for_ambiguous_word(self):
+        from backend.streaming_helpers import build_streaming_repair
+        options = build_streaming_repair("go to the bank", None, 0.1)
+        assert any(o["type"] == "choose_meaning" and o["word"] == "bank" for o in options)
+
+    def test_local_repeat_slowly_fallback(self):
+        from backend.streaming_helpers import build_streaming_repair
+        options = build_streaming_repair("zzzz", None, 0.1)
+        assert options and options[0]["type"] == "repeat_slowly"
+
+
 # ---------------------------------------------------------------------------
 # chunk_text_for_tts
 # ---------------------------------------------------------------------------

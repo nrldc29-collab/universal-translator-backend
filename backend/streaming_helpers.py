@@ -151,6 +151,44 @@ def audio_suffix_for_mime(mime_type: str | None) -> str:
 PCM16_FORMAT_HINTS = {"pcm16", "pcm", "pcm_s16le", "s16le", "raw", "l16", "lpcm"}
 
 
+def build_streaming_repair(source_text, cip_response_plan, conf_score):
+    """Build structured confidence-repair options for a low-confidence final.
+
+    Prefers the CIP brain's repair plan when available (repeat exact terms,
+    confirm wording, choose meaning, switch language). Falls back to a local
+    plan derived from ambiguous-word detection so repair still works when no
+    brain/CIP backend is configured. Returns ``[]`` when no repair is warranted.
+    """
+    from backend.confidence import AMBIGUOUS_SENSES, detect_ambiguities
+
+    if isinstance(cip_response_plan, dict):
+        options = cip_response_plan.get("repair_options")
+        if options:
+            return options
+
+    if conf_score >= 0.4:
+        return []
+
+    repair: list[dict] = []
+    for word in detect_ambiguities(source_text)[:3]:
+        senses = AMBIGUOUS_SENSES.get(word, [])[:3]
+        if senses:
+            repair.append({
+                "type": "choose_meaning",
+                "label": f"Choose meaning for '{word}'",
+                "word": word,
+                "options": senses,
+                "priority": "normal",
+            })
+    if not repair:
+        repair.append({
+            "type": "repeat_slowly",
+            "label": "Ask speaker to repeat slowly",
+            "priority": "normal",
+        })
+    return repair
+
+
 def resolve_stream_audio_mode(audio_format=None, mime_type=None):
     """Decide how to treat inbound streaming audio frames.
 
@@ -242,6 +280,7 @@ __all__ = [
     "audio_suffix_for_mime",
     "resolve_stream_audio_mode",
     "PCM16_FORMAT_HINTS",
+    "build_streaming_repair",
     "extract_client_voice_active",
     "parse_provider_event",
     "PipelineStepTimeout",

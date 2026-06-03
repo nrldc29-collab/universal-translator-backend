@@ -115,6 +115,7 @@ from backend.streaming_helpers import (
     live_translation_delta,
     normalize_live_text,
     normalized_word,
+    build_streaming_repair,
     parse_provider_event,
     resolve_stream_audio_mode,
     run_pipeline_step,
@@ -1689,10 +1690,24 @@ async def websocket_streaming_stt_translation(
             })
         audio_output_path = None
         tts_audio_chunks: list[dict] = []
-        if cip_clarify:
-            await send_json({"type": "clarify", "message": cip_decision.get("message") or "Can you rephrase that?", "stage": "cip_clarification"})
-        elif conf_score < 0.4:
-            await send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
+        meaning_risk_score = cip_response_plan.get("meaning_risk_score") if cip_response_plan else None
+        if cip_clarify or conf_score < 0.4:
+            if cip_clarify:
+                await send_json({"type": "clarify", "message": cip_decision.get("message") or "Can you rephrase that?", "stage": "cip_clarification"})
+            else:
+                await send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
+            # Step 5: ask for a *specific* repair (repeat the name, confirm the
+            # number, choose meaning) instead of only a generic clarify prompt.
+            repair_options = build_streaming_repair(source_text, cip_response_plan, conf_score)
+            if repair_options:
+                await send_json({
+                    "type": "repair",
+                    "speaker": speaker,
+                    "speaker_label": speaker_label,
+                    "options": repair_options,
+                    "message": clarification_for(source_text, detect_ambiguities(source_text)),
+                    "meaning_risk_score": meaning_risk_score,
+                })
         else:
             await send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": translated_text})
             audio_output_path, tts_audio_chunks = await synthesize_final_tts(translated_text, semantic_context, cip_client_hints)
@@ -1765,6 +1780,10 @@ async def websocket_streaming_stt_translation(
             "behavior": complete_decision.behavior,
             "active_speaker": complete_decision.active_speaker,
             "playback_owner": complete_decision.playback_owner,
+            "cip_turn_policy": cip_turn_policy or None,
+            "cip_client_hints": cip_client_hints or None,
+            "cip_repair_options": cip_response_plan.get("repair_options") if cip_response_plan else None,
+            "meaning_risk_score": meaning_risk_score,
         })
 
     async def handle_provider_event(raw_message) -> None:
