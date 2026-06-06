@@ -52,7 +52,6 @@ import { useAnalytics } from './hooks/useAnalytics';
 import { useSpeakerMemory } from './hooks/useSpeakerMemory';
 import { useTtsQueue } from './hooks/useTtsQueue';
 import { useBrainState } from './hooks/useBrainState';
-import { useDuplexState } from './hooks/useDuplexState';
 import { usePersistentAudio } from './hooks/usePersistentAudio';
 import { useSettings } from './hooks/useSettings';
 import { usePipelineState } from './hooks/usePipelineState';
@@ -242,7 +241,6 @@ function App() {
     audioReplayAvailable, setAudioReplayAvailable,
     lastAudioError, setLastAudioError,
   } = usePipelineState();
-  const { duplex, setDuplex, duplexRefs, updateDuplexSpeaker } = useDuplexState();
   const {
     clarifyVisible, setClarifyVisible,
     clarifyMessage, setClarifyMessage,
@@ -1570,12 +1568,6 @@ function App() {
         audio_output_path: null,
       });
       setDetectedSpeaker(latestLabel);
-      updateDuplexSpeaker(latest.speaker || 'A', {
-        transcript: latest.source_text,
-        translation: latest.translated_text,
-        speaker_label: latestLabel,
-        stage: 'Synced from shared session',
-      });
     }
   }
 
@@ -2912,237 +2904,6 @@ function App() {
     debugLog(`Playing TTS chunk, ${ttsQueueRef.current.length} remaining in queue`);
     playTtsItem(item, { revokeOnFinish: false });
   }
-
-  async function toggleDuplexSpeaker(speaker) {
-    const refs = duplexRefs.current[speaker];
-    if (refs.socket) {
-      refs.manualClose = true;
-      refs.shouldReconnect = false;
-      refs.finalizePending = true;
-      if (refs.recorder?.state === 'recording') {
-        refs.recorder.requestData?.();
-        refs.recorder.stop();
-      } else if (refs.socket.readyState === WebSocket.OPEN) {
-        refs.socket.send(JSON.stringify({ type: 'finalize' }));
-      }
-      updateDuplexSpeaker(speaker, { active: false, stage: 'Processing...' });
-      return;
-    }
-
-    // Mutual exclusion: stop the other speaker before starting this one
-    const otherSpeaker = speaker === 'A' ? 'B' : 'A';
-    const otherRefs = duplexRefs.current[otherSpeaker];
-    if (otherRefs.socket) {
-      otherRefs.manualClose = true;
-      otherRefs.shouldReconnect = false;
-      otherRefs.finalizePending = true;
-      if (otherRefs.recorder?.state === 'recording') {
-        otherRefs.recorder.requestData?.();
-        otherRefs.recorder.stop();
-      } else if (otherRefs.socket.readyState === WebSocket.OPEN) {
-        otherRefs.socket.send(JSON.stringify({ type: 'finalize' }));
-      }
-      updateDuplexSpeaker(otherSpeaker, { active: false, stage: 'Paused' });
-    }
-    // Also stop any playing TTS so the mic is clean
-    window.speechSynthesis?.cancel();
-
-    let stream;
-    try {
-      stream = await requestAudioStream(settings.micDeviceId !== 'default' ? settings.micDeviceId : undefined);
-      debugLog('MIC STREAM ACTIVE:', stream);
-      logAudioStream(stream);
-    } catch (error) {
-      setMicPermission('denied');
-      updateDuplexSpeaker(speaker, { active: false, stage: mediaErrorMessage(error) });
-      setCurrentError(mapTechnicalError(error));
-      return;
-    }
-    setMicPermission('available');
-    const activeAuthToken = await ensureAuthToken();
-    const socket = new WebSocket(withAuthToken(`${liveWsUrl}/ws/audio`, activeAuthToken));
-    const source = speaker === 'A' ? sourceLanguage : targetLanguage;
-    const target = speaker === 'A' ? targetLanguage : sourceLanguage;
-    refs.manualClose = false;
-    refs.shouldReconnect = true;
-    refs.finalizePending = false;
-    refs.socket = socket;
-    socket.binaryType = 'arraybuffer';
-    let recorder;
-    try {
-      recorder = createAudioRecorder(stream);
-    } catch (error) {
-      stopTracks(stream);
-      updateDuplexSpeaker(speaker, { active: false, stage: error.message || 'Recording not supported' });
-      return;
-    }
-    refs.recorder = recorder;
-    recorder.ondataavailable = (event) => {
-      debugLog('MOBILE AUDIO SIZE:', event.data.size);
-      sendRecorderChunk(socket, event, recorder).catch((err) => {
-        console.error('Duplex sendRecorderChunk error:', err);
-      });
-    };
-    recorder.onstop = () => {
-      if (refs.finalizePending && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'finalize' }));
-      }
-      stopTracks(stream);
-    };
-
-    socket.onopen = () => {
-      updateDuplexSpeaker(speaker, { active: true, transcript: '', translation: '', stage: 'Listening' });
-      socket.send(JSON.stringify({
-        type: 'start',
-        session_id: sessionId,
-        device_id: `${INITIAL_DEVICE_ID}-${speaker}`,
-        speaker,
-        speaker_label: `Speaker ${speaker}`,
-        speaker_mode: 'manual',
-        source_language: source,
-        target_language: target,
-        mime_type: recorder.mimeType || preferredAudioMimeType(),
-      }));
-      recorder.start(activePacketMs());
-      startMicMeter(stream);
-    };
-
-    socket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'session_restored') {
-        applySharedSession(data.session?.shared);
-        updateDuplexSpeaker(speaker, { stage: `Rebound session (${data.session.reconnects} reconnects)` });
-      }
-      if (data.type === 'session_sync') applySharedSession(data.session);
-      if (data.type === 'speaker_detected') {
-        const label = rememberSpeaker(data);
-        updateDuplexSpeaker(speaker, { speaker_label: label, stage: `${label} connected` });
-      }
-      if (data.type === 'cip') {
-        const brainUpdate = applyBrainPayload(data, `duplex-${speaker}`);
-        if (brainUpdate?.message) updateDuplexSpeaker(speaker, { stage: brainUpdate.message });
-      }
-      if (data.type === 'stage') updateDuplexSpeaker(speaker, { stage: data.message });
-      if (data.type === 'turn') {
-        const label = rememberSpeaker(data);
-        const brainUpdate = applyBrainPayload(data, `duplex-${speaker}`);
-        setConversationBrain(`${label}: ${data.reason}${data.behavior ? ` - ${data.behavior}` : ''}${data.playback_owner ? ` - playback: ${data.playback_owner}` : ''}`);
-        if (brainUpdate?.speakerShift && brainUpdate.message) {
-          updateDuplexSpeaker(speaker, { stage: brainUpdate.message });
-        }
-        if (!data.allowed && data.behavior === 'hold') {
-          refs.recorder?.stop();
-          refs.recorder?.stream.getTracks().forEach((track) => track.stop());
-          socket.close();
-          refs.socket = null;
-          updateDuplexSpeaker(speaker, { active: false, stage: data.reason });
-        }
-      }
-      if (data.type === 'final_transcription') {
-        rememberSpeaker(data);
-        updateDuplexSpeaker(speaker, { transcript: data.text, stage: 'Transcription ready' });
-      }
-      if (data.type === 'semantic_context') {
-        setSemanticContext({
-          last_intent: data.last_intent,
-          conversation_mood: data.conversation_mood,
-          topics: data.topics || [],
-        });
-        updateDuplexSpeaker(speaker, { stage: `Intent: ${data.last_intent}, mood: ${data.conversation_mood}` });
-      }
-      if (data.type === 'live_translation') {
-        rememberSpeaker(data);
-        updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Translation ready' });
-      }
-      if (data.type === 'partial_translation') {
-        rememberSpeaker(data);
-        updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Live translation' });
-      }
-      if (data.type === 'tts_audio_chunk') {
-        if (shouldSkipBrainTts(data)) {
-          updateDuplexSpeaker(speaker, { stage: 'Voice skipped for confirmation' });
-          return;
-        }
-        // Pause the OTHER speaker's mic while TTS plays to prevent echo
-        const otherSpk = speaker === 'A' ? 'B' : 'A';
-        const otherR = duplexRefs.current[otherSpk];
-        if (otherR.recorder?.state === 'recording') {
-          otherR.recorder.pause?.();
-          otherR._pausedForTts = true;
-        }
-        ensureAudioUnlocked().catch((e) => console.warn('Duplex TTS chunk audio unlock failed:', e));
-        enqueueTtsChunk(data.audio_base64, data.mime_type);
-      }
-      if (data.type === 'tts_end' && !data.partial) {
-        // Resume the other speaker's mic after TTS finishes
-        const otherSpk = speaker === 'A' ? 'B' : 'A';
-        const otherR = duplexRefs.current[otherSpk];
-        if (otherR._pausedForTts && otherR.recorder?.state === 'paused') {
-          otherR.recorder.resume?.();
-          otherR._pausedForTts = false;
-        }
-      }
-      if (data.type === 'error') {
-        refs.manualClose = true;
-        refs.shouldReconnect = false;
-        updateDuplexSpeaker(speaker, { active: false, stage: data.message || 'Stream failed' });
-        refs.finalizePending = false;
-        if (refs.recorder?.state === 'recording') refs.recorder.stop();
-        else stopTracks(stream);
-        socket.close();
-        refs.socket = null;
-      }
-      if (data.type === 'final') {
-        refs.manualClose = true;
-        refs.shouldReconnect = false;
-        const brainUpdate = applyBrainPayload(data, `duplex-${speaker}`);
-        const label = rememberSpeaker(data);
-        if (data.session) applySharedSession(data.session);
-        updateDuplexSpeaker(speaker, {
-          active: false,
-          transcript: data.source_text,
-          translation: data.translated_text,
-          speaker_label: label,
-          stage: brainUpdate?.message || 'Complete',
-        });
-        // Append to shared conversation history so turns persist
-        if (data.source_text || data.translated_text) {
-          appendConversationTurn({
-            ...data,
-            speaker_label: label || `Person ${speaker}`,
-            conversationSpeaker: speaker,
-          });
-        }
-        if (refs.recorder?.state === 'recording') {
-          refs.finalizePending = false;
-          refs.recorder.stop();
-        }
-        socket.close();
-        refs.socket = null;
-      }
-    };
-
-    socket.onerror = () => {
-      updateDuplexSpeaker(speaker, { active: false, stage: 'Connection error' });
-      setConversationBrain('WebSocket connection error');
-      resetStreamState();
-      setReconnectToastVisible(true);
-    };
-    socket.onclose = () => {
-      updateDuplexSpeaker(speaker, { active: false });
-      refs.finalizePending = false;
-      stopTracks(stream);
-      refs.socket = null;
-      resetStreamState();
-      if (refs.shouldReconnect && !refs.manualClose) {
-        updateDuplexSpeaker(speaker, { stage: 'Reconnecting...' });
-        window.setTimeout(() => toggleDuplexSpeaker(speaker), 1500);
-      } else {
-        setReconnectToastVisible(true);
-      }
-    };
-  }
-
 
   const sourceText = partialTranscript || result?.source_text || 'Ready to listen';
   const translatedText = liveTranslation || result?.translated_text || 'Ready to translate';

@@ -420,6 +420,8 @@ async def websocket_audio_translation(
         if len(next_partial_text) > len(partial_buffer):
             partial_buffer = next_partial_text
         await websocket.send_json({"type": "partial_transcription", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": partial_text})
+        if stt_only:
+            return
         # Adaptive thresholds: interruption and current system speed
         interrupted = last_active_speaker is not None and last_active_speaker != partial_speaker
         total_latency = latency_engine.total()

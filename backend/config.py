@@ -336,7 +336,7 @@ def get_stt_queue_max_depth() -> int:
 
 
 def get_max_active_streams_per_user() -> int:
-    return _to_int("MAX_ACTIVE_STREAMS_PER_USER", 4, minimum=1)
+    return _to_int("MAX_ACTIVE_STREAMS_PER_USER", 5, minimum=1)
 
 
 

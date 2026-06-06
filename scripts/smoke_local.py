@@ -476,6 +476,49 @@ def check_websocket_audio(base_url: str, token: str) -> list[str]:
     return asyncio.run(_ws_audio_ping(base_url, token))
 
 
+async def _ws_stt_only_start(base_url: str, token: str) -> list[str]:
+    import websockets
+
+    ws_base = base_url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = f"{ws_base}/ws/audio?access_token={quote(token)}"
+    try:
+        async with websockets.connect(ws_url, open_timeout=15) as ws:
+            ready = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
+            if ready.get("type") != "ready":
+                return [f"ws/stt_only bad ready frame: {ready}"]
+            await ws.send(json.dumps({
+                "type": "start",
+                "source_language": "en",
+                "target_language": "ht",
+                "speaker_mode": "auto",
+                "speaker": "auto",
+                "device_id": "smoke-stt-only",
+                "stt_only": True,
+                "mime_type": "audio/webm;codecs=opus",
+            }))
+            saw_listening = False
+            for _ in range(20):
+                message = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+                if message.get("type") == "error":
+                    return [f"ws/stt_only error: {message}"]
+                if message.get("type") == "listening":
+                    msg = str(message.get("message") or "").lower()
+                    if "transcription" in msg:
+                        saw_listening = True
+                        break
+            if not saw_listening:
+                return ["ws/stt_only missing transcription-only listening ack"]
+    except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError) as exc:
+        return [f"ws/stt_only failed: {exc}"]
+    except Exception as exc:
+        return [f"ws/stt_only failed: {exc}"]
+    return []
+
+
+def check_websocket_stt_only(base_url: str, token: str) -> list[str]:
+    return asyncio.run(_ws_stt_only_start(base_url, token))
+
+
 async def _ws_live_text_ht(base_url: str, token: str) -> list[str]:
     import websockets
 
@@ -585,6 +628,7 @@ def main() -> int:
             errors.extend(check_websocket_translate(base_url, token))
             errors.extend(check_websocket_audio(base_url, token))
             errors.extend(check_websocket_live_text_ht(base_url, token))
+            errors.extend(check_websocket_stt_only(base_url, token))
             errors.extend(check_websocket_speaker_session(base_url, token))
 
     if errors:

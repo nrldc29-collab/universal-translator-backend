@@ -5,7 +5,6 @@ import Constants from "expo-constants";
 import * as Network from "expo-network";
 import { apiToWsUrl, connectWS } from "./services/ws";
 import { startAudioStream, stopAudioStream, playTtsAudio } from "./services/audio-stream";
-import DuplexMode from "./components/DuplexMode";
 import SemanticContext from "./components/SemanticContext";
 import SettingsScreen from "./components/SettingsScreen";
 import AnimatedCard from "./components/AnimatedCard";
@@ -515,18 +514,9 @@ export default function App() {
         />
       ) : (
         <>
-          <DuplexMode
-            isConnected={isConnected}
-            wsControlRef={wsControlRef}
-            sourceLanguage={sourceLanguage}
-            targetLanguage={targetLanguage}
-            onTranscriptUpdate={(speaker, text) => {
-              debugLog(`Speaker ${speaker} transcript:`, text);
-            }}
-            onTranslationUpdate={(speaker, text) => {
-              debugLog(`Speaker ${speaker} translation:`, text);
-            }}
-          />
+          <Text style={[styles.backendStatusText, { marginBottom: 12 }]}>
+            Use Start Live Voice for EN↔HT translation. Conversation duplex UI is not enabled on mobile yet.
+          </Text>
 
           <SemanticContext context={semanticContext} />
 

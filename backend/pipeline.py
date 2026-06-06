@@ -67,6 +67,8 @@ class AnaiTranslatorPipeline:
             result["tts"] = {"ok": False, "error": exc.__class__.__name__}
         try:
             self.translate_local("hello", "en", "es")
+            self.translate_local("I need help", "en", "ht")
+            self.translate_local("mwen bezwen èd", "ht", "en")
             result["translation"] = {"ok": True}
         except (RuntimeError, OSError, ValueError) as exc:
             result["translation"] = {"ok": False, "error": exc.__class__.__name__}

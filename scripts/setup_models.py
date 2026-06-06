@@ -38,7 +38,15 @@ def warm_translation() -> None:
     result = translator.translate("hello", "en", "es")
     if not result or result.startswith("[en->es]"):
         raise RuntimeError(f"translation warmup failed: {result!r}")
-    print(f"warm  translation ({result!r})")
+    print(f"warm  translation en->es ({result!r})")
+    ht_result = translator.translate("I need help", "en", "ht")
+    if not ht_result or ht_result.startswith("[en->ht]"):
+        raise RuntimeError(f"en->ht translation warmup failed: {ht_result!r}")
+    print(f"warm  translation en->ht ({ht_result!r})")
+    ht_en = translator.translate("mwen bezwen èd", "ht", "en")
+    if not ht_en or ht_en.startswith("[ht->en]"):
+        raise RuntimeError(f"ht->en translation warmup failed: {ht_en!r}")
+    print(f"warm  translation ht->en ({ht_en!r})")
 
 
 def warm_whisper() -> None:

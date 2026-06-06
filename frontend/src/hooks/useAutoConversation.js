@@ -264,6 +264,7 @@ export function useAutoConversation({
   const ttsTimerRef    = useRef(null);
   const ttsTimerBARef  = useRef(null);
   const utteranceIdRef = useRef(0); // incremented per utterance to invalidate stale handlers
+  const utteranceTimeoutRef = useRef(null);
   const ttsChunksAB    = useRef([]);
   const ttsChunksBA    = useRef([]);
   const playingDirRef  = useRef(null); // which direction is currently playing TTS
@@ -281,6 +282,13 @@ export function useAutoConversation({
   useEffect(() => {
     if (activeRef.current) restartSockets();
   }, [sourceLanguage, targetLanguage, authToken]);
+
+  function clearUtteranceTimeout() {
+    if (utteranceTimeoutRef.current) {
+      clearTimeout(utteranceTimeoutRef.current);
+      utteranceTimeoutRef.current = null;
+    }
+  }
 
   function setPhaseR(p) { phaseRef.current = p; setPhase(p); }
   function buildUrl() {
@@ -361,6 +369,7 @@ export function useAutoConversation({
           if (!isFinal) return;
           finalTranslation = text;
           clearTimeout(audioFallbackTimer);
+          clearUtteranceTimeout();
           if (ttsCompleted) return;
           const backendOwnsTts = frame.source === 'browser_live_text'
             && BACKEND_TTS_LANGS.has(outboundTargetLang);
@@ -390,6 +399,7 @@ export function useAutoConversation({
           }
           receivedTtsChunks += 1;
           clearTimeout(audioFallbackTimer);
+          clearUtteranceTimeout();
           chunkBuf.current.push(b64);
           if (playingDirRef.current === null) {
             playingDirRef.current = dir;
@@ -401,6 +411,7 @@ export function useAutoConversation({
         onTtsEnd() {
           if (!activeRef.current) return;
           ttsCompleted = true;
+          clearUtteranceTimeout();
           clearTimeout(audioFallbackTimer);
           clearTimeout(timerRef.current);
           timerRef.current = setTimeout(async () => {
@@ -501,6 +512,7 @@ export function useAutoConversation({
   }
 
   function restartSockets() {
+    clearUtteranceTimeout();
     clearTimeout(ttsTimerRef.current);
     clearTimeout(ttsTimerBARef.current);
     utteranceIdRef.current += 1;
@@ -715,18 +727,18 @@ export function useAutoConversation({
     const sock = speaker === 'A' ? sockABRef.current : sockBARef.current;
     sock?._handler?.reset();
 
-    // Timeout safety: restart if no response in 9s
+    // Timeout safety: restart if no response in 15s
+    clearUtteranceTimeout();
     clearTimeout(ttsTimerRef.current);
     clearTimeout(ttsTimerBARef.current);
     const capturedUtteranceId = utteranceIdRef.current;
-    const timeoutRef = speaker === 'B' ? ttsTimerBARef : ttsTimerRef;
-    timeoutRef.current = setTimeout(() => {
+    utteranceTimeoutRef.current = setTimeout(() => {
       if (activeRef.current && utteranceIdRef.current === capturedUtteranceId &&
           (phaseRef.current === 'processing' || phaseRef.current === 'speaking')) {
-        utteranceIdRef.current++; // invalidate any pending handler
+        utteranceIdRef.current++;
         afterTts(text, '', speaker);
       }
-    }, 9000);
+    }, 15000);
 
     if (sock) {
       sock.send(text, true);
@@ -764,7 +776,11 @@ export function useAutoConversation({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       micStreamRef.current = stream;
       startMicLevelPoll(stream);
-    } catch {}
+    } catch {
+      onStatus?.('Microphone access denied');
+      stop();
+      return;
+    }
 
     openSockets();
     setTimeout(() => { if (activeRef.current) startRecognition(); }, 500);
@@ -777,6 +793,7 @@ export function useAutoConversation({
     setPhaseR('idle');
     setDetLang(null);
     setMicLevel(0);
+    clearUtteranceTimeout();
     clearTimeout(ttsTimerRef.current);
     clearTimeout(ttsTimerBARef.current);
     if (recogRef.current) { try { recogRef.current.abort(); } catch {} recogRef.current = null; }
