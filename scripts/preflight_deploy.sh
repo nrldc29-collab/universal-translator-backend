@@ -28,6 +28,7 @@ check_file requirements-railway.txt
 check_file RAILWAY-DEPLOY.md
 check_file scripts/smoke_local.py
 check_file Get-Railway-Variables.ps1
+check_file Get-Railway-Variables.sh
 
 if ! grep -q "frontend-build" "$ROOT/Dockerfile" || ! grep -q "SERVE_FRONTEND_DIST=1" "$ROOT/Dockerfile"; then
   failures+=("Dockerfile must build frontend and set SERVE_FRONTEND_DIST=1")
@@ -47,6 +48,18 @@ fi
 
 if ! grep -q "QUOTA_REQUESTS_PER_HOUR = \"500\"" "$ROOT/Get-Railway-Variables.ps1"; then
   failures+=("Get-Railway-Variables.ps1 missing QUOTA_REQUESTS_PER_HOUR=500")
+fi
+
+if ! grep -qE 'QUOTA_REQUESTS_PER_HOUR.*500' "$ROOT/Get-Railway-Variables.sh"; then
+  failures+=("Get-Railway-Variables.sh missing QUOTA_REQUESTS_PER_HOUR=500")
+fi
+
+if ! bash "$ROOT/Get-Railway-Variables.sh" demo test-password 2>/dev/null | grep -q "USERS=demo:test-password"; then
+  failures+=("Get-Railway-Variables.sh did not emit expected USERS line")
+fi
+
+if ! grep -q "JWT_SECRET" "$ROOT/deploy.sh" || ! grep -q "scripts/smoke_local.py" "$ROOT/deploy.sh"; then
+  failures+=("deploy.sh must set production JWT_SECRET/USERS and run smoke_local.py")
 fi
 
 if [[ ${#failures[@]} -gt 0 ]]; then

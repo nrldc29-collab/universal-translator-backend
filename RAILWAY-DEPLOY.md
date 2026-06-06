@@ -12,6 +12,13 @@ Deploy the bundled **English ↔ Haitian Creole** stack (frontend + FastAPI back
 powershell -ExecutionPolicy Bypass -File .\Get-Railway-Variables.ps1 -Username demo -FrontendOrigin https://YOUR-SERVICE.up.railway.app
 ```
 
+Linux/macOS:
+
+```bash
+chmod +x Get-Railway-Variables.sh
+./Get-Railway-Variables.sh demo "" https://YOUR-SERVICE.up.railway.app
+```
+
 4. Paste the output into Railway **Variables**. Replace `JWT_SECRET`, `USERS`, and set `ALLOWED_ORIGINS` to your service URL.
 5. Deploy. Wait for `/health` to report `"ready": true`.
 
