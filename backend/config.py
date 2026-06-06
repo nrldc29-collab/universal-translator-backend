@@ -532,6 +532,11 @@ def apply_railway_production_defaults() -> list[str]:
     domain = _railway_public_domain()
     origin = f"https://{domain}"
 
+    host = os.getenv("BACKEND_HOST", "").strip()
+    if not host or host in {"127.0.0.1", "localhost"}:
+        os.environ["BACKEND_HOST"] = "0.0.0.0"
+        applied.append("BACKEND_HOST")
+
     raw_origins = os.getenv("ALLOWED_ORIGINS", "").strip()
     if not raw_origins or "example.com" in raw_origins or "your-frontend" in raw_origins:
         os.environ["ALLOWED_ORIGINS"] = origin
