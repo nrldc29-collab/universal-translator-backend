@@ -164,8 +164,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Cache Piper voices for Docker context
+        uses: actions/cache@v4
+        with:
+          path: |
+            models/tts/en_US-lessac-medium.onnx
+            models/tts/en_US-lessac-medium.onnx.json
+          key: piper-en-lessac-v2
+      - name: Ensure Piper voices before Docker build
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: bash scripts/docker_fetch_piper.sh models/tts
       - name: Build Railway Docker image
-        run: docker build -f Dockerfile -t anai-translator:ci .
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          BUILD_ARGS=()
+          if [ -n "${HF_TOKEN:-}" ]; then
+            BUILD_ARGS+=(--build-arg "HF_TOKEN=${HF_TOKEN}")
+          fi
+          docker build "${BUILD_ARGS[@]}" -f Dockerfile -t anai-translator:ci .
       - name: Smoke test production container (Railway PORT=8080)
         run: |
           JWT=$(python -c "import secrets; print(secrets.token_urlsafe(48))")

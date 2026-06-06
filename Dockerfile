@@ -78,7 +78,10 @@ COPY translation translation/
 COPY tts tts/
 COPY ailang ailang/
 COPY ailang_integration ailang_integration/
+COPY models/tts/ models/tts/
 COPY scripts/docker_fetch_piper.sh scripts/docker_fetch_piper.sh
+ARG HF_TOKEN=
+ENV HF_TOKEN=${HF_TOKEN}
 RUN chmod +x scripts/docker_fetch_piper.sh && ./scripts/docker_fetch_piper.sh models/tts
 COPY --from=frontend-build /frontend/dist frontend/dist
 
