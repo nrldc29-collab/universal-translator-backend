@@ -96,4 +96,12 @@ echo "Deploy preflight passed (files and production defaults)."
 if [[ "$RUN_SMOKE" -eq 1 ]]; then
   echo "Running live smoke against $BASE_URL ..."
   python3 "$ROOT/scripts/smoke_local.py" "${BASE_URL%/}"
+  if curl -sf --max-time 3 http://127.0.0.1:5173/ >/dev/null 2>&1; then
+    if ! curl -sf --max-time 5 http://127.0.0.1:5173/ | grep -q "Anai Translator"; then
+      echo "Deploy preflight failed:"
+      echo "  - frontend on :5173 is listening but not serving the app shell"
+      exit 1
+    fi
+    echo "Frontend app shell reachable on :5173"
+  fi
 fi

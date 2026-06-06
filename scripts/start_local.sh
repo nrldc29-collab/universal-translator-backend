@@ -178,7 +178,7 @@ if ! port_open "$FRONTEND_PORT"; then
     exit 1
   fi
   echo "Starting frontend on port ${FRONTEND_PORT}..."
-  nohup "$ROOT/frontend/node_modules/.bin/vite" --host 0.0.0.0 --port "$FRONTEND_PORT" \
+  nohup bash -c "cd '$ROOT/frontend' && exec '$ROOT/frontend/node_modules/.bin/vite' --host 0.0.0.0 --port '$FRONTEND_PORT'" \
     >"$ROOT/logs/frontend.out.log" 2>"$ROOT/logs/frontend.err.log" &
 fi
 
