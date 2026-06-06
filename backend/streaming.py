@@ -561,7 +561,99 @@ async def websocket_audio_translation(
                 "speaker_label": live_speaker_label,
                 "text": refined,
                 "source": "browser_live_text",
+                "final": payload["final"],
             })
+
+        is_final = bool(payload.get("final"))
+
+        async def emit_live_tts(live_tts_to_speak: str, *, partial: bool) -> bool:
+            nonlocal partial_tts_text, last_partial_tts_at, partial_tts_active
+            if not live_tts_to_speak or not is_speakable_live_delta(live_tts_to_speak):
+                return False
+            live_tts_path = None
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    live_tts_path = await tts_circuit_breaker.call(
+                        run_pipeline_step,
+                        "live text TTS",
+                        lambda text=live_tts_to_speak: pipeline.tts.synthesize(
+                            text,
+                            f"models/tts/{uuid4()}-live-text.wav",
+                            language=live_target_language,
+                        ),
+                    )
+                    break
+                except Exception as exc:
+                    logger.warning("live_tts_failed attempt=%d/%d error=%s", attempt + 1, max_retries, exc)
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(0.1 * (2 ** attempt))
+                    else:
+                        logger.error("live_tts_failed_all_attempts error=%s", exc)
+                        live_tts_path = None
+            if not live_tts_path:
+                return False
+            try:
+                partial_tts_text = refined
+                last_partial_tts_at = time()
+                partial_tts_active = True
+                audio_bytes = Path(live_tts_path).read_bytes()
+                if len(audio_bytes) < 100:
+                    return False
+                await websocket.send_json({
+                    "type": "tts_start",
+                    "speaker": live_speaker,
+                    "speaker_label": live_speaker_label,
+                    "chunks": 1,
+                    "partial": partial,
+                    "source": "browser_live_text",
+                })
+                await websocket.send_json({
+                    "type": "tts_audio_chunk",
+                    "speaker": live_speaker,
+                    "speaker_label": live_speaker_label,
+                    "index": 1,
+                    "total": 1,
+                    "text": live_tts_to_speak,
+                    "live_translation_text": refined,
+                    "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+                    "mime_type": "audio/wav",
+                    "partial": partial,
+                    "source": "browser_live_text",
+                })
+                await websocket.send_json({
+                    "type": "tts_end",
+                    "speaker": live_speaker,
+                    "speaker_label": live_speaker_label,
+                    "partial": partial,
+                    "source": "browser_live_text",
+                })
+                await websocket.send_json({
+                    "type": "latency",
+                    "metric": "live_text_voice",
+                    "ms": round((time() - payload["started_at"]) * 1000),
+                })
+                return True
+            finally:
+                partial_tts_active = False
+                Path(live_tts_path).unlink(missing_ok=True)
+
+        if is_final:
+            pending_tail = phrase_accumulation_buffer.strip()
+            live_tail = live_translation_delta(partial_tts_text, refined)
+            if is_speakable_live_delta(live_tail):
+                tts_playback_text = live_tail
+            elif pending_tail:
+                tts_playback_text = pending_tail
+            elif not partial_tts_text or folded_live_text(refined) != folded_live_text(partial_tts_text):
+                tts_playback_text = refined
+            else:
+                tts_playback_text = ""
+            phrase_accumulation_buffer = ""
+            phrase_accumulation_start = 0.0
+            if tts_playback_text:
+                await emit_live_tts(tts_playback_text, partial=False)
+            return
 
         live_tts_delta = live_translation_delta(partial_tts_text, refined)
         # Only speak new words (real delta). Never fall back to full sentence —
@@ -596,75 +688,7 @@ async def websocket_audio_translation(
         logger.info("live_tts_firing words=%d elapsed=%.1fs text=%r", word_count, elapsed, live_tts_to_speak[:60])
         phrase_accumulation_buffer = ""
         phrase_accumulation_start = 0.0
-
-        # TTS with circuit breaker and retry logic
-        live_tts_path = None
-        max_retries = 2
-        for attempt in range(max_retries):
-            try:
-                live_tts_path = await tts_circuit_breaker.call(
-                    run_pipeline_step,
-                    "live text TTS",
-                    lambda: pipeline.tts.synthesize(
-                        live_tts_to_speak,
-                        f"models/tts/{uuid4()}-live-text.wav",
-                        language=live_target_language,
-                    ),
-                )
-                break  # Success - exit retry loop
-            except Exception as exc:
-                logger.warning("live_tts_failed attempt=%d/%d error=%s", attempt + 1, max_retries, exc)
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(0.1 * (2 ** attempt))  # Exponential backoff: 100ms, 200ms
-                else:
-                    logger.error("live_tts_failed_all_attempts error=%s", exc)
-                    live_tts_path = None
-        if not live_tts_path:
-            return
-
-        try:
-            partial_tts_text = refined
-            last_partial_tts_at = time()
-            partial_tts_active = True
-            audio_bytes = Path(live_tts_path).read_bytes()
-            if len(audio_bytes) < 100:
-                return
-            await websocket.send_json({
-                "type": "tts_start",
-                "speaker": live_speaker,
-                "speaker_label": live_speaker_label,
-                "chunks": 1,
-                "partial": True,
-                "source": "browser_live_text",
-            })
-            await websocket.send_json({
-                "type": "tts_audio_chunk",
-                "speaker": live_speaker,
-                "speaker_label": live_speaker_label,
-                "index": 1,
-                "total": 1,
-                "text": live_tts_to_speak,
-                "live_translation_text": refined,
-                "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
-                "mime_type": "audio/wav",
-                "partial": True,
-                "source": "browser_live_text",
-            })
-            await websocket.send_json({
-                "type": "tts_end",
-                "speaker": live_speaker,
-                "speaker_label": live_speaker_label,
-                "partial": True,
-                "source": "browser_live_text",
-            })
-            await websocket.send_json({
-                "type": "latency",
-                "metric": "live_text_voice",
-                "ms": round((time() - payload["started_at"]) * 1000),
-            })
-        finally:
-            partial_tts_active = False
-            Path(live_tts_path).unlink(missing_ok=True)
+        await emit_live_tts(live_tts_to_speak, partial=True)
 
     async def finalize_segment(segment: dict):
         nonlocal speaker, speaker_label, speaker_index, speaker_detection, device_id, finalizing, last_active_speaker, tts_active

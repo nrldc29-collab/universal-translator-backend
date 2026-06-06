@@ -8,6 +8,7 @@ import {
   languageName,
   isFatalStreamError,
   speechRecognitionLanguage,
+  detectLanguagePair,
   audioFileExtension,
   withAuthToken,
   summarizeLatencyHistory,
@@ -214,6 +215,20 @@ describe('speechRecognitionLanguage', () => {
   it('defaults to en-US for falsy input', () => {
     expect(speechRecognitionLanguage('')).toBe('en-US');
     expect(speechRecognitionLanguage(null)).toBe('en-US');
+  });
+});
+
+describe('detectLanguagePair', () => {
+  it('detects Haitian Creole in an EN↔HT pair', () => {
+    expect(detectLanguagePair('mwen bezwen èd', 'en', 'ht', 'en')).toBe('ht');
+  });
+
+  it('detects English in an EN↔HT pair', () => {
+    expect(detectLanguagePair('I need help today', 'en', 'ht', 'ht')).toBe('en');
+  });
+
+  it('keeps last language on ambiguous short text', () => {
+    expect(detectLanguagePair('ok', 'en', 'ht', 'ht')).toBe('ht');
   });
 });
 

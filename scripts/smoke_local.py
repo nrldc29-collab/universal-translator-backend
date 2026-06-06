@@ -439,6 +439,61 @@ def check_websocket_audio(base_url: str, token: str) -> list[str]:
     return asyncio.run(_ws_audio_ping(base_url, token))
 
 
+async def _ws_live_text_ht(base_url: str, token: str) -> list[str]:
+    import websockets
+
+    ws_base = base_url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = f"{ws_base}/ws/audio?access_token={quote(token)}"
+    try:
+        async with websockets.connect(ws_url, open_timeout=15) as ws:
+            ready = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
+            if ready.get("type") != "ready":
+                return [f"ws/live_text bad ready frame: {ready}"]
+            await ws.send(json.dumps({
+                "type": "start",
+                "source_language": "en",
+                "target_language": "ht",
+                "speaker_mode": "manual",
+                "speaker": "A",
+                "mime_type": "audio/webm;codecs=opus",
+            }))
+            await ws.send(json.dumps({
+                "type": "live_text",
+                "text": "I need help",
+                "final": True,
+                "source_language": "en",
+                "target_language": "ht",
+                "speaker_mode": "manual",
+                "speaker": "A",
+            }))
+            saw_translation = False
+            saw_final_tts = False
+            for _ in range(40):
+                message = json.loads(await asyncio.wait_for(ws.recv(), timeout=30))
+                if message.get("type") == "error":
+                    return [f"ws/live_text error: {message}"]
+                if message.get("type") in ("live_translation", "partial_translation"):
+                    text = str(message.get("text") or "").lower()
+                    if "èd" in text or "ed" in text or "bezwen" in text:
+                        saw_translation = True
+                if message.get("type") == "tts_end" and not message.get("partial"):
+                    saw_final_tts = True
+                    break
+            if not saw_translation:
+                return ["ws/live_text en->ht returned no Creole translation"]
+            if not saw_final_tts:
+                return ["ws/live_text en->ht missing final tts_end"]
+    except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError) as exc:
+        return [f"ws/live_text en->ht failed: {exc}"]
+    except Exception as exc:
+        return [f"ws/live_text en->ht failed: {exc}"]
+    return []
+
+
+def check_websocket_live_text_ht(base_url: str, token: str) -> list[str]:
+    return asyncio.run(_ws_live_text_ht(base_url, token))
+
+
 def check_tts(base_url: str, auth: dict[str, str]) -> list[str]:
     errors: list[str] = []
     root = base_url.rstrip("/")
@@ -486,6 +541,7 @@ def main() -> int:
             errors.extend(check_tts(base_url, auth))
             errors.extend(check_websocket_translate(base_url, token))
             errors.extend(check_websocket_audio(base_url, token))
+            errors.extend(check_websocket_live_text_ht(base_url, token))
             errors.extend(check_websocket_speaker_session(base_url, token))
 
     if errors:

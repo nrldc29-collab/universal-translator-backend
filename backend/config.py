@@ -271,7 +271,7 @@ def get_partial_translation_min_words() -> int:
 
 
 def get_partial_tts_mode() -> bool:
-    return _to_bool("PARTIAL_TTS_MODE", False)
+    return _to_bool("PARTIAL_TTS_MODE", True)
 
 
 def get_vad_recent_chunks() -> int:

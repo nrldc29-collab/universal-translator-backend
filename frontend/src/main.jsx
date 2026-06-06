@@ -72,6 +72,7 @@ import {
   defaultApiUrl,
   configuredUrl,
   BACKEND_TTS_LANGS,
+  detectLanguagePair,
   // constants
   TARGET_LANGUAGE_OPTIONS,
   VOICE_WARMUP_PHRASES,
@@ -534,6 +535,7 @@ function App() {
     speechFinalTextRef, speechInterimTextRef,
     speechAssistSocketRef, speechAssistRestartTimerRef, speechAssistStopRequestedRef,
     speechLastSentTextRef, speechLastSentAtRef,
+    speechListenAltRef, speechLastDetectedLangRef, speechLastLiveTargetRef,
   } = useSpeechFastPath();
   const { voiceWarmupRef, resolveAudioUrl, prefetchAudioUrl, warmVoiceCache } = useVoiceWarmup({
     apiUrl: liveApiUrl,
@@ -1165,6 +1167,16 @@ function App() {
     if (!isFinal && now - speechLastSentAtRef.current < LIVE_SPEECH_TEXT_THROTTLE_MS) return false;
     speechLastSentTextRef.current = normalized;
     speechLastSentAtRef.current = now;
+    const detected = detectLanguagePair(
+      normalized,
+      sourceLanguage,
+      targetLanguage,
+      speechLastDetectedLangRef.current || sourceLanguage,
+    );
+    speechLastDetectedLangRef.current = detected;
+    const liveSource = detected;
+    const liveTarget = detected === sourceLanguage ? targetLanguage : sourceLanguage;
+    speechLastLiveTargetRef.current = liveTarget;
     try {
       socket.send(JSON.stringify({
         type: 'live_text',
@@ -1173,8 +1185,8 @@ function App() {
         session_id: sessionId,
         device_id: INITIAL_DEVICE_ID,
         speaker_name: INITIAL_SPEAKER_NAME,
-        source_language: sourceLanguage,
-        target_language: targetLanguage,
+        source_language: liveSource,
+        target_language: liveTarget,
         speaker_mode: speakerMode,
         speaker: speakerMode === 'auto' ? 'auto' : 'A',
         sent_at_ms: Date.now(),
@@ -1208,6 +1220,8 @@ function App() {
     setLiveAssistActive(true);
     speechLastSentTextRef.current = '';
     speechLastSentAtRef.current = 0;
+    speechListenAltRef.current = false;
+    speechLastDetectedLangRef.current = sourceLanguage;
     speechFinalTextRef.current = '';
     speechInterimTextRef.current = '';
     setMicPermission('available');
@@ -1228,7 +1242,7 @@ function App() {
     recognition.lang = speechRecognitionLanguage(sourceLanguage);
     recognition.interimResults = true;
     recognition.continuous = true;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 3;
 
     recognition.onresult = (event) => {
       let interim = '';
@@ -1293,6 +1307,10 @@ function App() {
       speechAssistRestartTimerRef.current = window.setTimeout(() => {
         if (!speechFastPathActiveRef.current || speechAssistStopRequestedRef.current) return;
         if (socketRef.current !== activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
+        speechListenAltRef.current = !speechListenAltRef.current;
+        recognition.lang = speechRecognitionLanguage(
+          speechListenAltRef.current ? targetLanguage : sourceLanguage,
+        );
         try {
           recognition.start();
         } catch (error) {
@@ -1835,12 +1853,23 @@ function App() {
         streamTranslationRef.current = data.text || '';
         setLiveTranslation(data.text);
         setPipelineStage('Translation ready');
+        const voiceLang = speechLastLiveTargetRef.current || targetLanguage;
+        if (data.final && data.text && !lowBandwidthMode) {
+          window.setTimeout(async () => {
+            if (ttsPlayingRef.current || ttsQueueRef.current.length > 0) return;
+            const voice = await fetchTranslationVoice(data.text, voiceLang, authToken);
+            if (voice && await playEmbeddedTranslationAudio(voice)) return;
+            if (settings.ttsVoice === 'browser' || !BACKEND_TTS_LANGS.has(voiceLang)) {
+              browserTtsSpeak(data.text, voiceLang, settings.ttsSpeed ?? 1.0);
+            }
+          }, 500);
+        }
         // Browser TTS fallback: speak live translations directly when backend
         // has no voice for this language (avoids needing Google TTS API key)
         const useBrowserTts = settings.ttsVoice === 'browser' ||
-          (settings.partialTts !== false && !BACKEND_TTS_LANGS.has(targetLanguage));
-        if (useBrowserTts && data.text && !ttsPlayingRef.current) {
-          browserTtsSpeak(data.text, targetLanguage, settings.ttsSpeed ?? 1.0);
+          (settings.partialTts !== false && !BACKEND_TTS_LANGS.has(voiceLang));
+        if (useBrowserTts && data.text && !data.final && !ttsPlayingRef.current) {
+          browserTtsSpeak(data.text, voiceLang, settings.ttsSpeed ?? 1.0);
         }
       }
       if (data.type === 'tts_start') {

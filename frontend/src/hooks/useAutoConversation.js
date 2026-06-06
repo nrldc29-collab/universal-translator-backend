@@ -12,7 +12,7 @@
  */
 import { useRef, useState, useCallback, useEffect } from 'react';
 
-import { BACKEND_TTS_LANGS } from '../utils';
+import { BACKEND_TTS_LANGS, detectLanguagePair } from '../utils';
 
 // ─── Language config ─────────────────────────────────────────────────────
 const BROWSER_TTS_MAP = {
@@ -22,42 +22,7 @@ const BROWSER_TTS_MAP = {
 };
 
 // ─── Language detection ──────────────────────────────────────────────────
-const LANG_PATTERNS = {
-  es:/\b(el|la|los|las|un|una|que|es|en|de|y|no|lo|le|su|por|con|para|como|pero|más|este|bien|hola|gracias|cómo|qué|estás|soy|quiero|puedo|tiene|hace|usted|también|cuando|porque|donde|nosotros|ellos|aquí|allí)\b/i,
-  fr:/\b(le|la|les|un|une|des|de|du|et|est|pas|je|tu|il|nous|avec|pour|sur|dans|mais|merci|bonjour|oui|non|très|bien|voilà|c'est|j'ai|vous|ils|mon|ma|ici|là|aussi|quand|comment|pourquoi|où)\b/i,
-  de:/\b(der|die|das|ein|eine|und|ist|nicht|ich|du|er|sie|wir|mit|auf|zu|von|im|dem|auch|aber|wenn|bitte|danke|ja|nein|gut|hallo|können|haben|sein|noch|schon|nur|mehr|sehr|was|wer|wo|wie)\b/i,
-  pt:/\b(o|a|os|as|um|uma|de|em|que|é|não|com|para|por|mas|seu|sua|você|também|muito|bem|obrigado|olá|como|está|posso|tenho|fazer|ter|ser|aqui|lá|agora|então|já|só)\b/i,
-  it:/\b(il|la|i|le|un|una|di|e|è|non|con|per|ma|si|mi|ti|lo|che|come|sono|ho|ha|grazie|ciao|sì|no|bene|dove|anche|già|solo|quando|perché|quello|questa|loro|noi)\b/i,
-  nl:/\b(de|het|een|van|en|is|niet|ik|je|hij|ze|we|met|voor|op|in|maar|ook|aan|bij|hallo|dank|ja|nee|goed|hoe|wat|wie|waar|wanneer|dit|dat|mijn|jouw)\b/i,
-  ru:/[а-яёА-ЯЁ]{3,}/,
-  ht:/\b(mwen|ou|li|nou|yo|se|pa|nan|ak|pou|ki|sa|gen|ka|ap|te|la|wi|non|mèsi|bonjou|sak|kijan|kote|jan|poukisa)\b/i,
-};
-
-function detectLanguage(text, langA, langB, lastLang) {
-  if (!text || text.trim().length < 2) return lastLang || langA;
-  // Script-range checks first (definitive)
-  const checks = [
-    [/[一-鿿぀-ゟ゠-ヿ]/, ['zh','ja']],
-    [/[가-힯]/,           ['ko']],
-    [/[؀-ۿ]/,            ['ar']],
-    [/[Ѐ-ӿ]/,            ['ru']],
-    [/[ऀ-ॿ]/,            ['hi']],
-  ];
-  for (const [rx, langs] of checks) {
-    if (rx.test(text)) {
-      for (const l of langs) {
-        if (langA === l) return langA;
-        if (langB === l) return langB;
-      }
-    }
-  }
-  // Score both with word patterns
-  const sA = LANG_PATTERNS[langA] ? (text.match(LANG_PATTERNS[langA]) || []).length : 0;
-  const sB = LANG_PATTERNS[langB] ? (text.match(LANG_PATTERNS[langB]) || []).length : 0;
-  if (sA > sB) return langA;
-  if (sB > sA) return langB;
-  return lastLang || langA; // tie -> keep last speaker
-}
+const detectLanguage = detectLanguagePair;
 
 // ─── Browser TTS ─────────────────────────────────────────────────────────
 function speakBrowser(text, lang, { onEnd } = {}) {
@@ -344,12 +309,15 @@ export function useAutoConversation({
       const timerRef = dir === 'AB' ? ttsTimerRef : ttsTimerBARef;
       let finalTranslation = '';
       let finalSource = '';
+      let receivedTtsChunks = 0;
+      let audioFallbackTimer = null;
 
       return {
         onTranslation(text, isFinal) {
           if (!activeRef.current) return;
           setLiveTrans(text);
           if (isFinal) finalTranslation = text;
+          clearTimeout(audioFallbackTimer);
           if (isFinal && text && !BACKEND_TTS_LANGS.has(outboundTargetLang)) {
             clearTimeout(timerRef.current);
             clearTimeout(dir === 'AB' ? ttsTimerBARef.current : ttsTimerRef.current);
@@ -357,10 +325,21 @@ export function useAutoConversation({
             speakBrowser(text, outboundTargetLang, {
               onEnd: () => afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B'),
             });
+          } else if (isFinal && text) {
+            receivedTtsChunks = 0;
+            audioFallbackTimer = window.setTimeout(() => {
+              if (!activeRef.current || receivedTtsChunks > 0) return;
+              setPhaseR('speaking');
+              speakBrowser(text, outboundTargetLang, {
+                onEnd: () => afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B'),
+              });
+            }, 2000);
           }
         },
         onTtsChunk(b64) {
           if (!activeRef.current) return;
+          receivedTtsChunks += 1;
+          clearTimeout(audioFallbackTimer);
           chunkBuf.current.push(b64);
           if (playingDirRef.current === null) {
             playingDirRef.current = dir;
@@ -397,7 +376,12 @@ export function useAutoConversation({
         },
         setFinalSource(t) { finalSource = t; },
         getFinalTranslation() { return finalTranslation; },
-        reset() { finalTranslation = ''; finalSource = ''; },
+        reset() {
+          finalTranslation = '';
+          finalSource = '';
+          receivedTtsChunks = 0;
+          clearTimeout(audioFallbackTimer);
+        },
       };
     }
 

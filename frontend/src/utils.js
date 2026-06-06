@@ -52,6 +52,43 @@ export const BACKEND_TTS_LANGS = new Set([
   'en', 'es', 'ht', 'fr', 'de', 'it', 'pt', 'nl', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi',
 ]);
 
+const LANG_DETECT_PATTERNS = {
+  es: /\b(el|la|los|las|un|una|que|es|en|de|y|no|lo|le|su|por|con|para|como|pero|más|este|bien|hola|gracias|cómo|qué|estás|soy|quiero|puedo|tiene|hace|usted|también|cuando|porque|donde|nosotros|ellos|aquí|allí)\b/i,
+  fr: /\b(le|la|les|un|une|des|de|du|et|est|pas|je|tu|il|nous|avec|pour|sur|dans|mais|merci|bonjour|oui|non|très|bien|voilà|c'est|j'ai|vous|ils|mon|ma|ici|là|aussi|quand|comment|pourquoi|où)\b/i,
+  de: /\b(der|die|das|ein|eine|und|ist|nicht|ich|du|er|sie|wir|mit|auf|zu|von|im|dem|auch|aber|wenn|bitte|danke|ja|nein|gut|hallo|können|haben|sein|noch|schon|nur|mehr|sehr|was|wer|wo|wie)\b/i,
+  pt: /\b(o|a|os|as|um|uma|de|em|que|é|não|com|para|por|mas|seu|sua|você|também|muito|bem|obrigado|olá|como|está|posso|tenho|fazer|ter|ser|aqui|lá|agora|então|já|só)\b/i,
+  it: /\b(il|la|i|le|un|una|di|e|è|non|con|per|ma|si|mi|ti|lo|che|come|sono|ho|ha|grazie|ciao|sì|no|bene|dove|anche|già|solo|quando|perché|quello|questa|loro|noi)\b/i,
+  nl: /\b(de|het|een|van|en|is|niet|ik|je|hij|ze|we|met|voor|op|in|maar|ook|aan|bij|hallo|dank|ja|nee|goed|hoe|wat|wie|waar|wanneer|dit|dat|mijn|jouw)\b/i,
+  ru: /[а-яёА-ЯЁ]{3,}/,
+  ht: /\b(mwen|ou|li|nou|yo|se|pa|nan|ak|pou|ki|sa|gen|ka|ap|te|la|wi|non|mèsi|bonjou|sak|kijan|kote|jan|poukisa)\b/i,
+  en: /\b(the|and|is|are|was|were|have|has|had|you|your|what|where|when|why|how|hello|thanks|please|need|help|going|today)\b/i,
+};
+
+/** Guess which side of a language pair the spoken text belongs to (for EN↔HT solo assist). */
+export function detectLanguagePair(text, langA, langB, lastLang) {
+  if (!text || text.trim().length < 2) return lastLang || langA;
+  const checks = [
+    [/[一-鿿぀-ゟ゠-ヿ]/, ['zh', 'ja']],
+    [/[가-힯]/, ['ko']],
+    [/[؀-ۿ]/, ['ar']],
+    [/[Ѐ-ӿ]/, ['ru']],
+    [/[ऀ-ॿ]/, ['hi']],
+  ];
+  for (const [rx, langs] of checks) {
+    if (rx.test(text)) {
+      for (const lang of langs) {
+        if (langA === lang) return langA;
+        if (langB === lang) return langB;
+      }
+    }
+  }
+  const scoreA = LANG_DETECT_PATTERNS[langA] ? (text.match(LANG_DETECT_PATTERNS[langA]) || []).length : 0;
+  const scoreB = LANG_DETECT_PATTERNS[langB] ? (text.match(LANG_DETECT_PATTERNS[langB]) || []).length : 0;
+  if (scoreA > scoreB) return langA;
+  if (scoreB > scoreA) return langB;
+  return lastLang || langA;
+}
+
 // ---------- Session/device identifiers ----------
 
 export function normalizeSessionId(value) {

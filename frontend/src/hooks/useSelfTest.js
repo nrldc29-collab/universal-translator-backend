@@ -16,9 +16,39 @@ import { authHeaders, responseErrorMessage, withAuthToken } from '../utils';
 const INITIAL = {
   status: 'idle',
   translation: '-',
+  htTranslation: '-',
   websocket: '-',
   message: 'Not run yet',
 };
+
+async function runTranslateTest(apiUrl, authToken, ensureAuthToken, payload, label) {
+  let token = authToken;
+  let response = await fetch(`${apiUrl}/translate/text`, {
+    method: 'POST',
+    headers: authHeaders(token, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (response.status === 401 && ensureAuthToken) {
+    token = await ensureAuthToken({ force: true });
+    if (!token) throw new Error('Login required');
+    response = await fetch(`${apiUrl}/translate/text`, {
+      method: 'POST',
+      headers: authHeaders(token, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+  }
+  if (!response.ok) throw new Error(await responseErrorMessage(response, `${label} failed`));
+  const data = await response.json();
+  return assertTranslationText(data.translated_text?.trim() || '', label);
+}
+
+function assertTranslationText(text, label) {
+  if (!text) throw new Error(`${label} returned empty text`);
+  if (/^\[[a-z]{2}->[a-z]{2}\]/i.test(text)) {
+    throw new Error(`${label} returned placeholder output: ${text}`);
+  }
+  return text;
+}
 
 function testAudioSocket(wsAudioUrl, authToken) {
   return new Promise((resolve, reject) => {
@@ -56,6 +86,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       setSelfTest({
         status: 'offline',
         translation: '-',
+        htTranslation: '-',
         websocket: '-',
         message,
       });
@@ -66,6 +97,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
     setSelfTest({
       status: 'running',
       translation: 'checking',
+      htTranslation: 'checking',
       websocket: 'checking',
       message: 'Running checks...',
     });
@@ -74,6 +106,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
     const next = {
       status: 'online',
       translation: '-',
+      htTranslation: '-',
       websocket: '-',
       message: 'Self-test passed',
     };
@@ -89,50 +122,44 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
 
     if (!failures.length) {
       try {
-        const response = await fetch(`${apiUrl}/translate/text`, {
-          method: 'POST',
-          headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
+        next.translation = await runTranslateTest(
+          apiUrl,
+          authToken,
+          ensureAuthToken,
+          {
             text: 'hello world',
             source_language: 'en',
             target_language: 'es',
             synthesize_audio: false,
-          }),
-        });
-        if (response.status === 401 && ensureAuthToken) {
-          authToken = await ensureAuthToken({ force: true });
-          if (!authToken) throw new Error('Login required');
-          const retry = await fetch(`${apiUrl}/translate/text`, {
-            method: 'POST',
-            headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
-            body: JSON.stringify({
-              text: 'hello world',
-              source_language: 'en',
-              target_language: 'es',
-              synthesize_audio: false,
-            }),
-          });
-          if (!retry.ok) throw new Error(await responseErrorMessage(retry, 'Translation test failed'));
-          const retryData = await retry.json();
-          if (!retryData.translated_text?.trim()) throw new Error('Translation returned empty text');
-          if (/^\[[a-z]{2}->[a-z]{2}\]/i.test(retryData.translated_text)) {
-            throw new Error(`Translation returned placeholder output: ${retryData.translated_text}`);
-          }
-          next.translation = retryData.translated_text;
-        } else {
-          if (!response.ok) {
-            throw new Error(await responseErrorMessage(response, 'Translation test failed'));
-          }
-          const data = await response.json();
-          if (!data.translated_text?.trim()) throw new Error('Translation returned empty text');
-          if (/^\[[a-z]{2}->[a-z]{2}\]/i.test(data.translated_text)) {
-            throw new Error(`Translation returned placeholder output: ${data.translated_text}`);
-          }
-          next.translation = data.translated_text;
-        }
+          },
+          'ES translation test',
+        );
       } catch (error) {
         next.translation = 'failed';
         failures.push(error.message || 'Translation test failed');
+      }
+
+      try {
+        const htText = await runTranslateTest(
+          apiUrl,
+          authToken,
+          ensureAuthToken,
+          {
+            text: 'I need help',
+            source_language: 'en',
+            target_language: 'ht',
+            synthesize_audio: false,
+          },
+          'HT translation test',
+        );
+        const lower = htText.toLowerCase();
+        if (!('èd' in lower || 'ed' in lower || 'bezwen' in lower)) {
+          throw new Error(`HT translation missing expected glossary terms: ${htText}`);
+        }
+        next.htTranslation = htText;
+      } catch (error) {
+        next.htTranslation = 'failed';
+        failures.push(error.message || 'HT translation test failed');
       }
 
       try {
@@ -143,6 +170,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       }
     } else {
       next.translation = 'failed';
+      next.htTranslation = 'failed';
       next.websocket = 'failed';
     }
 
@@ -151,6 +179,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       next.message = failures.join(' / ');
       onStatus?.('Self-test failed');
     } else {
+      next.message = `Self-test passed · ES: ${next.translation} · HT: ${next.htTranslation}`;
       onStatus?.('Self-test passed');
     }
 
