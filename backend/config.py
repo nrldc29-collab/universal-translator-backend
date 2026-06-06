@@ -190,7 +190,10 @@ def get_backend_host() -> str:
 
 
 def get_backend_port() -> int:
-    return _to_int("BACKEND_PORT", _to_int("PORT", 8000, minimum=1, maximum=65535), minimum=1, maximum=65535)
+    # PaaS hosts (Railway, Render, Heroku) inject PORT; it must win over BACKEND_PORT.
+    if os.getenv("PORT", "").strip():
+        return _to_int("PORT", 8000, minimum=1, maximum=65535)
+    return _to_int("BACKEND_PORT", 8000, minimum=1, maximum=65535)
 
 
 def get_frontend_url() -> str:
