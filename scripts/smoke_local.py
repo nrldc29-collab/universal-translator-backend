@@ -32,7 +32,7 @@ def _post_json(url: str, payload: dict, headers: dict | None = None) -> tuple[in
 
 def check_imports() -> list[str]:
     errors: list[str] = []
-    for module in ("fastapi", "faster_whisper", "transformers", "torch", "piper"):
+    for module in ("fastapi", "faster_whisper", "transformers", "torch", "piper", "sacremoses"):
         try:
             __import__(module)
         except ImportError:
