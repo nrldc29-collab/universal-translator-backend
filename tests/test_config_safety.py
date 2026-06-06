@@ -64,6 +64,7 @@ def test_railway_bootstrap_without_public_domain(monkeypatch):
     monkeypatch.delenv("JWT_SECRET", raising=False)
     monkeypatch.setenv("USERS", "demo:demo")
     monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("ALLOWED_ORIGIN_REGEX", raising=False)
     monkeypatch.delenv("RAILWAY_PUBLIC_DOMAIN", raising=False)
     monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
     monkeypatch.setenv("RAILWAY_SERVICE_ID", "service-xyz")
@@ -72,8 +73,36 @@ def test_railway_bootstrap_without_public_domain(monkeypatch):
     assert "JWT_SECRET" in applied
     assert "USERS" in applied
     assert "ALLOWED_ORIGINS" in applied
+    assert "ALLOWED_ORIGIN_REGEX" in applied
     assert config.validate_production_config() == []
     assert "your-frontend" not in ",".join(config.get_allowed_origins())
+    assert config.get_allowed_origin_regex() == config._RAILWAY_PUBLIC_ORIGIN_REGEX
+
+
+def test_railway_bootstrap_repairs_empty_template_origin(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET", "x" * 64)
+    monkeypatch.setenv("USERS", "operator:strong-pass-here")
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://")
+    monkeypatch.delenv("RAILWAY_PUBLIC_DOMAIN", raising=False)
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+
+    applied = config.apply_railway_production_defaults()
+    assert "ALLOWED_ORIGINS" in applied
+    assert config.get_allowed_origins() == ["http://127.0.0.1:8000"]
+
+
+def test_railway_bootstrap_preserves_explicit_origin_regex(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET", "x" * 64)
+    monkeypatch.setenv("USERS", "operator:strong-pass-here")
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://app.mycompany.com")
+    monkeypatch.setenv("ALLOWED_ORIGIN_REGEX", r"https://app\.mycompany\.com")
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+
+    applied = config.apply_railway_production_defaults()
+    assert "ALLOWED_ORIGIN_REGEX" not in applied
+    assert config.get_allowed_origin_regex() == r"https://app\.mycompany\.com"
 
 
 def test_railway_bootstrap_upgrades_temp_origin_when_domain_available(monkeypatch):
