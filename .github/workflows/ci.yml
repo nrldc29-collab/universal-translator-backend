@@ -87,7 +87,15 @@ jobs:
           restore-keys: |
             models-v1-${{ runner.os }}-
       - name: Download and warm local models
-        run: python scripts/setup_models.py
+        run: |
+          for attempt in 1 2 3; do
+            if python scripts/setup_models.py; then
+              exit 0
+            fi
+            echo "setup_models attempt ${attempt} failed; waiting 90s before retry..."
+            sleep 90
+          done
+          exit 1
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci

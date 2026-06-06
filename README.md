@@ -103,6 +103,7 @@ Wait for **LIVE** in the app header, then verify:
 ```bash
 make preflight-deploy-live   # deploy file checks + full EN↔HT smoke (recommended)
 make verify-all              # offline imports + bundled production smoke
+make release-ready           # all of the above gates in one command (before deploy/tag)
 ```
 
 Windows: `.\Start-Translator.ps1` then `.\Test-Translator.ps1`.

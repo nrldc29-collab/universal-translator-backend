@@ -32,9 +32,9 @@ OPTIONAL_PIPER_VOICE_URLS = {
 
 PIPER_VOICE_URLS = {**REQUIRED_PIPER_VOICE_URLS, **OPTIONAL_PIPER_VOICE_URLS}
 
-DOWNLOAD_RETRIES = 8
+DOWNLOAD_RETRIES = 10
 DOWNLOAD_RETRYABLE_CODES = {429, 500, 502, 503, 504}
-WARM_RETRIES = 6
+WARM_RETRIES = 10
 
 
 def _configure_hf_hub() -> None:
@@ -206,13 +206,6 @@ def main() -> int:
             errors.append(f"failed to download {filename}: {exc}")
         time.sleep(0.5)
 
-    for filename, url in OPTIONAL_PIPER_VOICE_URLS.items():
-        try:
-            download_file(url, TTS_DIR / filename)
-        except (OSError, urllib.error.URLError) as exc:
-            warnings.append(f"optional voice not downloaded ({filename}): {exc}")
-        time.sleep(0.5)
-
     if not ensure_espeak_ng() and not espeak_installed():
         errors.append(
             "espeak-ng or espeak not found (required for Haitian Creole TTS). "
@@ -245,6 +238,13 @@ def main() -> int:
         warm_tts_ht()
     except (RuntimeError, OSError, ValueError, ImportError) as exc:
         errors.append(f"tts warmup failed: {exc}")
+
+    for filename, url in OPTIONAL_PIPER_VOICE_URLS.items():
+        try:
+            download_file(url, TTS_DIR / filename)
+        except (OSError, urllib.error.URLError) as exc:
+            warnings.append(f"optional voice not downloaded ({filename}): {exc}")
+        time.sleep(0.5)
 
     if errors:
         print("\nSetup incomplete:")

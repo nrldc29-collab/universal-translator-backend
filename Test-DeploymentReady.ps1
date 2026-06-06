@@ -174,8 +174,12 @@ Test-Check "Production frontend bundle path" {
 
 Test-Check "Same-origin WebSocket support" {
     $utils = Get-Content -Path (Join-Path $Root "frontend\src\utils.js") -Raw
-    if ($utils -notmatch "\.up\.railway\.app" -or $utils -notmatch "wss:") {
-        throw "Frontend utils are missing Railway same-origin wss support"
+    $main = Get-Content -Path (Join-Path $Root "frontend\src\main.jsx") -Raw
+    if ($utils -notmatch "\.up\.railway\.app") {
+        throw "Frontend utils are missing Railway same-origin host detection"
+    }
+    if ($main -notmatch "wss:") {
+        throw "Frontend main.jsx is missing wss:// WebSocket URL handling"
     }
     "Railway app URLs use wss:// same-origin audio"
 }
