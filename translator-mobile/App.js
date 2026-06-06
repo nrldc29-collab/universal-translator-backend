@@ -126,6 +126,19 @@ export default function App() {
     wsControlRef.current.updateHandlers(handleMessage, setStatusWithType);
   }
 
+  function sendSessionStart() {
+    wsControlRef.current?.send(JSON.stringify({
+      type: "start",
+      session_id: mobileSessionIdRef.current,
+      device_id: mobileDeviceIdRef.current,
+      speaker: "auto",
+      speaker_mode: "auto",
+      source_language: sourceLanguage,
+      target_language: targetLanguage,
+      mime_type: "audio/m4a",
+    }));
+  }
+
   function setStatusWithType(nextStatus, type = null) {
     setStatus(nextStatus);
     if (type) {
@@ -134,15 +147,6 @@ export default function App() {
       setStatusType("success");
       setIsConnected(true);
       saveRecentUrl(wsUrl);
-      wsControlRef.current?.send(JSON.stringify({
-        type: "start",
-        session_id: mobileSessionIdRef.current,
-        device_id: mobileDeviceIdRef.current,
-        speaker: "auto",
-        speaker_mode: "auto",
-        source_language: sourceLanguage,
-        target_language: targetLanguage,
-      }));
     } else if (nextStatus.includes("Disconnected") || nextStatus.includes("failed") || nextStatus.includes("error")) {
       setStatusType("error");
       setIsConnected(false);
@@ -158,6 +162,23 @@ export default function App() {
     debugLog("Message:", message.type, message);
 
     switch (message.type) {
+      case "ready":
+        setIsConnected(true);
+        saveRecentUrl(wsUrl);
+        setStatus("Connected");
+        setStatusType("success");
+        sendSessionStart();
+        break;
+      case "error":
+        if (message.warming) {
+          setStatus("Models still loading — wait for LIVE");
+          setStatusType("warning");
+          setIsConnected(false);
+          break;
+        }
+        setStatus(message.message || "Stream error");
+        setStatusType("error");
+        break;
       case "pong":
         debugLog("Heartbeat pong received");
         break;

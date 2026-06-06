@@ -133,6 +133,13 @@ fi
 
 if ! port_open "$FRONTEND_PORT"; then
   if [[ ! -x "$ROOT/frontend/node_modules/.bin/vite" ]]; then
+    echo "Installing frontend dependencies..."
+    if [[ ! -x "$ROOT/frontend/node_modules/.bin/vite" ]] && ! (cd "$ROOT/frontend" && npm ci); then
+      echo "Missing frontend deps. Run: cd frontend && npm install" >&2
+      exit 1
+    fi
+  fi
+  if [[ ! -x "$ROOT/frontend/node_modules/.bin/vite" ]]; then
     echo "Missing frontend deps. Run: cd frontend && npm install" >&2
     exit 1
   fi

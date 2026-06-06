@@ -1,6 +1,12 @@
 PYTHON ?= python3
 
-.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup-models verify-local verify-local-live verify-bundled-live run-backend run-frontend start-local test-translator
+.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup setup-deps setup-models verify-local verify-local-live verify-bundled-live run-backend run-frontend start-local test-translator
+
+setup-deps:
+	$(PYTHON) -m pip install -r requirements.txt
+	cd frontend && npm ci
+
+setup: setup-deps setup-models
 
 backend-test:
 	pytest

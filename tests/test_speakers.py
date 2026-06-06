@@ -25,6 +25,13 @@ def test_resolve_whisper_language_auto_for_ht_pair():
     assert resolve_whisper_language("en", "es") == "en"
 
 
+def test_opposite_language_in_pair_en_ht():
+    from backend.speakers import opposite_language_in_pair
+
+    assert opposite_language_in_pair("ht", "en", "ht") == "en"
+    assert opposite_language_in_pair("en", "en", "ht") == "ht"
+
+
 def test_speaker_memory_returns_copy_of_history():
     memory = SpeakerMemory()
     memory.register("phone-1", "en")

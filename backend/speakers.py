@@ -87,6 +87,20 @@ def detect_language_in_pair(text: str, source_language: str | None, target_langu
     return candidates[0] if candidates else "en"
 
 
+def opposite_language_in_pair(
+    detected_source: str,
+    source_language: str | None,
+    target_language: str | None,
+) -> str:
+    src = normalize_language_code(source_language)
+    tgt = normalize_language_code(target_language)
+    if detected_source == src:
+        return tgt
+    if detected_source == tgt:
+        return src
+    return tgt
+
+
 def detect_language_heuristic(text: str) -> str:
     t = (text or "").lower()
     tokens = set(re.findall(

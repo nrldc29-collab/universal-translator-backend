@@ -28,7 +28,14 @@ from slowapi.errors import RateLimitExceeded
 from backend.conversation import ConversationBrain
 from backend.memory import ConversationMemory
 from backend.refine import refine_translation
-from backend.speakers import SpeakerMemory, detect_language_heuristic
+from backend.speakers import (
+    SpeakerMemory,
+    detect_language_heuristic,
+    detect_language_in_pair,
+    language_pair_has_ht,
+    opposite_language_in_pair,
+    resolve_whisper_language,
+)
 from backend.config import (
     LANGUAGES,
     get_allowed_origin_regex,
@@ -821,18 +828,28 @@ async def translate_audio(
     audio_path.write_bytes(audio_bytes)
 
     try:
-        source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), source_language)
+        stt_language = resolve_whisper_language(source_language, target_language)
+        source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), stt_language)
+        active_source_language = source_language
+        active_target_language = target_language
+        if language_pair_has_ht(source_language, target_language) and source_text.strip():
+            active_source_language = detect_language_in_pair(source_text, source_language, target_language)
+            active_target_language = opposite_language_in_pair(
+                active_source_language,
+                source_language,
+                target_language,
+            )
         # Default single-speaker flow: lock language for 'A'
         speaker_id = "A"
         if not speaker_memory.get_language(speaker_id):
             auto_lang = detect_language_heuristic(source_text)
-            speaker_memory.register(speaker_id, language=source_language or auto_lang)
+            speaker_memory.register(speaker_id, language=active_source_language or auto_lang)
         # Translate (no synth), then refine, then synthesize if requested
         interim = await run_in_threadpool(
             pipeline.translate_text,
             source_text,
-            source_language,
-            target_language,
+            active_source_language,
+            active_target_language,
             None,
             False,
             f"models/tts/{uuid4()}.wav",
@@ -850,10 +867,10 @@ async def translate_audio(
         }
         cip = call_cip_brain(
             source_text,
-            target_language,
+            active_target_language,
             identity,
             fallback_translation=refined_text,
-            source_language=source_language,
+            source_language=active_source_language,
             stt_confidence=stt_conf,
             translation_confidence=tr_conf,
             context=memory_context,
@@ -867,8 +884,8 @@ async def translate_audio(
             source_text,
             interim.translated_text or refined_text,
             audio_glossary,
-            source_language,
-            target_language,
+            active_source_language,
+            active_target_language,
         ):
             cip_clarify = False
         final_text = resolve_translation_text(cip_clarify, cip, refined_text)
@@ -882,7 +899,7 @@ async def translate_audio(
         audio_path = None
         if synthesize_audio and final_text and conf_score >= 0.4 and not cip_clarify:
             try:
-                audio_path = await run_in_threadpool(pipeline.tts.synthesize, final_text, f"models/tts/{uuid4()}.wav", target_language)
+                audio_path = await run_in_threadpool(pipeline.tts.synthesize, final_text, f"models/tts/{uuid4()}.wav", active_target_language)
             except (RuntimeError, OSError, ValueError) as exc:
                 logger.warning("audio_translation_tts_failed identity=%s error=%s", identity, exc)
                 audio_path = None
@@ -905,7 +922,7 @@ async def translate_audio(
             speaker_memory.add_message(speaker_id, source_text)
             # Update profile: languages, history
             langs = set(user_profile.get("preferred_languages") or [])
-            langs.update([source_language, target_language])
+            langs.update([active_source_language, active_target_language])
             user_profile["preferred_languages"] = [l for l in langs if l]
             user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "audio", "source": source_text, "translated": result.translated_text}]
             profiles.save(identity, user_profile)

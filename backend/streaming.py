@@ -18,6 +18,7 @@ from backend.speakers import (
     detect_language_heuristic,
     detect_language_in_pair,
     language_pair_has_ht,
+    opposite_language_in_pair,
     resolve_whisper_language,
 )
 from backend.refine import refine_translation
@@ -429,13 +430,26 @@ async def websocket_audio_translation(
         min_words_base = get_partial_translation_min_words() if fast_system else max(3, get_partial_translation_min_words() + 1)
         min_words = (min_words_base - 1) if interrupted else min_words_base
         if bool(re.search(r"[.!?;:,]\s*$", partial_buffer.strip())) or len(partial_buffer.split()) >= min_words:
+            partial_active_src = partial_source_language
+            partial_active_tgt = partial_target_language
+            if language_pair_has_ht(partial_source_language, partial_target_language):
+                partial_active_src = detect_language_in_pair(
+                    partial_buffer,
+                    partial_source_language,
+                    partial_target_language,
+                )
+                partial_active_tgt = opposite_language_in_pair(
+                    partial_active_src,
+                    partial_source_language,
+                    partial_target_language,
+                )
             try:
                 partial_translation_raw = await run_pipeline_step(
                     "partial translation",
                     lambda: pipeline.translate_local(
                         partial_buffer,
-                        partial_source_language,
-                        partial_target_language,
+                        partial_active_src,
+                        partial_active_tgt,
                         session_id=session_id,
                         original_source_text=partial_buffer,
                     ),
@@ -480,7 +494,7 @@ async def websocket_audio_translation(
                         lambda: pipeline.tts.synthesize(
                             tts_text_to_speak,
                             f"models/tts/{uuid4()}-partial.wav",
-                            language=partial_target_language,
+                            language=partial_active_tgt,
                         ),
                     )
                 except Exception as exc:
@@ -983,6 +997,11 @@ async def websocket_audio_translation(
             if auto_stt:
                 active_source_language = detect_language_in_pair(
                     source_text,
+                    segment_source_language,
+                    segment_target_language,
+                )
+                active_target_language = opposite_language_in_pair(
+                    active_source_language,
                     segment_source_language,
                     segment_target_language,
                 )
