@@ -132,6 +132,21 @@ if (-not $SkipSetup) {
     }
 }
 
+if (Test-PortListening -Port $BackendPort) {
+    $backendHealthy = $false
+    try {
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/health" -TimeoutSec 5
+        $backendHealthy = ($health.status -eq "ok")
+    } catch {
+        $backendHealthy = $false
+    }
+    if (-not $backendHealthy) {
+        Write-Output "Replacing stale backend listener on port $BackendPort..."
+        Stop-PortOwner -Port $BackendPort
+        Start-Sleep -Seconds 1
+    }
+}
+
 if (-not (Test-PortListening -Port $BackendPort)) {
     Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "$BackendPort") -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr | Out-Null
 }

@@ -66,6 +66,8 @@ def evaluate_preload_result(preload: dict[str, Any] | None) -> dict[str, Any]:
         blockers.append("tts_no_piper_voices_or_espeak")
     elif voices["missing"] and has_espeak:
         warnings.append("tts_using_espeak_fallback_for_missing_piper_voices")
+    elif not has_espeak:
+        warnings.append("espeak_missing_ht_and_fr_tts_unavailable")
 
     return {
         "ready": len(blockers) == 0,

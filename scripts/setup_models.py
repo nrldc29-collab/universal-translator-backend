@@ -90,7 +90,7 @@ def warm_tts() -> None:
 
 def warm_tts_ht() -> None:
     if not shutil.which("espeak-ng"):
-        return
+        raise RuntimeError("espeak-ng not found (required for Haitian Creole TTS warmup)")
     from tts.piper_tts import PiperTextToSpeech
 
     tts = PiperTextToSpeech()
@@ -113,7 +113,11 @@ def main() -> int:
             errors.append(f"failed to download {filename}: {exc}")
 
     if not ensure_espeak_ng() and not shutil.which("espeak-ng"):
-        warnings.append("espeak-ng not found (HT/fr TTS will fail until installed)")
+        msg = "espeak-ng not found (required for Haitian Creole TTS)"
+        if sys.platform == "linux":
+            errors.append(msg)
+        else:
+            warnings.append(msg)
 
     try:
         import faster_whisper  # noqa: F401

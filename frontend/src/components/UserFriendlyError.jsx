@@ -60,6 +60,13 @@ const ERROR_MAPPINGS = {
     message: 'The connection is taking longer than expected. Please wait or try again.',
     action: 'Retry',
   },
+  'quota_exceeded': {
+    icon: AlertTriangle,
+    severity: 'warning',
+    title: 'Rate Limit Reached',
+    message: 'Too many requests in a short time. Wait about a minute, then try again.',
+    action: 'Retry',
+  },
   'websocket_disconnected': {
     icon: Wifi,
     severity: 'warning',
@@ -212,6 +219,9 @@ export function mapTechnicalError(error) {
   }
   if (message.includes('timeout') || name.includes('timeout')) {
     return 'network_timeout';
+  }
+  if (message.includes('quota') || message.includes('rate limit')) {
+    return 'quota_exceeded';
   }
   if (message.includes('websocket') || message.includes('connection')) {
     return 'websocket_disconnected';

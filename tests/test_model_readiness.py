@@ -53,3 +53,16 @@ def test_check_piper_voices_structure():
 
 def test_espeak_available_is_bool():
     assert isinstance(espeak_available(), bool)
+
+
+def test_evaluate_preload_warns_when_espeak_missing_but_piper_present(monkeypatch):
+    monkeypatch.setenv("STT_PROVIDER", "local")
+    monkeypatch.setenv("TRANSLATION_BACKEND", "marian")
+    monkeypatch.setattr(
+        "backend.model_readiness.check_piper_voices",
+        lambda: {"present": [{"lang": "en", "path": "models/tts/en_US-lessac-medium.onnx"}], "missing": []},
+    )
+    monkeypatch.setattr("backend.model_readiness.espeak_available", lambda: False)
+    result = evaluate_preload_result({"stt": {"ok": True}, "tts": {"ok": True}, "translation": {"ok": True}})
+    assert result["ready"] is True
+    assert "espeak_missing_ht_and_fr_tts_unavailable" in result["warnings"]

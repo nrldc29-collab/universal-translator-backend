@@ -61,6 +61,9 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test -- --run
 
   mobile:
     runs-on: ubuntu-latest

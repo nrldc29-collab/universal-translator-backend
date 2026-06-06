@@ -745,6 +745,9 @@ function App() {
           body: JSON.stringify(payload),
         });
       }
+      if (response.status === 429) {
+        throw new Error('Rate limit reached — wait a minute and try again');
+      }
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Text translation failed'));
       const data = await response.json();
       const brainUpdate = applyBrainPayload(data, 'text');
@@ -1611,6 +1614,12 @@ function App() {
   async function toggleStreaming(options = {}) {
     if (socketRef.current) {
       stopContinuousStream();
+      return;
+    }
+
+    if (connectionStatus !== 'online') {
+      disableStreamReconnect();
+      setStatus(connectionStatus === 'warming' ? 'Models still loading — wait for LIVE' : 'Backend offline — start the server first');
       return;
     }
 
@@ -3070,6 +3079,8 @@ function App() {
               targetLanguage={targetLanguage}
               sourceLanguageLabel={sourceLanguageLabel}
               targetLanguageLabel={targetLanguageLabel}
+              connectionStatus={connectionStatus}
+              onStatus={setStatus}
             />
           </>
         ) : (

@@ -165,24 +165,35 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
     ws = new WebSocket(urlFn());
     ws.onopen = () => {
       retryCount = 0;
-      ws.send(JSON.stringify({
-        type:'start', source_language:srcLang, target_language:tgtLang,
-        speaker_mode:'manual', speaker:'auto', speaker_label:'Auto',
-      }));
-      ready = true;
-      queue.splice(0).forEach(m => ws.send(m));
-      handlers.onReady?.();
     };
     ws.onmessage = ({ data }) => {
       try {
         const d = JSON.parse(data);
+        if (d.type === 'ready') {
+          ws.send(JSON.stringify({
+            type:'start', source_language:srcLang, target_language:tgtLang,
+            speaker_mode:'manual', speaker:'auto', speaker_label:'Auto',
+          }));
+          ready = true;
+          queue.splice(0).forEach(m => ws.send(m));
+          handlers.onReady?.();
+          return;
+        }
+        if (d.type === 'error') {
+          handlers.onError?.(d);
+          if (d.warming) {
+            closed = true;
+            ws.close();
+          }
+          return;
+        }
         if (d.type === 'live_translation' || d.type === 'partial_translation') handlers.onTranslation?.(d.text, false);
         if (d.type === 'final' || d.type === 'translation')  handlers.onTranslation?.(d.translated_text || d.text || '', true);
         if (d.type === 'tts_audio_chunk' && !d.partial)      handlers.onTtsChunk?.(d.audio_base64, d.mime_type);
         if (d.type === 'tts_end' && !d.partial)              handlers.onTtsEnd?.();
       } catch {}
     };
-    ws.onerror = () => { ready = false; };
+    ws.onerror = () => { ready = false; handlers.onError?.({ message: 'WebSocket error' }); };
     ws.onclose = () => {
       ready = false;
       if (!closed) {
@@ -216,7 +227,15 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
 }
 
 // ─── Main hook ────────────────────────────────────────────────────────────
-export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, targetLanguage, withAuthToken }) {
+export function useAutoConversation({
+  wsAudioUrl,
+  authToken,
+  sourceLanguage,
+  targetLanguage,
+  withAuthToken,
+  backendReady = true,
+  onStatus,
+}) {
   const [active, setActive]       = useState(false);
   const [phase, setPhase]         = useState('idle'); // idle|listening|ready|processing|speaking
   const [detectedLang, setDetLang]= useState(null);
@@ -250,10 +269,10 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
   useEffect(() => { srcRef.current = sourceLanguage; }, [sourceLanguage]);
   useEffect(() => { tgtRef.current = targetLanguage; }, [targetLanguage]);
 
-  // Re-open sockets when languages change (while active)
+  // Re-open sockets when languages or auth change (while active)
   useEffect(() => {
     if (activeRef.current) restartSockets();
-  }, [sourceLanguage, targetLanguage]);
+  }, [sourceLanguage, targetLanguage, authToken]);
 
   function setPhaseR(p) { phaseRef.current = p; setPhase(p); }
   function buildUrl() {
@@ -353,6 +372,17 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
         },
         onReady() { setSockStat('connected'); },
         onReconnecting(n) { setSockStat(n > 1 ? 'reconnecting' : 'connected'); },
+        onError(err) {
+          if (!activeRef.current) return;
+          if (err?.warming) {
+            onStatus?.('Models still loading — wait for LIVE');
+            lockedRef.current = false;
+            setPhaseR('idle');
+            activeRef.current = false;
+            setActive(false);
+            setSockStat('disconnected');
+          }
+        },
         setFinalSource(t) { finalSource = t; },
         getFinalTranslation() { return finalTranslation; },
         reset() { finalTranslation = ''; finalSource = ''; },
@@ -524,6 +554,10 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
   // ── Public API ──────────────────────────────────────────────────────────
   const start = useCallback(async () => {
     if (activeRef.current) return;
+    if (!backendReady) {
+      onStatus?.('Models still loading — wait for LIVE');
+      return;
+    }
     activeRef.current = true;
     lockedRef.current = false;
     setActive(true);
@@ -547,7 +581,7 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
 
     openSockets();
     setTimeout(() => { if (activeRef.current) startRecognition(); }, 500);
-  }, []);
+  }, [backendReady, onStatus]);
 
   const stop = useCallback(() => {
     activeRef.current = false;
@@ -568,6 +602,13 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
   }, []);
 
   const clearTurns = useCallback(() => setTurns([]), []);
+
+  useEffect(() => {
+    if (activeRef.current && !backendReady) {
+      onStatus?.('Models still loading — wait for LIVE');
+      stop();
+    }
+  }, [backendReady, onStatus, stop]);
 
   useEffect(() => () => stop(), []);
 

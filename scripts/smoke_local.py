@@ -193,11 +193,32 @@ def check_diagnostics(base_url: str) -> list[str]:
     return errors
 
 
+def _frontend_asset_root(base_url: str) -> tuple[str, str | None]:
+    status, payload = _get_json(f"{base_url.rstrip('/')}/diagnostics")
+    if status != 200 or not isinstance(payload, dict):
+        return base_url.rstrip("/"), None
+    frontend = payload.get("frontend") or {}
+    mode = frontend.get("mode")
+    if mode == "embedded_dist":
+        return base_url.rstrip("/"), mode
+    if mode == "dev_proxy" and frontend.get("reachable"):
+        target = str(frontend.get("target") or "").rstrip("/")
+        if target:
+            return target, mode
+    return base_url.rstrip("/"), mode
+
+
 def check_pwa_assets(base_url: str) -> list[str]:
     errors: list[str] = []
-    root = base_url.rstrip("/")
+    root, mode = _frontend_asset_root(base_url)
+    if mode == "dev_proxy" and root == base_url.rstrip("/"):
+        return errors
     status, raw_payload = _get_json(f"{root}/manifest.json")
-    if status != 200 or not isinstance(raw_payload, dict) or raw_payload.get("name") != "Anai Translator":
+    if status != 200 or not isinstance(raw_payload, dict):
+        errors.append(f"manifest fetch failed ({status}): {raw_payload}")
+        return errors
+    if raw_payload.get("name") != "Anai Translator":
+        errors.append(f"manifest app name is not Anai Translator: {raw_payload.get('name')!r}")
         return errors
     payload = raw_payload
     if payload.get("display") != "standalone":
@@ -219,7 +240,10 @@ def check_pwa_assets(base_url: str) -> list[str]:
 
 def check_app_shell(base_url: str) -> list[str]:
     errors: list[str] = []
-    url = base_url.rstrip("/") + "/"
+    root, mode = _frontend_asset_root(base_url)
+    if mode == "dev_proxy" and root == base_url.rstrip("/"):
+        return errors
+    url = root.rstrip("/") + "/"
     try:
         request = urllib.request.Request(url, headers={"Accept": "text/html"})
         with urllib.request.urlopen(request, timeout=10) as resp:
@@ -230,6 +254,39 @@ def check_app_shell(base_url: str) -> list[str]:
     lowered = body.lower()
     if "anai translator" not in lowered and 'id="root"' not in lowered:
         errors.append("root URL did not return the Anai Translator app shell")
+    return errors
+
+
+def check_self_test_bundle(base_url: str) -> list[str]:
+    errors: list[str] = []
+    root, mode = _frontend_asset_root(base_url)
+    if mode == "dev_proxy" and root == base_url.rstrip("/"):
+        return errors
+    url = root.rstrip("/") + "/"
+    try:
+        request = urllib.request.Request(url, headers={"Accept": "text/html"})
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        errors.append(f"self-test bundle check failed ({url}): {exc}")
+        return errors
+
+    import re
+
+    script_paths = re.findall(r'<script[^>]+src="([^"]+)"', body)
+    if not script_paths:
+        errors.append("app shell did not include a JS bundle for self-test verification")
+        return errors
+
+    bundle_body = ""
+    for script_path in script_paths:
+        script_url = script_path if script_path.startswith("http") else f"{root.rstrip('/')}/{script_path.lstrip('/')}"
+        status, bundle_body = _get_text(script_url)
+        if status != 200:
+            continue
+        if re.search(r"Run Self Test|Self Test|runSelfTest", bundle_body):
+            return errors
+    errors.append("frontend bundle is missing the browser self-test UI")
     return errors
 
 
@@ -338,8 +395,11 @@ async def _ws_audio_speaker_session(base_url: str, token: str) -> list[str]:
 
             first = await start_device("smoke-device-1", "person-1", "Person 1")
             same = await start_device("smoke-device-1", "person-1", "Person 1")
+            second = await start_device("smoke-device-2", "person-2", "Person 2")
             if first.get("speaker_label") != "Person 1" or same.get("speaker_label") != "Person 1":
                 return [f"ws/audio auto speaker labels unstable: {first}, {same}"]
+            if second.get("speaker_label") != "Person 2":
+                return [f"ws/audio auto speaker device-2 failed: {second}"]
     except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError, RuntimeError) as exc:
         return [f"ws/audio speaker session failed: {exc}"]
     except Exception as exc:
@@ -407,6 +467,7 @@ def main() -> int:
         errors.extend(check_ready_details(base_url))
         errors.extend(check_languages(base_url))
         errors.extend(check_app_shell(base_url))
+        errors.extend(check_self_test_bundle(base_url))
         errors.extend(check_diagnostics(base_url))
         errors.extend(check_pwa_assets(base_url))
         login_status, login_payload = _post_json(
