@@ -1,9 +1,11 @@
+# syntax=docker/dockerfile:1
 FROM node:20-alpine AS frontend-build
 
 WORKDIR /frontend
 
 COPY frontend/package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 COPY frontend/ ./
 RUN npm run build
@@ -66,7 +68,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-railway.txt ./requirements.txt
-RUN python -m pip install --no-cache-dir --upgrade pip && \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --no-cache-dir --upgrade pip && \
     python -m pip install --no-cache-dir -r requirements.txt
 
 COPY backend backend/
@@ -77,9 +80,7 @@ COPY tts tts/
 COPY ailang ailang/
 COPY ailang_integration ailang_integration/
 COPY scripts/docker_fetch_piper.sh scripts/docker_fetch_piper.sh
-COPY scripts/docker_warm_models.py scripts/docker_warm_models.py
 RUN chmod +x scripts/docker_fetch_piper.sh && ./scripts/docker_fetch_piper.sh models/tts
-RUN python scripts/docker_warm_models.py || echo "WARN: model prefetch failed — runtime will download on first use"
 COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000

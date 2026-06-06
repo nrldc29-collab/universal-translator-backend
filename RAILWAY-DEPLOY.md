@@ -24,6 +24,8 @@ chmod +x Get-Railway-Variables.sh
 
 If you skip step 3–4 on first deploy, Railway auto-bootstrap derives `JWT_SECRET`, `USERS`, and `ALLOWED_ORIGINS` from `RAILWAY_PUBLIC_DOMAIN` (login credentials are logged once in Railway deploy logs). Set explicit variables via `Get-Railway-Variables.sh` for production use.
 
+**Important:** Do not set `BACKEND_PORT` in Railway Variables — Railway injects `PORT` automatically. The app binds to `PORT`. Use `PRELOAD_MODELS=0` (default in Dockerfile) so the service passes healthchecks immediately; EN↔HT models download on the first translation request.
+
 ## Required variables
 
 | Variable | Notes |
