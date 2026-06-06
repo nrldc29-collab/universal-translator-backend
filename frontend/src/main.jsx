@@ -109,6 +109,7 @@ import {
   // speech recognition
   speechRecognitionConstructor,
   speechRecognitionLanguage,
+  languagePairNeedsBackendStt,
   // auth
   withAuthToken,
   authHeaders,
@@ -1855,8 +1856,9 @@ function App() {
         mime_type: recorder.mimeType || preferredAudioMimeType(),
       }));
       const recorderFallback = { recorder, stream };
+      const needsBackendStt = languagePairNeedsBackendStt(sourceLanguage, targetLanguage);
       const fastPathStarted =
-        !cleanOptions.holdToTalk && startBrowserSpeechFastPath(socket, recorderFallback);
+        !cleanOptions.holdToTalk && !needsBackendStt && startBrowserSpeechFastPath(socket, recorderFallback);
       if (cleanOptions.holdToTalk || !fastPathStarted) {
         streamRecorderRef.current = recorder;
         debugLog('STEP 9: starting recorder');

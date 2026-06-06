@@ -571,6 +571,13 @@ export function audioFileExtension(mimeType) {
 
 // ---------- Speech recognition ----------
 
+export function languagePairNeedsBackendStt(sourceLanguage, targetLanguage) {
+  const normalize = (code) => String(code || '').toLowerCase().split(/[-_]/)[0];
+  const source = normalize(sourceLanguage);
+  const target = normalize(targetLanguage);
+  return source === 'ht' || target === 'ht';
+}
+
 export function speechRecognitionConstructor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
@@ -978,4 +985,9 @@ export function buildTranslatePayload({
 export function htTranslationHasGlossaryTerms(text) {
   const lower = String(text || '').toLowerCase();
   return lower.includes('èd') || lower.includes('ed') || lower.includes('bezwen');
+}
+
+export function htToEnTranslationLooksValid(text) {
+  const lower = String(text || '').toLowerCase();
+  return /\bhelp\b/.test(lower) || /\bneed\b/.test(lower);
 }

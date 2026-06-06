@@ -11,12 +11,13 @@
 
 import { useCallback, useState } from 'react';
 
-import { authHeaders, htTranslationHasGlossaryTerms, responseErrorMessage, withAuthToken } from '../utils';
+import { authHeaders, htTranslationHasGlossaryTerms, htToEnTranslationLooksValid, responseErrorMessage, withAuthToken } from '../utils';
 
 const INITIAL = {
   status: 'idle',
   translation: '-',
   htTranslation: '-',
+  htReverseTranslation: '-',
   liveText: '-',
   websocket: '-',
   message: 'Not run yet',
@@ -159,6 +160,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
         status: 'offline',
         translation: '-',
         htTranslation: '-',
+        htReverseTranslation: '-',
         liveText: '-',
         websocket: '-',
         message,
@@ -171,6 +173,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       status: 'running',
       translation: 'checking',
       htTranslation: 'checking',
+      htReverseTranslation: 'checking',
       liveText: 'checking',
       websocket: 'checking',
       message: 'Running checks...',
@@ -181,6 +184,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       status: 'online',
       translation: '-',
       htTranslation: '-',
+      htReverseTranslation: '-',
       liveText: '-',
       websocket: '-',
       message: 'Self-test passed',
@@ -237,6 +241,28 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       }
 
       try {
+        const htReverse = await runTranslateTest(
+          apiUrl,
+          authToken,
+          ensureAuthToken,
+          {
+            text: 'mwen bezwen èd',
+            source_language: 'ht',
+            target_language: 'en',
+            synthesize_audio: false,
+          },
+          'HT to EN translation test',
+        );
+        if (!htToEnTranslationLooksValid(htReverse)) {
+          throw new Error(`HT→EN translation unexpected: ${htReverse}`);
+        }
+        next.htReverseTranslation = htReverse;
+      } catch (error) {
+        next.htReverseTranslation = 'failed';
+        failures.push(error.message || 'HT→EN translation test failed');
+      }
+
+      try {
         next.websocket = await testAudioSocket(wsAudioUrl, authToken);
       } catch (error) {
         next.websocket = 'failed';
@@ -252,6 +278,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
     } else {
       next.translation = 'failed';
       next.htTranslation = 'failed';
+      next.htReverseTranslation = 'failed';
       next.liveText = 'failed';
       next.websocket = 'failed';
     }
@@ -261,7 +288,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       next.message = failures.join(' / ');
       onStatus?.('Self-test failed');
     } else {
-      next.message = `Self-test passed · ES: ${next.translation} · HT: ${next.htTranslation}`;
+      next.message = `Self-test passed · ES: ${next.translation} · HT: ${next.htTranslation} · HT→EN: ${next.htReverseTranslation}`;
       onStatus?.('Self-test passed');
     }
 

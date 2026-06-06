@@ -10,6 +10,8 @@ import {
   speechRecognitionLanguage,
   detectLanguagePair,
   htTranslationHasGlossaryTerms,
+  htToEnTranslationLooksValid,
+  languagePairNeedsBackendStt,
   audioFileExtension,
   withAuthToken,
   summarizeLatencyHistory,
@@ -230,6 +232,31 @@ describe('detectLanguagePair', () => {
 
   it('keeps last language on ambiguous short text', () => {
     expect(detectLanguagePair('ok', 'en', 'ht', 'ht')).toBe('ht');
+  });
+});
+
+// ---------- languagePairNeedsBackendStt ----------
+
+describe('languagePairNeedsBackendStt', () => {
+  it('returns true when Haitian Creole is in the pair', () => {
+    expect(languagePairNeedsBackendStt('en', 'ht')).toBe(true);
+    expect(languagePairNeedsBackendStt('ht', 'en')).toBe(true);
+  });
+
+  it('returns false for non-HT pairs', () => {
+    expect(languagePairNeedsBackendStt('en', 'es')).toBe(false);
+  });
+});
+
+// ---------- htToEnTranslationLooksValid ----------
+
+describe('htToEnTranslationLooksValid', () => {
+  it('accepts help/need translations', () => {
+    expect(htToEnTranslationLooksValid('I need help')).toBe(true);
+  });
+
+  it('rejects unrelated text', () => {
+    expect(htToEnTranslationLooksValid('Bonjou')).toBe(false);
   });
 });
 

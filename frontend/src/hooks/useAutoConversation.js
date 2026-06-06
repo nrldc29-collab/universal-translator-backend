@@ -12,7 +12,7 @@
  */
 import { useRef, useState, useCallback, useEffect } from 'react';
 
-import { BACKEND_TTS_LANGS, detectLanguagePair, speechRecognitionLanguage } from '../utils';
+import { BACKEND_TTS_LANGS, detectLanguagePair, speechRecognitionLanguage, languagePairNeedsBackendStt, createAudioRecorder, preferredAudioMimeType } from '../utils';
 
 // ─── Language config ─────────────────────────────────────────────────────
 const BROWSER_TTS_MAP = {
@@ -267,6 +267,10 @@ export function useAutoConversation({
   const ttsChunksAB    = useRef([]);
   const ttsChunksBA    = useRef([]);
   const playingDirRef  = useRef(null); // which direction is currently playing TTS
+  const micStreamRef   = useRef(null);
+  const sttSockRef     = useRef(null);
+  const sttRecorderRef = useRef(null);
+  const backendSttActiveRef = useRef(false);
 
   useEffect(() => { srcRef.current = sourceLanguage; }, [sourceLanguage]);
   useEffect(() => { tgtRef.current = targetLanguage; }, [targetLanguage]);
@@ -364,10 +368,8 @@ export function useAutoConversation({
             receivedTtsChunks = 0;
             audioFallbackTimer = window.setTimeout(() => {
               if (!activeRef.current || receivedTtsChunks > 0 || ttsCompleted) return;
-              setPhaseR('speaking');
-              speakBrowser(text, outboundTargetLang, {
-                onEnd: () => afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B'),
-              });
+              onStatus?.('Voice playback timed out');
+              afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B');
             }, 2500);
             return;
           }
@@ -507,9 +509,117 @@ export function useAutoConversation({
     }, 400);
   }
 
+  function stopMicStream() {
+    micStreamRef.current?.getTracks().forEach((track) => track.stop());
+    micStreamRef.current = null;
+  }
+
+  function stopBackendStt() {
+    backendSttActiveRef.current = false;
+    if (sttRecorderRef.current?.state === 'recording') {
+      try { sttRecorderRef.current.stop(); } catch {}
+    }
+    sttRecorderRef.current = null;
+    if (sttSockRef.current) {
+      sttSockRef.current.onclose = null;
+      try { sttSockRef.current.close(); } catch {}
+      sttSockRef.current = null;
+    }
+  }
+
+  function openBackendSttSocket() {
+    if (sttSockRef.current?.readyState === WebSocket.OPEN
+      || sttSockRef.current?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+    const ws = new WebSocket(buildUrl());
+    sttSockRef.current = ws;
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = ({ data }) => {
+      try {
+        const d = JSON.parse(data);
+        if (d.type === 'ready') {
+          ws.send(JSON.stringify({
+            type: 'start',
+            source_language: srcRef.current,
+            target_language: tgtRef.current,
+            session_id: sessionRef.current,
+            device_id: `${deviceRef.current}-conv-stt`,
+            speaker_mode: 'auto',
+            speaker: 'auto',
+            stt_only: true,
+            mime_type: preferredAudioMimeType(),
+          }));
+          return;
+        }
+        if (d.type === 'error') {
+          if (d.warming) {
+            onStatus?.('Models still loading — wait for LIVE');
+            stop();
+          }
+          return;
+        }
+        if (d.type === 'partial_transcription' && !lockedRef.current && activeRef.current) {
+          const visible = String(d.text || '').trim();
+          if (visible) {
+            setLiveText(visible);
+            liveTextRef.current = visible;
+          }
+          return;
+        }
+        if (d.type === 'stt_only' && d.text && !lockedRef.current && activeRef.current) {
+          handleUtterance(String(d.text).trim());
+        }
+      } catch {}
+    };
+    ws.onclose = () => {
+      sttSockRef.current = null;
+      if (activeRef.current && backendSttActiveRef.current) {
+        window.setTimeout(() => {
+          if (activeRef.current && backendSttActiveRef.current) openBackendSttSocket();
+        }, 500);
+      }
+    };
+  }
+
+  function startBackendSttListening() {
+    if (!activeRef.current || lockedRef.current || !micStreamRef.current) return;
+    backendSttActiveRef.current = true;
+    setPhaseR('listening');
+    openBackendSttSocket();
+    if (sttRecorderRef.current?.state === 'recording') return;
+    try {
+      const recorder = createAudioRecorder(micStreamRef.current);
+      sttRecorderRef.current = recorder;
+      recorder.ondataavailable = async (event) => {
+        if (!backendSttActiveRef.current || lockedRef.current) return;
+        const ws = sttSockRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN || event.data.size <= 0) return;
+        const buffer = await event.data.arrayBuffer();
+        ws.send(JSON.stringify({
+          type: 'chunk_meta',
+          sent_at_ms: Date.now(),
+          bytes: buffer.byteLength,
+          mime_type: recorder.mimeType || preferredAudioMimeType(),
+          audio_level: analyserRef.current?.getLevel?.() || 0,
+          voice_active: true,
+        }));
+        ws.send(buffer);
+      };
+      recorder.start(250);
+    } catch {
+      onStatus?.('Backend speech recognition unavailable');
+      setPhaseR('idle');
+    }
+  }
+
   // ── Speech recognition ────────────────────────────────────────────────
   function startRecognition() {
     if (!activeRef.current || lockedRef.current) return;
+    if (languagePairNeedsBackendStt(srcRef.current, tgtRef.current)) {
+      startBackendSttListening();
+      return;
+    }
     if (recogRef.current) { try { recogRef.current.abort(); } catch {} recogRef.current = null; }
 
     const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -568,6 +678,9 @@ export function useAutoConversation({
   function handleUtterance(text) {
     if (!activeRef.current || lockedRef.current) return;
     if (recogRef.current) { try { recogRef.current.stop(); } catch {} recogRef.current = null; }
+    if (sttRecorderRef.current?.state === 'recording') {
+      try { sttRecorderRef.current.stop(); } catch {}
+    }
 
     const src = srcRef.current;
     const tgt = tgtRef.current;
@@ -607,11 +720,9 @@ export function useAutoConversation({
     if (sock) {
       sock.send(text, true);
     } else {
-      // Socket not ready — browser TTS fallback
-      setPhaseR('speaking');
-      speakBrowser(text, detTgt, {
-        onEnd: () => afterTts(text, '(offline)', speaker)
-      });
+      onStatus?.('Translation socket not ready');
+      lockedRef.current = false;
+      afterTts(text, '', speaker);
     }
   }
 
@@ -637,9 +748,10 @@ export function useAutoConversation({
     playerRef.current = createAudioPlayer();
     window.speechSynthesis?.getVoices(); // preload
 
-    // Try to get mic stream for level meter
+    // Mic stream for level meter and optional backend STT
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
       startMicLevelPoll(stream);
     } catch {}
 
@@ -659,8 +771,10 @@ export function useAutoConversation({
     if (recogRef.current) { try { recogRef.current.abort(); } catch {} recogRef.current = null; }
     sockABRef.current?.destroy(); sockABRef.current = null;
     sockBARef.current?.destroy(); sockBARef.current = null;
+    stopBackendStt();
     playerRef.current?.close(); playerRef.current = null;
     stopMicLevelPoll();
+    stopMicStream();
     window.speechSynthesis?.cancel();
     setSockStat('disconnected');
   }, []);

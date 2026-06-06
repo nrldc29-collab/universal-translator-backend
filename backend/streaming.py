@@ -181,6 +181,7 @@ async def websocket_audio_translation(
     speaker_detection = "manual"
     device_id = None
     session_id = "default"
+    stt_only = False
     audio_chunks = bytearray()
     recent_chunks = []
     speech_started = False
@@ -953,6 +954,27 @@ async def websocket_audio_translation(
                 await websocket.send_json({"type": "error", "message": "No clear speech recognized. Try speaking closer to the mic."})
                 return
             await websocket.send_json({"type": "final_transcription", "speaker": speaker, "speaker_label": speaker_label, "text": source_text})
+            if stt_only:
+                await websocket.send_json({
+                    "type": "stt_only",
+                    "speaker": speaker,
+                    "speaker_label": speaker_label,
+                    "text": source_text,
+                    "source_language": active_source_language,
+                    "target_language": active_target_language,
+                })
+                complete_decision = conversation_brain.end_turn(speaker)
+                await websocket.send_json({
+                    "type": "turn",
+                    "speaker": speaker,
+                    "speaker_label": speaker_label,
+                    "allowed": complete_decision.allowed,
+                    "reason": complete_decision.reason,
+                    "behavior": complete_decision.behavior,
+                    "active_speaker": complete_decision.active_speaker,
+                    "playback_owner": complete_decision.playback_owner,
+                })
+                return
             semantic_context = conversation_brain.analyze_semantics(speaker, source_text)
             await websocket.send_json({"type": "semantic_context", "speaker": speaker, "speaker_label": speaker_label, **semantic_context})
             await websocket.send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
@@ -1320,6 +1342,7 @@ async def websocket_audio_translation(
                     session_id = payload.get("session_id", "default")
                     source_language = payload.get("source_language", "en")
                     target_language = payload.get("target_language", "es")
+                    stt_only = bool(payload.get("stt_only"))
                     device_id = payload.get("device_id")
                     requested_speaker_label = payload.get("speaker_name") or payload.get("speaker_label")
                     if previous_device_id:
@@ -1395,7 +1418,7 @@ async def websocket_audio_translation(
                         "speaker_mode": speaker_mode,
                         "detection": speaker_detection,
                         "device_id": device_id,
-                        "message": "Receiving audio chunks with Silero VAD.",
+                        "message": "Receiving audio for transcription only." if stt_only else "Receiving audio chunks with Silero VAD.",
                     })
 
                 if message_type == "finalize":
