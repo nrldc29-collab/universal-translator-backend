@@ -157,7 +157,14 @@ def get_cip_ambiguity_threshold() -> float:
 
 
 def get_preload_models() -> bool:
-    return _to_bool("PRELOAD_MODELS", True)
+    raw = os.getenv("PRELOAD_MODELS", "").strip()
+    if raw:
+        return _to_bool("PRELOAD_MODELS", True)
+    # Production images default to lazy load (Dockerfile PRELOAD_MODELS=0); avoid
+    # blocking HTTP startup when the env var is missing from the runtime host.
+    if is_production():
+        return False
+    return True
 
 
 def get_allowed_origins() -> list[str]:
@@ -544,6 +551,12 @@ def apply_railway_production_defaults() -> list[str]:
         if not raw_tiers or raw_tiers.lower() == "demo:free":
             os.environ["USER_TIERS"] = f"{username}:free"
         applied.append("USERS")
+
+    # Legacy Railway configs used PRELOAD_MODELS=1 and blocked HTTP until HF downloads
+    # finished, causing the 900s Railway healthcheck to fail.
+    if _to_bool("PRELOAD_MODELS", False):
+        os.environ["PRELOAD_MODELS"] = "0"
+        applied.append("PRELOAD_MODELS")
 
     if applied:
         railway_bootstrap_applied[:] = applied

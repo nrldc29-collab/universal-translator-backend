@@ -65,6 +65,7 @@ from backend.config import (
     apply_railway_production_defaults,
     railway_bootstrap_status,
     get_users,
+    is_production,
 )
 from backend.service_health import get_service_health_manager
 from translation import HybridTranslator, LightweightTranslator, MarianTranslator
@@ -184,6 +185,7 @@ async def lifespan(app_instance: FastAPI):
         logger.info("CIP brain disabled (CIP_DEFAULT_MODE=off). Translations will not go through ambiguity resolution.")
 
     voice_warmup_task = None
+    preload_task = None
     runtime_state["models"] = {
         "whisper_device": get_whisper_device(),
         "whisper_compute_type": get_whisper_compute_type(),
@@ -196,25 +198,63 @@ async def lifespan(app_instance: FastAPI):
     }
     runtime_state["warming"] = get_preload_models()
     if get_preload_models():
-        preload_result = await run_in_threadpool(pipeline.preload)
-        runtime_state["models"]["preloaded"] = preload_result
-        readiness = evaluate_preload_result(preload_result)
-        runtime_state["readiness"] = readiness
-        runtime_state["ready"] = readiness["ready"]
-        if not readiness["ready"]:
-            logger.warning(
-                "Startup readiness incomplete — blockers: %s",
-                ", ".join(readiness.get("blockers") or ["unknown"]),
-            )
+        if is_production():
+            runtime_state["readiness"] = {
+                "ready": False,
+                "blockers": ["warming"],
+                "warnings": [],
+            }
+            runtime_state["ready"] = False
+
+            async def _background_preload() -> None:
+                try:
+                    preload_result = await run_in_threadpool(pipeline.preload)
+                    runtime_state["models"]["preloaded"] = preload_result
+                    readiness = evaluate_preload_result(preload_result)
+                    runtime_state["readiness"] = readiness
+                    runtime_state["ready"] = readiness["ready"]
+                    if not readiness["ready"]:
+                        logger.warning(
+                            "Startup readiness incomplete — blockers: %s",
+                            ", ".join(readiness.get("blockers") or ["unknown"]),
+                        )
+                except Exception:
+                    logger.exception("Background model preload failed")
+                    runtime_state["readiness"] = {
+                        "ready": False,
+                        "blockers": ["preload_failed"],
+                        "warnings": [],
+                    }
+                    runtime_state["ready"] = False
+                finally:
+                    runtime_state["warming"] = False
+
+            preload_task = asyncio.create_task(_background_preload())
+        else:
+            preload_result = await run_in_threadpool(pipeline.preload)
+            runtime_state["models"]["preloaded"] = preload_result
+            readiness = evaluate_preload_result(preload_result)
+            runtime_state["readiness"] = readiness
+            runtime_state["ready"] = readiness["ready"]
+            runtime_state["warming"] = False
+            if not readiness["ready"]:
+                logger.warning(
+                    "Startup readiness incomplete — blockers: %s",
+                    ", ".join(readiness.get("blockers") or ["unknown"]),
+                )
     else:
         runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": ["preload_skipped"]}
         runtime_state["ready"] = True
-    runtime_state["warming"] = False
+        runtime_state["warming"] = False
     runtime_state["voice_warmup"] = {"status": "queued", "started_at": time()}
     voice_warmup_task = asyncio.create_task(_warm_voice_cache("startup"))
     try:
         yield
     finally:
+        if preload_task:
+            preload_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await preload_task
         if voice_warmup_task:
             voice_warmup_task.cancel()
         runtime_state["ready"] = False
