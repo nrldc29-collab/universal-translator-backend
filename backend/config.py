@@ -1,10 +1,16 @@
 import base64
 import hashlib
 import hmac
+import json
+import logging
 import os
 import re
 import secrets
+import urllib.error
+import urllib.request
 from pathlib import Path
+
+_log = logging.getLogger("anai_translator.config")
 
 
 def _load_dotenv_file() -> None:
@@ -540,11 +546,149 @@ def _derive_railway_secret(purpose: str, *, byte_length: int = 48) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def _railway_api_token() -> str:
+    return (
+        os.getenv("RAILWAY_TOKEN", "").strip()
+        or os.getenv("RAILWAY_API_TOKEN", "").strip()
+    )
+
+
+def _railway_graphql(query: str, variables: dict | None = None) -> dict:
+    token = _railway_api_token()
+    if not token:
+        raise RuntimeError("Railway API token is not configured")
+    body = json.dumps({"query": query, "variables": variables or {}}).encode("utf-8")
+    request = urllib.request.Request(
+        "https://backboard.railway.com/graphql/v2",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Railway GraphQL HTTP {exc.code}: {detail}") from exc
+    if payload.get("errors"):
+        raise RuntimeError(json.dumps(payload["errors"]))
+    return payload["data"]
+
+
+def ensure_railway_public_domain() -> str | None:
+    """Create or discover the Railway *.up.railway.app domain when a token is set."""
+    if not is_production() or not _is_railway_runtime():
+        return None
+
+    existing = _railway_public_domain()
+    if existing:
+        return existing
+
+    if not _railway_api_token():
+        return None
+
+    project_id = os.getenv("RAILWAY_PROJECT_ID", "").strip()
+    environment_id = os.getenv("RAILWAY_ENVIRONMENT_ID", "").strip()
+    service_id = os.getenv("RAILWAY_SERVICE_ID", "").strip()
+    if not project_id or not environment_id or not service_id:
+        _log.warning(
+            "Railway domain auto-provision skipped: need RAILWAY_PROJECT_ID, "
+            "RAILWAY_ENVIRONMENT_ID, and RAILWAY_SERVICE_ID"
+        )
+        return None
+
+    try:
+        domain_data = _railway_graphql(
+            """
+            query serviceDomains($projectId: String!, $environmentId: String!, $serviceId: String!) {
+              domains(
+                projectId: $projectId
+                environmentId: $environmentId
+                serviceId: $serviceId
+              ) {
+                serviceDomains {
+                  domain
+                }
+              }
+            }
+            """,
+            {
+                "projectId": project_id,
+                "environmentId": environment_id,
+                "serviceId": service_id,
+            },
+        )
+        service_domains = domain_data.get("domains", {}).get("serviceDomains") or []
+        domain = str(service_domains[0]["domain"]).strip() if service_domains else ""
+        if not domain:
+            created = _railway_graphql(
+                """
+                mutation createDomain($input: ServiceDomainCreateInput!) {
+                  serviceDomainCreate(input: $input) {
+                    domain
+                  }
+                }
+                """,
+                {
+                    "input": {
+                        "environmentId": environment_id,
+                        "serviceId": service_id,
+                        "targetPort": get_backend_port(),
+                    }
+                },
+            )
+            domain = str(created.get("serviceDomainCreate", {}).get("domain") or "").strip()
+            if not domain:
+                domain_data = _railway_graphql(
+                    """
+                    query serviceDomains($projectId: String!, $environmentId: String!, $serviceId: String!) {
+                      domains(
+                        projectId: $projectId
+                        environmentId: $environmentId
+                        serviceId: $serviceId
+                      ) {
+                        serviceDomains {
+                          domain
+                        }
+                      }
+                    }
+                    """,
+                    {
+                        "projectId": project_id,
+                        "environmentId": environment_id,
+                        "serviceId": service_id,
+                    },
+                )
+                service_domains = domain_data.get("domains", {}).get("serviceDomains") or []
+                domain = str(service_domains[0]["domain"]).strip() if service_domains else ""
+
+        if domain:
+            os.environ["RAILWAY_PUBLIC_DOMAIN"] = domain
+            _log.warning(
+                "Railway public domain provisioned: https://%s — redeploy or refresh "
+                "ALLOWED_ORIGINS if browsers still cannot connect.",
+                domain,
+            )
+            return domain
+    except Exception as exc:
+        _log.warning("Railway public domain auto-provision failed: %s", exc)
+
+    return None
+
+
 def apply_railway_production_defaults() -> list[str]:
     """Fill missing production secrets/origins when running on Railway."""
     applied: list[str] = []
     if not is_production() or not _is_railway_runtime():
         return applied
+
+    existing_domain = _railway_public_domain()
+    ensure_railway_public_domain()
+    if not existing_domain and _railway_public_domain():
+        applied.append("RAILWAY_PUBLIC_DOMAIN")
 
     domain = _railway_public_domain()
     origin = f"https://{domain}" if domain else ""
