@@ -78,7 +78,8 @@ PY
   fi
 fi
 
-if ! bash "$ROOT/Get-Railway-Variables.sh" demo test-password 2>/dev/null | grep -qF "USERS=demo:test-password"; then
+vars_output="$(bash "$ROOT/Get-Railway-Variables.sh" demo test-password 2>/dev/null || true)"
+if ! grep -qF "USERS=demo:test-password" <<< "$vars_output"; then
   failures+=("Get-Railway-Variables.sh did not emit expected USERS line")
 fi
 
