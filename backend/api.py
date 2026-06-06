@@ -62,6 +62,9 @@ from backend.config import (
     get_whisper_model_size,
     get_google_tts_api_key,
     validate_production_config,
+    apply_railway_production_defaults,
+    railway_bootstrap_status,
+    get_users,
 )
 from backend.service_health import get_service_health_manager
 from translation import HybridTranslator, LightweightTranslator, MarianTranslator
@@ -147,6 +150,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
     # Abort immediately if production config is insecure
+    bootstrap_fields = apply_railway_production_defaults()
+    if bootstrap_fields:
+        users = get_users()
+        username = next(iter(users), "demo")
+        password = users.get(username, "")
+        logger.warning(
+            "Railway bootstrap applied (%s). Temporary login username=%s password=%s — "
+            "set JWT_SECRET and USERS via Get-Railway-Variables.sh in Railway Variables.",
+            ", ".join(bootstrap_fields),
+            username,
+            password,
+        )
     config_errors = validate_production_config()
     if config_errors:
         for err in config_errors:
@@ -264,6 +279,7 @@ async def debug_version():
         "api_keys_configured": bool(os.getenv("API_KEYS", "")),
         "anonymous_websocket": True,
         "websocket_auth_release": WEBSOCKET_AUTH_RELEASE,
+        "railway_bootstrap": railway_bootstrap_status(),
     }
 
 

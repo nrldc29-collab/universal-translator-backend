@@ -22,6 +22,8 @@ chmod +x Get-Railway-Variables.sh
 4. Paste the output into Railway **Variables**. Replace `JWT_SECRET`, `USERS`, and set `ALLOWED_ORIGINS` to your service URL.
 5. Deploy. Wait for `/health` to report `"ready": true`.
 
+If you skip step 3–4 on first deploy, Railway auto-bootstrap derives `JWT_SECRET`, `USERS`, and `ALLOWED_ORIGINS` from `RAILWAY_PUBLIC_DOMAIN` (login credentials are logged once in Railway deploy logs). Set explicit variables via `Get-Railway-Variables.sh` for production use.
+
 ## Required variables
 
 | Variable | Notes |
