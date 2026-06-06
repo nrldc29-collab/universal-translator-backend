@@ -76,6 +76,19 @@ def test_railway_bootstrap_without_public_domain(monkeypatch):
     assert "your-frontend" not in ",".join(config.get_allowed_origins())
 
 
+def test_railway_bootstrap_upgrades_temp_origin_when_domain_available(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET", "x" * 64)
+    monkeypatch.setenv("USERS", "operator:strong-pass-here")
+    monkeypatch.setenv("ALLOWED_ORIGINS", "http://127.0.0.1:8000")
+    monkeypatch.setenv("RAILWAY_PUBLIC_DOMAIN", "my-app.up.railway.app")
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+
+    applied = config.apply_railway_production_defaults()
+    assert applied == ["ALLOWED_ORIGINS"]
+    assert config.get_allowed_origins() == ["https://my-app.up.railway.app"]
+
+
 def test_railway_bootstrap_does_not_override_explicit_secrets(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("JWT_SECRET", "x" * 64)

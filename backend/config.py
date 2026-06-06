@@ -497,6 +497,11 @@ _UNSAFE_USERS: frozenset[str] = frozenset({
 
 railway_bootstrap_applied: list[str] = []
 
+_RAILWAY_TEMP_ORIGINS: frozenset[str] = frozenset({
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+})
+
 
 def _railway_public_domain() -> str:
     return os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
@@ -550,7 +555,17 @@ def apply_railway_production_defaults() -> list[str]:
         applied.append("BACKEND_HOST")
 
     raw_origins = os.getenv("ALLOWED_ORIGINS", "").strip()
-    if not raw_origins or "example.com" in raw_origins or "your-frontend" in raw_origins:
+    origin_list = [item.strip() for item in raw_origins.split(",") if item.strip()]
+    needs_origin = (
+        not origin_list
+        or any("example.com" in item or "your-frontend" in item for item in origin_list)
+        or (
+            origin
+            and origin_list
+            and all(item in _RAILWAY_TEMP_ORIGINS for item in origin_list)
+        )
+    )
+    if needs_origin:
         if origin:
             os.environ["ALLOWED_ORIGINS"] = origin
         else:
