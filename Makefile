@@ -52,4 +52,6 @@ mobile-lint:
 mobile-build:
 	cd translator-mobile && npm run build
 
-validate: backend-compile frontend-build mobile-lint
+validate: backend-compile backend-test frontend-build mobile-lint
+
+verify-all: verify-local verify-bundled-live

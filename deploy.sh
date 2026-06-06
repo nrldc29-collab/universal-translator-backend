@@ -99,6 +99,10 @@ ExecStart=/usr/bin/docker run --rm \\
   -e HYBRID_ENABLE_MARIAN_FALLBACK=1 \\
   -e HYBRID_ENABLE_REMOTE=0 \\
   -e PREFER_CLOUD_TTS=0 \\
+  -e STT_PROVIDER=local \\
+  -e MAX_ACTIVE_STREAMS_PER_USER=5 \\
+  -e REQUESTS_PER_MINUTE=120 \\
+  -e QUOTA_REQUESTS_PER_HOUR=500 \\
   -e STT_MAX_CONCURRENCY=1 \\
   -v $DEPLOY_DIR/models:/app/models \\
   anai-translator-backend:latest

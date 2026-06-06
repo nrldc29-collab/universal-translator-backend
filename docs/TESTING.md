@@ -14,6 +14,7 @@ python scripts/smoke_local.py
 make start-local
 make verify-local-live
 make verify-bundled-live
+make verify-all          # offline imports + full bundled smoke
 bash scripts/test_translator.sh http://127.0.0.1:8000
 ```
 
