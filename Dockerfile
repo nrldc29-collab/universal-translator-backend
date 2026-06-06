@@ -1,11 +1,9 @@
-# syntax=docker/dockerfile:1
 FROM node:20-alpine AS frontend-build
 
 WORKDIR /frontend
 
 COPY frontend/package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+RUN npm ci
 
 COPY frontend/ ./
 RUN npm run build
@@ -68,8 +66,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-railway.txt ./requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install --no-cache-dir --upgrade pip && \
+RUN python -m pip install --no-cache-dir --upgrade pip && \
     python -m pip install --no-cache-dir -r requirements.txt
 
 COPY backend backend/
