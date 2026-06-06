@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RAILWAY_ENVIRONMENT="${RAILWAY_ENVIRONMENT:-production}"
 RAILWAY_PORT="${RAILWAY_PORT:-8080}"
+RAILWAY_PROJECT_ID="${RAILWAY_PROJECT_ID:-0d581567-e2fa-4405-a041-1b9aaeeafceb}"
 RUN_SMOKE="${RUN_SMOKE:-1}"
 
 ensure_railway_cli() {
@@ -86,12 +87,8 @@ fi
 
 ensure_railway_cli
 
-domain_args=(--json -p "$RAILWAY_PORT" -e "$RAILWAY_ENVIRONMENT")
-status_args=(--json -e "$RAILWAY_ENVIRONMENT")
-if [[ -n "${RAILWAY_PROJECT_ID:-}" ]]; then
-  domain_args+=(--project "$RAILWAY_PROJECT_ID")
-  status_args+=(--project "$RAILWAY_PROJECT_ID")
-fi
+domain_args=(--json -p "$RAILWAY_PORT" -e "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID")
+status_args=(--json -e "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID")
 if [[ -n "${RAILWAY_SERVICE:-}" ]]; then
   domain_args+=(-s "$RAILWAY_SERVICE")
   status_args+=(-s "$RAILWAY_SERVICE")
