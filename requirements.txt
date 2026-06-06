@@ -12,7 +12,7 @@ sacremoses==0.1.1
 piper-tts>=1.4.2
 edge-tts==7.2.8
 python-multipart==0.0.29
-torchaudio==2.11.0
+torchaudio==2.11.0+cpu
 requests==2.34.2
 websockets==14.1
 pytest==9.0.3
