@@ -148,7 +148,7 @@ async def websocket_text_translation(websocket: WebSocket, pipeline: AnaiTransla
             continue
         text = payload.get("text", "")
         source_language = payload.get("source_language", "en")
-        target_language = payload.get("target_language", "es")
+        target_language = payload.get("target_language", "ht")
 
         if not text.strip():
             await websocket.send_json({"type": "error", "message": "Text is required."})
@@ -180,7 +180,7 @@ async def websocket_audio_translation(
     speaker_memory = speaker_memory or SpeakerMemory()
 
     source_language = "en"
-    target_language = "es"
+    target_language = "ht"
     speaker = "speaker"
     speaker_label = "Person 1"
     speaker_index = 1
@@ -583,6 +583,17 @@ async def websocket_audio_translation(
         payload_revision = payload["revision"]
         live_source_language = payload["source_language"]
         live_target_language = payload["target_language"]
+        if language_pair_has_ht(live_source_language, live_target_language) and text_value.strip():
+            live_source_language = detect_language_in_pair(
+                text_value,
+                live_source_language,
+                live_target_language,
+            )
+            live_target_language = opposite_language_in_pair(
+                live_source_language,
+                payload["source_language"],
+                payload["target_language"],
+            )
         live_speaker = payload["speaker"]
         live_speaker_label = payload["speaker_label"]
         try:
@@ -1394,7 +1405,7 @@ async def websocket_audio_translation(
                     speaker_mode = payload.get("speaker_mode", "manual")
                     session_id = payload.get("session_id", "default")
                     source_language = payload.get("source_language", "en")
-                    target_language = payload.get("target_language", "es")
+                    target_language = payload.get("target_language", "ht")
                     stt_only = bool(payload.get("stt_only"))
                     device_id = payload.get("device_id")
                     requested_speaker_label = payload.get("speaker_name") or payload.get("speaker_label")
@@ -1638,7 +1649,7 @@ async def websocket_streaming_stt_translation(
     memory = memory or ConversationMemory()
     speaker_memory = speaker_memory or SpeakerMemory()
     source_language = "en"
-    target_language = "es"
+    target_language = "ht"
     speaker = "speaker"
     speaker_label = "Person 1"
     speaker_index = 1

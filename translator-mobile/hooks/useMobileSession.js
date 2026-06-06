@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 
-export function useMobileSession({ defaultSource = 'en', defaultTarget = 'es' } = {}) {
+export function useMobileSession({ defaultSource = 'en', defaultTarget = 'ht' } = {}) {
   const [sourceLanguage, setSourceLanguage] = useState(defaultSource);
   const [targetLanguage, setTargetLanguage] = useState(defaultTarget);
 

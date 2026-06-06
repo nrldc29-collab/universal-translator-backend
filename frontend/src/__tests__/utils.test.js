@@ -17,6 +17,7 @@ import {
   summarizeLatencyHistory,
   base64ToArrayBuffer,
   buildTranslatePayload,
+  readPersistedTargetLanguage,
   TARGET_LANGUAGE_OPTIONS,
 } from '../utils';
 
@@ -397,6 +398,14 @@ describe('buildTranslatePayload', () => {
 
   it('produces a plain serialisable object', () => {
     expect(() => JSON.stringify(buildTranslatePayload(base))).not.toThrow();
+  });
+});
+
+// ---------- readPersistedTargetLanguage ----------
+
+describe('readPersistedTargetLanguage', () => {
+  it('defaults to Haitian Creole for EN↔HT first-run users', () => {
+    expect(readPersistedTargetLanguage()).toBe('ht');
   });
 });
 

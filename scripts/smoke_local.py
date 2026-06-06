@@ -519,6 +519,133 @@ def check_websocket_stt_only(base_url: str, token: str) -> list[str]:
     return asyncio.run(_ws_stt_only_start(base_url, token))
 
 
+async def _ws_conversation_triple(base_url: str, token: str) -> list[str]:
+    import websockets
+
+    ws_base = base_url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = f"{ws_base}/ws/audio?access_token={quote(token)}"
+    session_id = f"smoke-conv-{uuid4()}"
+
+    async def await_ready(ws) -> None:
+        ready = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
+        if ready.get("type") != "ready":
+            raise RuntimeError(f"bad ready frame: {ready}")
+
+    async def start_stream(
+        ws,
+        *,
+        device_id: str,
+        source_language: str,
+        target_language: str,
+        speaker: str,
+        stt_only: bool = False,
+    ) -> None:
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "start",
+                    "session_id": session_id,
+                    "device_id": device_id,
+                    "source_language": source_language,
+                    "target_language": target_language,
+                    "speaker_mode": "manual",
+                    "speaker": speaker,
+                    "speaker_label": f"Person {speaker}",
+                    "stt_only": stt_only,
+                    "mime_type": "audio/webm;codecs=opus",
+                }
+            )
+        )
+        saw_listening = False
+        for _ in range(25):
+            message = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
+            if message.get("type") == "error":
+                raise RuntimeError(f"start error on {device_id}: {message}")
+            if message.get("type") == "listening":
+                saw_listening = True
+                break
+        if not saw_listening:
+            raise RuntimeError(f"no listening ack on {device_id}")
+
+    try:
+        async with (
+            websockets.connect(ws_url, open_timeout=15) as ws_ab,
+            websockets.connect(ws_url, open_timeout=15) as ws_ba,
+            websockets.connect(ws_url, open_timeout=15) as ws_stt,
+        ):
+            await await_ready(ws_ab)
+            await await_ready(ws_ba)
+            await await_ready(ws_stt)
+
+            await start_stream(
+                ws_ab,
+                device_id="smoke-conv-ab",
+                source_language="en",
+                target_language="ht",
+                speaker="A",
+            )
+            await start_stream(
+                ws_ba,
+                device_id="smoke-conv-ba",
+                source_language="ht",
+                target_language="en",
+                speaker="B",
+            )
+            await start_stream(
+                ws_stt,
+                device_id="smoke-conv-stt",
+                source_language="en",
+                target_language="ht",
+                speaker="auto",
+                stt_only=True,
+            )
+
+            await ws_ab.send(
+                json.dumps(
+                    {
+                        "type": "live_text",
+                        "text": "Mwen bezwen èd",
+                        "final": True,
+                        "session_id": session_id,
+                        "device_id": "smoke-conv-ab",
+                        "source_language": "en",
+                        "target_language": "ht",
+                        "speaker_mode": "manual",
+                        "speaker": "A",
+                    }
+                )
+            )
+
+            saw_english = False
+            saw_final = False
+            for _ in range(40):
+                message = json.loads(await asyncio.wait_for(ws_ab.recv(), timeout=30))
+                if message.get("type") == "error":
+                    return [f"ws/conversation live_text error: {message}"]
+                if message.get("type") in ("live_translation", "partial_translation"):
+                    text = str(message.get("text") or "").lower()
+                    if "help" in text or "need" in text:
+                        saw_english = True
+                if message.get("type") == "final" and message.get("source") == "browser_live_text":
+                    saw_final = True
+                if saw_english and saw_final:
+                    break
+
+            if not saw_english:
+                return ["ws/conversation ht->en auto-flip returned no English translation"]
+            if not saw_final:
+                return ["ws/conversation ht->en missing final turn frame"]
+    except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError, RuntimeError) as exc:
+        return [f"ws/conversation triple failed: {exc}"]
+    except Exception as exc:
+        return [f"ws/conversation triple failed: {exc}"]
+    return []
+
+
+def check_websocket_conversation_triple(base_url: str, token: str) -> list[str]:
+    return asyncio.run(_ws_conversation_triple(base_url, token))
+
+
 async def _ws_live_text_ht(base_url: str, token: str) -> list[str]:
     import websockets
 
@@ -629,6 +756,7 @@ def main() -> int:
             errors.extend(check_websocket_audio(base_url, token))
             errors.extend(check_websocket_live_text_ht(base_url, token))
             errors.extend(check_websocket_stt_only(base_url, token))
+            errors.extend(check_websocket_conversation_triple(base_url, token))
             errors.extend(check_websocket_speaker_session(base_url, token))
 
     if errors:

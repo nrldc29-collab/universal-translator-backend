@@ -430,23 +430,29 @@ The frontend queues audio chunks and plays them as soon as they arrive, so the u
 
 ## Step 9: Full Duplex Conversation
 
-The app supports two active speaker directions:
+The app supports two-person **Auto Conversation** mode (EN↔HT and other pairs):
 
 ```text
-Speaker A → System → Speaker B
-Speaker B → System → Speaker A
+Speaker A (en) → live_text socket → translation → TTS
+Speaker B (ht) → live_text socket → translation → TTS
+Shared mic     → stt_only socket  → Whisper STT → client routes by detected language
 ```
 
-Frontend duplex controls:
+Frontend conversation controls:
+
+- **Auto Conversation:** one shared microphone; backend Whisper transcribes via a dedicated `stt_only` WebSocket.
+- **Two translation sockets:** `conv-ab` (Person 1, source→target) and `conv-ba` (Person 2, target→source) carry `live_text` + TTS for each direction.
+- **Language detection:** the client and backend both detect which side of the pair was spoken and flip translation direction for EN↔HT pairs.
+
+Legacy duplex controls (separate A/B mic streams) remain available for non-HT pairs that use browser speech recognition:
 
 - **Speaker A → Speaker B:** uses the selected source language as A and target language as B.
 - **Speaker B → Speaker A:** reverses the selected languages.
-- **Both streams can be active:** each speaker gets an independent microphone WebSocket stream.
 
 Backend duplex behavior:
 
-- Each audio WebSocket sends a `speaker` field.
-- The same `/ws/audio` pipeline handles both directions.
+- Each WebSocket sends `speaker`, `device_id`, and optional `stt_only: true`.
+- The same `/ws/audio` pipeline handles audio streaming, `live_text`, and transcription-only modes.
 - Every result is tagged with the speaker:
 
 ```json
@@ -1342,8 +1348,9 @@ The app now guides users to:
 
 1. Pick source and target languages.
 2. Use `Stream Audio` for one-speaker live translation.
-3. Use `Start A Mic` and `Start B Mic` for two-person conversation.
-4. Place each device close to its speaker for accuracy.
+3. Use **Auto Conversation** for two-person EN↔HT (one mic, three WebSockets).
+4. Use `Start A Mic` and `Start B Mic` for legacy two-device duplex on other language pairs.
+5. Place each device close to its speaker for accuracy.
 
 ### Mobile compatibility
 

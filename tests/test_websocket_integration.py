@@ -120,7 +120,7 @@ class TestWsTranslate:
             ws.send_json({"text": "bonjour"})
             reply = ws.receive_json()
         assert reply["type"] == "translation"
-        assert reply["translated_text"] == "[es] bonjour"
+        assert reply["translated_text"] == "[ht] bonjour"
 
 
 # ---------------------------------------------------------------------------

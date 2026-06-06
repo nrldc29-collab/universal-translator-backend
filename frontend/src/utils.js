@@ -436,7 +436,7 @@ export function readPersistedTargetLanguage() {
     const stored = localStorage.getItem('targetLanguage');
     if (stored && TARGET_LANGUAGE_OPTIONS.some((o) => o.code === stored)) return stored;
   } catch {}
-  return 'es';
+  return 'ht';
 }
 
 export function readPersistedSourceLanguage() {
