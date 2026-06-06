@@ -120,6 +120,7 @@ from backend.streaming_helpers import (
     folded_live_text,
     is_speakable_live_delta,
     live_translation_delta,
+    looks_like_container_audio,
     normalize_live_text,
     normalized_word,
     parse_provider_event,
@@ -381,7 +382,13 @@ async def websocket_audio_translation(
                 if partial_generation == segment_generation:
                     await websocket.send_json({"type": "stage", "stage": "partial_timeout", "message": str(exc)})
                 return
-            except (RuntimeError, ValueError, OSError):
+            except (RuntimeError, ValueError, OSError) as exc:
+                if partial_generation == segment_generation:
+                    await websocket.send_json({
+                        "type": "stage",
+                        "stage": "partial_stt_failed",
+                        "message": str(exc) or "Partial speech recognition failed.",
+                    })
                 return
         finally:
             partial_audio_path.unlink(missing_ok=True)
@@ -418,7 +425,13 @@ async def websocket_audio_translation(
                 if partial_generation == segment_generation:
                     await websocket.send_json({"type": "stage", "stage": "partial_timeout", "message": str(exc)})
                 return
-            except (RuntimeError, ValueError, OSError):
+            except (RuntimeError, ValueError, OSError) as exc:
+                if partial_generation == segment_generation:
+                    await websocket.send_json({
+                        "type": "stage",
+                        "stage": "partial_translation_failed",
+                        "message": str(exc) or "Partial translation failed.",
+                    })
                 return
             if partial_generation != segment_generation:
                 return
@@ -1153,8 +1166,7 @@ async def websocket_audio_translation(
                     })
                     break
 
-            if not skip_tts:
-                await websocket.send_json({"type": "tts_end", "speaker": speaker, "speaker_label": speaker_label})
+            await websocket.send_json({"type": "tts_end", "speaker": speaker, "speaker_label": speaker_label})
             tts_active = False
             memory.add(speaker, source_text, translated_text, {"cip": cip})
             speaker_memory.add_message(speaker, source_text)
@@ -1562,6 +1574,7 @@ async def websocket_streaming_stt_translation(
     provider_receiver_task = None
     provider_language = None
     send_lock = asyncio.Lock()
+    container_audio_warned = False
 
     async def send_json(payload: dict) -> None:
         async with send_lock:
@@ -1772,21 +1785,13 @@ async def websocket_streaming_stt_translation(
             finally:
                 if tts_path:
                     Path(tts_path).unlink(missing_ok=True)
-            await send_json({
-                "type": "tts_end",
-                "speaker": speaker,
-                "speaker_label": speaker_label,
-                "partial": False,
-                **tts_meta,
-            })
-        elif live_text_source:
-            await send_json({
-                "type": "tts_end",
-                "speaker": speaker,
-                "speaker_label": speaker_label,
-                "partial": False,
-                **tts_meta,
-            })
+        await send_json({
+            "type": "tts_end",
+            "speaker": speaker,
+            "speaker_label": speaker_label,
+            "partial": False,
+            **tts_meta,
+        })
 
         memory.add(speaker, source_text, translated_text, {"cip": cip})
         speaker_memory.add_message(speaker, source_text)
@@ -1875,8 +1880,24 @@ async def websocket_streaming_stt_translation(
             await send_json({"type": "error", "message": event.get("message") or "Streaming STT provider error.", "recoverable": True})
 
     async def provider_receive_loop(active_provider_ws) -> None:
-        async for raw_message in active_provider_ws:
-            await handle_provider_event(raw_message)
+        try:
+            async for raw_message in active_provider_ws:
+                try:
+                    await handle_provider_event(raw_message)
+                except Exception as exc:
+                    logger.warning("provider_event_error error=%s", exc)
+                    await send_json({
+                        "type": "error",
+                        "message": f"STT provider event error: {exc}",
+                        "recoverable": True,
+                    })
+        except Exception as exc:
+            logger.warning("provider_receive_loop_failed error=%s", exc)
+            await send_json({
+                "type": "error",
+                "message": f"STT provider disconnected: {exc}",
+                "recoverable": True,
+            })
 
     async def ensure_provider_connected() -> None:
         nonlocal provider_ws, provider_receiver_task, provider_language
@@ -2052,6 +2073,19 @@ async def websocket_streaming_stt_translation(
                 continue
             pcm16_audio = message["bytes"]
             if not pcm16_audio:
+                continue
+
+            if looks_like_container_audio(pcm16_audio):
+                if not container_audio_warned:
+                    container_audio_warned = True
+                    await send_json({
+                        "type": "error",
+                        "message": (
+                            "Container audio (WebM/WAV) is not supported on streaming STT. "
+                            "Use STT_PROVIDER=local or browser speech recognition."
+                        ),
+                        "recoverable": True,
+                    })
                 continue
 
             try:

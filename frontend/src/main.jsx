@@ -338,6 +338,10 @@ function App() {
   const [conversationTurns, setConversationTurns, appendConversationTurn] = useConversationHistory(50, { normalizeConversationTurn });
   const { analytics, setAnalytics, loadAnalytics } = useAnalytics({ apiUrl: liveApiUrl, authToken, onStatus: setStatus });
   const { diagnostics, diagnosticsStatus, loadDiagnostics } = useDiagnostics(liveApiUrl);
+  const diagnosticsRef = useRef(null);
+  useEffect(() => {
+    diagnosticsRef.current = diagnostics;
+  }, [diagnostics]);
   const { wsDebug, setWsDebug } = useWsDebug(WS_AUDIO_URL);
   // selfTest + runSelfTest come from useSelfTest below (after authToken is declared).
   // Initial PWA-installed status (true if launched from the home screen).
@@ -1295,7 +1299,16 @@ function App() {
     streamStartedAtRef.current = performance.now();
     requestWakeLock();
 
+    function streamingSttModeActive() {
+      return diagnosticsRef.current?.stt_provider?.mode === 'streaming';
+    }
+
     function startAudioRecorderFallback() {
+      if (streamingSttModeActive()) {
+        setStatus('Speech recognition unavailable. Use Chrome/Edge or set STT_PROVIDER=local.');
+        setPipelineStage('Speech recognition required');
+        return false;
+      }
       if (!recorderFallback?.recorder || !recorderFallback?.stream) return false;
       if (streamRecorderRef.current?.state === 'recording') return true;
       speechFastPathActiveRef.current = false;
@@ -1363,7 +1376,12 @@ function App() {
         return;
       }
       if (socketRef.current && recorderFallback) {
-        startAudioRecorderFallback();
+        if (!streamingSttModeActive()) {
+          startAudioRecorderFallback();
+        } else {
+          setStatus('Speech recognition unavailable. Use Chrome/Edge or set STT_PROVIDER=local.');
+          setPipelineStage('Speech recognition required');
+        }
         return;
       }
       if (!speechFinalTextRef.current.trim() && !socketRef.current) {
@@ -1371,6 +1389,12 @@ function App() {
         speechRecognitionRef.current = null;
         setLiveAssistActive(false);
         releaseWakeLock();
+        if (streamingSttModeActive()) {
+          setStreaming(false);
+          setStatus('Speech recognition unavailable. Use Chrome/Edge or set STT_PROVIDER=local.');
+          setPipelineStage('Speech recognition required');
+          return;
+        }
         setStreaming(false);
         setStatus('Using audio fallback...');
         setPipelineStage('Audio fallback');
@@ -1897,6 +1921,9 @@ function App() {
         setStatus(data.message || 'Clarification requested');
         setClarifyMessage(data.message || 'Clarification requested');
         setClarifyVisible(true);
+        if (shouldKeepContinuousStream(socket)) {
+          resumeBrowserSpeechAfterTts();
+        }
       }
       if (data.type === 'confidence_warning') {
         setPipelineStage('Verify translation');
@@ -1942,7 +1969,7 @@ function App() {
         const backendOwnsTts = data.source === 'browser_live_text'
           && BACKEND_TTS_LANGS.has(voiceLang)
           && settings.ttsVoice !== 'browser';
-        if (data.final && data.text && !lowBandwidthMode && !backendOwnsTts) {
+        if (data.final && data.text && !lowBandwidthMode && !backendOwnsTts && !firstAudioSeenRef.current) {
           window.setTimeout(async () => {
             if (ttsPlayingRef.current || ttsQueueRef.current.length > 0) return;
             const voice = await fetchTranslationVoice(data.text, voiceLang, authToken);
@@ -2039,7 +2066,7 @@ function App() {
                 && BACKEND_TTS_LANGS.has(voiceLang)
                 && settings.ttsVoice !== 'browser';
               const textToSpeak = streamTranslationRef.current;
-              if (textToSpeak && !lowBandwidthMode && !backendOwnsTts) {
+              if (textToSpeak && !lowBandwidthMode && !backendOwnsTts && !firstAudioSeenRef.current) {
                 fetchTranslationVoice(textToSpeak, targetLanguage, authToken)
                   .then(async (voice) => {
                     if (voice && await playEmbeddedTranslationAudio(voice)) return;
@@ -2187,6 +2214,9 @@ function App() {
           if (!ttsPlayingRef.current && !appStateRef.current.playing) {
             setPipelineStage(data.clarify ? 'Clarification needed' : 'Listening');
             setStatus(brainUpdate?.message || (data.clarify ? 'Clarification needed. Listening...' : 'Listening for the next speaker...'));
+          }
+          if (data.clarify) {
+            resumeBrowserSpeechAfterTts();
           }
           return;
         }

@@ -1,7 +1,12 @@
 version: '3.8'
 
+# Default stack uses in-process Whisper (STT_PROVIDER=local). Optional external
+# streaming STT: docker compose --profile streaming up --build
+# and set STT_PROVIDER=streaming on the backend service.
+
 services:
   stt_provider:
+    profiles: ["streaming"]
     build:
       context: ./stt_provider/server
       dockerfile: Dockerfile
@@ -10,7 +15,7 @@ services:
       - "8002:8002"
     environment:
       - ENV=prod
-      - STT_API_KEY=${STT_API_KEY}
+      - STT_API_KEY=${STT_PROVIDER_API_KEY}
       - STT_API_KEYS=translator:${STT_PROVIDER_API_KEY}
       - ADMIN_API_KEY=${ADMIN_API_KEY}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
@@ -64,15 +69,12 @@ services:
       - PIPELINE_STEP_TIMEOUT_SECONDS=10
       - TTS_CHUNK_CHARS=26
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
-      - STT_PROVIDER=streaming
+      - STT_PROVIDER=local
       - STT_PROVIDER_URL=http://stt_provider:8002
       - STT_PROVIDER_WS_URL=ws://stt_provider:8002/stt/stream
       - STT_PROVIDER_API_KEY=${STT_PROVIDER_API_KEY}
     volumes:
       - ./models:/app/models  # Cache downloaded models
-    depends_on:
-      stt_provider:
-        condition: service_healthy
     deploy:
       resources:
         reservations:
