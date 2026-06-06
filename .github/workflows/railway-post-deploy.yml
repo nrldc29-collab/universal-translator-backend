@@ -20,21 +20,21 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Railway CLI
-        run: curl -fsSL https://railway.app/install.sh | bash
-
       - name: Generate public domain (requires RAILWAY_TOKEN secret)
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT_ID: ${{ vars.RAILWAY_ENVIRONMENT_ID }}
           RAILWAY_SERVICE: ${{ vars.RAILWAY_SERVICE }}
           USERS: ${{ secrets.PRODUCTION_USERS }}
         run: |
           if [ -z "$RAILWAY_TOKEN" ]; then
             echo "Skip: add secrets.RAILWAY_TOKEN to auto-generate the public domain after deploy."
+            echo "Dashboard fallback: https://railway.com/project/0d581567-e2fa-4405-a041-1b9aaeeafceb"
             exit 0
           fi
-          export PATH="$HOME/.railway/bin:$PATH"
+          export RAILWAY_PROJECT_ID="${RAILWAY_PROJECT_ID:-0d581567-e2fa-4405-a041-1b9aaeeafceb}"
+          export RAILWAY_ENVIRONMENT_ID="${RAILWAY_ENVIRONMENT_ID:-51f83c91-38dc-477b-a703-b013a360c90f}"
           python3 -m pip install websockets
           RUN_SMOKE=0 bash scripts/railway_public_setup.sh | tee railway-public-url.txt
 

@@ -27,7 +27,9 @@ chmod +x Get-Railway-Variables.sh
 
 ```bash
 export RAILWAY_TOKEN=your-token
-# optional: export RAILWAY_PROJECT_ID=0d581567-e2fa-4405-a041-1b9aaeeafceb
+# optional overrides (defaults match this Railway project):
+# export RAILWAY_PROJECT_ID=0d581567-e2fa-4405-a041-1b9aaeeafceb
+# export RAILWAY_ENVIRONMENT_ID=51f83c91-38dc-477b-a703-b013a360c90f
 USERS=demo:YOUR-PASSWORD make railway-public-setup
 ```
 
