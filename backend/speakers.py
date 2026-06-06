@@ -101,6 +101,20 @@ def opposite_language_in_pair(
     return tgt
 
 
+def resolve_active_languages_in_pair(
+    text: str,
+    source_language: str | None,
+    target_language: str | None,
+) -> tuple[str, str]:
+    src = normalize_language_code(source_language)
+    tgt = normalize_language_code(target_language)
+    if language_pair_has_ht(source_language, target_language) and (text or "").strip():
+        active_src = detect_language_in_pair(text, source_language, target_language)
+        active_tgt = opposite_language_in_pair(active_src, source_language, target_language)
+        return active_src, active_tgt
+    return src, tgt
+
+
 def detect_language_heuristic(text: str) -> str:
     t = (text or "").lower()
     tokens = set(re.findall(

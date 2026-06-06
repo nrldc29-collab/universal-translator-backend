@@ -85,6 +85,17 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const langInitializedRef = useRef(false);
+  useEffect(() => {
+    if (!langInitializedRef.current) {
+      langInitializedRef.current = true;
+      return;
+    }
+    if (isConnectedRef.current && wsControlRef.current?.readyState === WebSocket.OPEN) {
+      sendSessionStart();
+    }
+  }, [sourceLanguage, targetLanguage]);
+
 
   async function checkNetworkState() {
     try {
@@ -176,7 +187,7 @@ export default function App() {
           setIsConnected(false);
           break;
         }
-        setStatus(message.message || "Stream error");
+        setStatus(message.message || message.error || "Stream error");
         setStatusType("error");
         break;
       case "pong":
@@ -205,10 +216,6 @@ export default function App() {
         break;
       case "tts_audio_chunk":
         handleTtsChunk(message);
-        break;
-      case "error":
-        setStatus(message.message || message.error || "Server error");
-        setStatusType("error");
         break;
       case "tts_start":
         setStatus(`Streaming voice: 0/${message.chunks || "?"}`);

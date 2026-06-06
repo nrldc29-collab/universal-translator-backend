@@ -12,7 +12,7 @@ from pydantic import BaseModel
 class TextTranslationRequest(BaseModel):
     text: str
     source_language: str = "en"
-    target_language: str = "es"
+    target_language: str = "ht"
     tone: str | None = None
     synthesize_audio: bool = False
     audio_response_format: str = "base64"
@@ -31,7 +31,7 @@ class TextTranslationRequest(BaseModel):
 
 class TextToSpeechRequest(BaseModel):
     text: str
-    language: str = "es"
+    language: str = "ht"
     response_format: str = "base64"
 
 

@@ -97,6 +97,32 @@ class TestTts:
         payload = response.json()
         assert payload.get("audio_base64") or payload.get("audio_url")
 
+    def test_translate_ht_text_flips_direction(self, app_module, client, monkeypatch):
+        from backend.pipeline import TranslationResult
+
+        captured = []
+
+        def capture_translate(text, source_language, target_language, **kwargs):
+            captured.append((source_language, target_language))
+            return TranslationResult(
+                source_text=text,
+                improved_text=text,
+                translated_text="I need help",
+                audio_output_path=None,
+            )
+
+        monkeypatch.setattr(app_module.pipeline, "translate_text", capture_translate)
+        response = client.post(
+            "/translate/text",
+            json={
+                "text": "Mwen bezwen èd",
+                "source_language": "en",
+                "target_language": "ht",
+            },
+        )
+        assert response.status_code == 200
+        assert captured == [("ht", "en")]
+
     def test_translate_text_survives_tts_failure(self, app_module, client, monkeypatch):
         def fail_cached(*args, **kwargs):
             raise RuntimeError("tts unavailable")

@@ -232,7 +232,7 @@ describe('detectLanguagePair', () => {
   });
 
   it('keeps last language on ambiguous short text', () => {
-    expect(detectLanguagePair('ok', 'en', 'ht', 'ht')).toBe('ht');
+    expect(detectLanguagePair('bezwen èd', 'en', 'ht', 'en')).toBe('ht');
   });
 });
 

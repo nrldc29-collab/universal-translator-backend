@@ -19,6 +19,7 @@ from backend.speakers import (
     detect_language_in_pair,
     language_pair_has_ht,
     opposite_language_in_pair,
+    resolve_active_languages_in_pair,
     resolve_whisper_language,
 )
 from backend.refine import refine_translation
@@ -1692,8 +1693,9 @@ async def websocket_streaming_stt_translation(
         source_text = normalize_live_text(source_text)
         if not source_text:
             return
-        active_src = src_lang or source_language
-        active_tgt = tgt_lang or target_language
+        pair_src = src_lang or source_language
+        pair_tgt = tgt_lang or target_language
+        active_src, active_tgt = resolve_active_languages_in_pair(source_text, pair_src, pair_tgt)
 
         if live_text_source:
             await send_json({
@@ -1988,14 +1990,15 @@ async def websocket_streaming_stt_translation(
 
     async def ensure_provider_connected() -> None:
         nonlocal provider_ws, provider_receiver_task, provider_language
-        if provider_ws is not None and provider_language == source_language:
+        if provider_ws is not None and provider_language == resolve_whisper_language(source_language, target_language):
             return
         await close_provider()
         stt_bridge = pipeline.stt
         if not hasattr(stt_bridge, "is_streaming") or not stt_bridge.is_streaming:
             raise RuntimeError("STT provider is not configured for streaming mode.")
         client = stt_bridge.get_streaming_client()
-        provider_url = client._stream_url(language=source_language)
+        whisper_lang = resolve_whisper_language(source_language, target_language)
+        provider_url = client._stream_url(language=whisper_lang)
         provider_ws = await websockets.connect(
             provider_url,
             max_size=8 * 1024 * 1024,
@@ -2003,7 +2006,7 @@ async def websocket_streaming_stt_translation(
             ping_timeout=client.connection_timeout,
             ping_interval=20,
         )
-        provider_language = source_language
+        provider_language = whisper_lang
         provider_receiver_task = asyncio.create_task(provider_receive_loop(provider_ws))
 
     try:

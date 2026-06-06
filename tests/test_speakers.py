@@ -33,7 +33,7 @@ def test_opposite_language_in_pair_en_ht():
 
 
 def test_live_text_direction_en_ht():
-    from backend.speakers import detect_language_in_pair, opposite_language_in_pair
+    from backend.speakers import detect_language_in_pair, opposite_language_in_pair, resolve_active_languages_in_pair
 
     text = "Mwen bezwen èd"
     pair_src = "en"
@@ -42,6 +42,8 @@ def test_live_text_direction_en_ht():
     active_tgt = opposite_language_in_pair(active_src, pair_src, pair_tgt)
     assert active_src == "ht"
     assert active_tgt == "en"
+    assert resolve_active_languages_in_pair(text, pair_src, pair_tgt) == ("ht", "en")
+    assert resolve_active_languages_in_pair("I need help", pair_src, pair_tgt) == ("en", "ht")
 
 
 def test_speaker_memory_returns_copy_of_history():

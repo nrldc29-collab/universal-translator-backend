@@ -336,8 +336,8 @@ def get_stt_queue_max_depth() -> int:
 
 
 def get_max_active_streams_per_user() -> int:
-    # Conversation mode (2× live_text + 1× stt_only) requires at least 3 concurrent streams.
-    return max(3, _to_int("MAX_ACTIVE_STREAMS_PER_USER", 5, minimum=1))
+    # Conversation mode (2× live_text + 1× stt_only) needs 3; allow reconnect headroom.
+    return max(5, _to_int("MAX_ACTIVE_STREAMS_PER_USER", 5, minimum=1))
 
 
 

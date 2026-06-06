@@ -346,6 +346,13 @@ def check_ready_details(base_url: str) -> list[str]:
     models = payload.get("models") or {}
     if models.get("translation_backend") not in {"marian", "hybrid", "lightweight"}:
         errors.append(f"/ready missing translation backend metadata: {models}")
+    readiness = payload.get("readiness") or {}
+    if readiness.get("espeak_available") is False:
+        errors.append("/ready reports espeak unavailable — Haitian Creole TTS will not work")
+    blockers = payload.get("blockers") or readiness.get("blockers") or []
+    for blocker in blockers:
+        if "espeak" in str(blocker).lower():
+            errors.append(f"/ready espeak blocker: {blocker}")
     return errors
 
 

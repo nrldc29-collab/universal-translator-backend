@@ -334,6 +334,19 @@ function App() {
     appModeRef.current = appMode;
     stopContinuousStream('Mode switched');
   }, [appMode]);
+  const langPairInitializedRef = useRef(false);
+  useEffect(() => {
+    if (!langPairInitializedRef.current) {
+      langPairInitializedRef.current = true;
+      return;
+    }
+    if (!socketRef.current) return;
+    const opts = streamReconnectRef.current?.options || {};
+    stopContinuousStream('Language updated');
+    window.setTimeout(() => {
+      if (connectionStatus === 'online') toggleStreaming({ ...opts, reconnect: true });
+    }, 400);
+  }, [sourceLanguage, targetLanguage]);
   const [conversationTurns, setConversationTurns, appendConversationTurn] = useConversationHistory(50, { normalizeConversationTurn });
   const { analytics, setAnalytics, loadAnalytics } = useAnalytics({ apiUrl: liveApiUrl, authToken, onStatus: setStatus });
   const { diagnostics, diagnosticsStatus, loadDiagnostics } = useDiagnostics(liveApiUrl);
@@ -750,9 +763,19 @@ function App() {
         setStatus('Login required');
         return;
       }
+      const detected = detectLanguagePair(
+        textToSend,
+        sourceLanguage,
+        targetLanguage,
+        sourceLanguage,
+      );
+      const liveSource = detected;
+      const liveTarget = detected === sourceLanguage ? targetLanguage : sourceLanguage;
       const payload = buildTranslatePayload({
         text: textToSend,
-        sourceLanguage, targetLanguage, sessionId,
+        sourceLanguage: liveSource,
+        targetLanguage: liveTarget,
+        sessionId,
         deviceId: INITIAL_DEVICE_ID, speakerName: INITIAL_SPEAKER_NAME, speakerMode,
         translationMode: settings.translationMode, translationProvider: settings.translationProvider,
         googleTtsApiKey: settings.googleTtsApiKey || undefined,
@@ -793,8 +816,8 @@ function App() {
         setStatus(data.confidence_message);
       } else {
         setStatus(brainUpdate?.message || 'Text translated');
-        if (settings.ttsVoice === 'browser' && data.translated_text) {
-          browserTtsSpeak(data.translated_text, targetLanguage, settings.ttsSpeed ?? 1.0);
+        if (settings.ttsVoice === 'browser' && data.translated_text && liveTarget !== 'ht') {
+          browserTtsSpeak(data.translated_text, liveTarget, settings.ttsSpeed ?? 1.0);
         }
       }
     } catch (error) {

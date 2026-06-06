@@ -34,6 +34,7 @@ from backend.speakers import (
     detect_language_in_pair,
     language_pair_has_ht,
     opposite_language_in_pair,
+    resolve_active_languages_in_pair,
     resolve_whisper_language,
 )
 from backend.config import (
@@ -579,7 +580,14 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
     usage_limiter.track(identity, "http_requests")
     usage_limiter.track(identity, "text_translations")
     request.source_language = _normalize_language(request.source_language, "en")
-    request.target_language = _normalize_language(request.target_language, "es")
+    request.target_language = _normalize_language(request.target_language, "ht")
+    active_source, active_target = resolve_active_languages_in_pair(
+        request.text,
+        request.source_language,
+        request.target_language,
+    )
+    request.source_language = active_source
+    request.target_language = active_target
     logger.info(
         "text_translation identity=%s source=%s target=%s mode=%s provider=%s",
         identity, request.source_language, request.target_language,
@@ -800,7 +808,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
 async def translate_audio(
     audio: UploadFile = File(...),
     source_language: str = Form("en"),
-    target_language: str = Form("es"),
+    target_language: str = Form("ht"),
     synthesize_audio: bool = Form(True),
     identity: str = Depends(authenticate_http),
 ):
@@ -808,7 +816,7 @@ async def translate_audio(
     metrics["http_requests"] += 1
     usage_limiter.track(identity, "http_requests")
     source_language = _normalize_language(source_language, "en")
-    target_language = _normalize_language(target_language, "es")
+    target_language = _normalize_language(target_language, "ht")
     logger.info("audio_translation identity=%s source=%s target=%s", identity, source_language, target_language)
     max_bytes = get_max_audio_mb() * 1024 * 1024
     audio_bytes = await _read_limited_upload(audio, max_bytes)
@@ -952,14 +960,14 @@ async def translate_audio(
 async def translate_image(
     image: UploadFile = File(...),
     source_language: str = Form("auto"),
-    target_language: str = Form("es"),
+    target_language: str = Form("ht"),
     synthesize_audio: bool = Form(False),
     identity: str = Depends(authenticate_http),
 ):
     metrics["http_requests"] += 1
     usage_limiter.track(identity, "http_requests")
     source_language = _normalize_language(source_language, "auto", allow_auto=True)
-    target_language = _normalize_language(target_language, "es")
+    target_language = _normalize_language(target_language, "ht")
     logger.info("image_translation identity=%s target=%s", identity, target_language)
     if not _HAS_PYTESSERACT:
         raise HTTPException(status_code=503, detail="OCR unavailable on server. Install Tesseract to enable.")

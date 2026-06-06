@@ -50,7 +50,12 @@ if ! command -v "$PYTHON" >/dev/null 2>&1; then
 fi
 
 if ! command -v espeak-ng >/dev/null 2>&1 && ! command -v espeak >/dev/null 2>&1; then
-  echo "Warning: espeak-ng/espeak not found — Haitian Creole TTS requires espeak (apt/brew/choco)." >&2
+  if [[ "${SKIP_ESPEAK_CHECK:-0}" != "1" ]]; then
+    echo "Error: espeak-ng/espeak not found — Haitian Creole TTS requires espeak (apt install espeak-ng / brew install espeak)." >&2
+    echo "Set SKIP_ESPEAK_CHECK=1 to bypass this check." >&2
+    exit 1
+  fi
+  echo "Warning: espeak-ng/espeak not found — Haitian Creole TTS will be unavailable." >&2
 fi
 
 port_open() {

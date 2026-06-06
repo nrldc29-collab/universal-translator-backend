@@ -60,7 +60,7 @@ const LANG_DETECT_PATTERNS = {
   it: /\b(il|la|i|le|un|una|di|e|è|non|con|per|ma|si|mi|ti|lo|che|come|sono|ho|ha|grazie|ciao|sì|no|bene|dove|anche|già|solo|quando|perché|quello|questa|loro|noi)\b/i,
   nl: /\b(de|het|een|van|en|is|niet|ik|je|hij|ze|we|met|voor|op|in|maar|ook|aan|bij|hallo|dank|ja|nee|goed|hoe|wat|wie|waar|wanneer|dit|dat|mijn|jouw)\b/i,
   ru: /[а-яёА-ЯЁ]{3,}/,
-  ht: /\b(mwen|ou|li|nou|yo|se|pa|nan|ak|pou|ki|sa|gen|ka|ap|te|la|wi|non|mèsi|bonjou|sak|kijan|kote|jan|poukisa)\b/i,
+  ht: /\b(mwen|ou|li|nou|yo|se|pa|nan|ak|pou|ki|sa|gen|ka|ap|te|la|wi|non|mesi|mèsi|bonjou|sak|kijan|kote|jan|poukisa|bezwen|ed|èd)\b/i,
   en: /\b(the|and|is|are|was|were|have|has|had|you|your|what|where|when|why|how|hello|thanks|please|need|help|going|today)\b/i,
 };
 
