@@ -203,7 +203,7 @@ def get_api_keys() -> set[str]:
 
 
 def get_quota_limit() -> int:
-    return _to_int("QUOTA_REQUESTS_PER_HOUR", 120, minimum=1)
+    return _to_int("QUOTA_REQUESTS_PER_HOUR", 500, minimum=1)
 
 
 def get_jwt_secret() -> str:

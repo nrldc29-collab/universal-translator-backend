@@ -226,13 +226,13 @@ npm run dev
 Translate text:
 
 ```bash
-python -m backend.cli --text "Hello, how are you?" --source en --target es
+python -m backend.cli --text "Hello, how are you?" --source en --target ht
 ```
 
 Translate audio and generate speech:
 
 ```bash
-python -m backend.cli --audio input.wav --source en --target es --output models/output.wav
+python -m backend.cli --audio input.wav --source en --target ht --output models/output.wav
 ```
 
 ## Run API Server
@@ -696,8 +696,8 @@ API keys are still supported for service-to-service access with `API_KEYS`, but 
 Set request and audio quotas:
 
 ```bash
-QUOTA_REQUESTS_PER_HOUR=120
-REQUESTS_PER_MINUTE=20
+QUOTA_REQUESTS_PER_HOUR=500
+REQUESTS_PER_MINUTE=120
 FREE_DAILY_AUDIO_MINUTES=10
 MAX_AUDIO_MB=25
 MAX_AUDIO_SECONDS=300

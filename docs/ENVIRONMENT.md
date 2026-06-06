@@ -34,8 +34,8 @@ defaults lives in `backend/config.py`.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `REQUESTS_PER_MINUTE` | `20` | Per-identity request ceiling. |
-| `QUOTA_REQUESTS_PER_HOUR` | `120` | Hourly ceiling per identity. |
+| `REQUESTS_PER_MINUTE` | `120` | Per-identity request ceiling. |
+| `QUOTA_REQUESTS_PER_HOUR` | `500` | Hourly ceiling per identity (conversation mode uses 3 WebSockets). |
 | `FREE_DAILY_AUDIO_MINUTES` | `10` | Audio quota for free-tier users. |
 | `SESSION_MINUTES` | `480` | JWT lifetime. |
 | `SESSION_TTL_SECONDS` | `1800` | In-memory session retention. |
