@@ -12,6 +12,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _post_json(url: str, payload: dict, headers: dict | None = None) -> tuple[int, dict | str]:
+    body = json.dumps(payload).encode("utf-8")
+    req_headers = {"Content-Type": "application/json", **(headers or {})}
+    request = urllib.request.Request(url, data=body, headers=req_headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=30) as resp:
+            raw = resp.read().decode("utf-8")
+            return resp.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return exc.code, json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return exc.code, raw
+
+
 def check_imports() -> list[str]:
     errors: list[str] = []
     for module in ("fastapi", "faster_whisper", "transformers", "torch", "piper"):
@@ -49,6 +65,57 @@ def check_health(base_url: str) -> list[str]:
     return errors
 
 
+def check_translate(base_url: str) -> list[str]:
+    errors: list[str] = []
+    root = base_url.rstrip("/")
+    status, login_payload = _post_json(
+        f"{root}/auth/login",
+        {"username": "demo", "password": "demo"},
+    )
+    if status != 200 or not isinstance(login_payload, dict) or not login_payload.get("access_token"):
+        errors.append(f"auth login failed ({status}): {login_payload}")
+        return errors
+
+    token = login_payload["access_token"]
+    auth = {"Authorization": f"Bearer {token}"}
+
+    status, payload = _post_json(
+        f"{root}/translate/text",
+        {
+            "text": "hello",
+            "source_language": "en",
+            "target_language": "es",
+            "session_id": "smoke-es",
+        },
+        auth,
+    )
+    if status != 200 or not isinstance(payload, dict):
+        errors.append(f"translate en->es failed ({status}): {payload}")
+    else:
+        translated = str(payload.get("translated_text") or "")
+        if "hola" not in translated.lower():
+            errors.append(f"translate en->es unexpected result: {translated!r}")
+
+    status, payload = _post_json(
+        f"{root}/translate/text",
+        {
+            "text": "I need help",
+            "source_language": "en",
+            "target_language": "ht",
+            "session_id": "smoke-ht",
+        },
+        auth,
+    )
+    if status != 200 or not isinstance(payload, dict):
+        errors.append(f"translate en->ht failed ({status}): {payload}")
+    else:
+        translated = str(payload.get("translated_text") or "")
+        if "èd" not in translated.lower() and "ed" not in translated.lower():
+            errors.append(f"translate en->ht glossary miss: {translated!r}")
+
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
     errors.extend(check_imports())
@@ -57,6 +124,7 @@ def main() -> int:
     base_url = sys.argv[1] if len(sys.argv) > 1 else ""
     if base_url:
         errors.extend(check_health(base_url))
+        errors.extend(check_translate(base_url))
 
     if errors:
         print("Local smoke check failed:")

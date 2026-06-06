@@ -8,7 +8,7 @@ def _load_dotenv_file() -> None:
     if not env_file.exists():
         return
     try:
-        for raw_line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        for raw_line in env_file.read_text(encoding="utf-8-sig", errors="replace").splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue

@@ -5,6 +5,7 @@ from backend.glossary import (
     apply_glossary_substitutions,
     find_glossary_matches,
     get_session_glossary,
+    glossary_blocks_clarification,
     glossary_coverage_score,
     prepare_for_translation,
     finalize_translation,
@@ -82,6 +83,26 @@ def test_finalize_translation_restores_protected_terms():
 class FakePassThroughTranslator:
     def translate(self, text, source_language=None, target_language=None):
         return text
+
+
+def test_glossary_blocks_clarification_for_exact_phrase():
+    assert glossary_blocks_clarification(
+        "I need help",
+        "Mwen bezwen èd",
+        DEFAULT_GLOSSARY,
+        "en",
+        "ht",
+    )
+
+
+def test_glossary_blocks_clarification_false_when_missing_target():
+    assert not glossary_blocks_clarification(
+        "I need help",
+        "something else",
+        DEFAULT_GLOSSARY,
+        "en",
+        "ht",
+    )
 
 
 def test_translate_local_preserves_medical_terms():

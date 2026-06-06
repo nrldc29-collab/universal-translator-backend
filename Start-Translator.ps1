@@ -67,7 +67,7 @@ function Import-DotEnv {
         if ($parts.Count -ne 2) {
             return
         }
-        $name = $parts[0].Trim()
+        $name = $parts[0].Trim().TrimStart([char]0xFEFF)
         $value = $parts[1].Trim().Trim('"').Trim("'")
         if ($name -and -not [string]::IsNullOrWhiteSpace($value)) {
             Set-Item -Path "Env:$name" -Value $value

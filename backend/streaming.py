@@ -28,7 +28,7 @@ from backend.confidence import (
     clarification_for,
 )
 from backend.communication_brain import detect_domains
-from backend.glossary import get_session_glossary, glossary_coverage_score
+from backend.glossary import get_session_glossary, glossary_coverage_score, glossary_blocks_clarification
 from backend.config import (
     get_client_vad_mode,
     get_client_vad_threshold,
@@ -874,6 +874,16 @@ async def websocket_audio_translation(
                 cip = None
             cip_decision = get_cip_decision(cip)
             cip_clarify = is_cip_clarification(cip)
+            pre_cip_translation = translated_text
+            segment_glossary = get_session_glossary(segment_session_id)
+            if cip_clarify and glossary_blocks_clarification(
+                source_text,
+                pre_cip_translation,
+                segment_glossary,
+                active_source_language,
+                active_target_language,
+            ):
+                cip_clarify = False
             cip_response_plan = cip.get("response_plan") if isinstance(cip, dict) and isinstance(cip.get("response_plan"), dict) else {}
             cip_turn_policy = cip_response_plan.get("turn_policy") if isinstance(cip_response_plan.get("turn_policy"), dict) else {}
             cip_client_hints = cip_response_plan.get("client_hints") if isinstance(cip_response_plan.get("client_hints"), dict) else {}
@@ -885,7 +895,7 @@ async def websocket_audio_translation(
             glossary_cov = glossary_coverage_score(
                 source_text,
                 translated_text,
-                get_session_glossary(segment_session_id),
+                segment_glossary,
                 active_source_language,
                 active_target_language,
             )
@@ -1500,6 +1510,16 @@ async def websocket_streaming_stt_translation(
             cip = None
         cip_decision = get_cip_decision(cip)
         cip_clarify = is_cip_clarification(cip)
+        pre_cip_translation = translated_text
+        text_glossary = get_session_glossary(session_id)
+        if cip_clarify and glossary_blocks_clarification(
+            source_text,
+            pre_cip_translation,
+            text_glossary,
+            source_language,
+            target_language,
+        ):
+            cip_clarify = False
         cip_response_plan = cip.get("response_plan") if isinstance(cip, dict) and isinstance(cip.get("response_plan"), dict) else {}
         cip_turn_policy = cip_response_plan.get("turn_policy") if isinstance(cip_response_plan.get("turn_policy"), dict) else {}
         cip_client_hints = cip_response_plan.get("client_hints") if isinstance(cip_response_plan.get("client_hints"), dict) else {}
@@ -1510,7 +1530,7 @@ async def websocket_streaming_stt_translation(
         glossary_cov = glossary_coverage_score(
             source_text,
             translated_text,
-            get_session_glossary(session_id),
+            text_glossary,
             source_language,
             target_language,
         )

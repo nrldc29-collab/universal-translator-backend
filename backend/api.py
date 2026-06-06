@@ -65,7 +65,7 @@ from backend.streaming import websocket_audio_translation, websocket_text_transl
 from speech import SileroVoiceActivityDetector
 from backend.confidence import ConfidenceEngine, assess_translation_confidence, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
 from backend.communication_brain import detect_domains
-from backend.glossary import get_session_glossary, glossary_coverage_score
+from backend.glossary import get_session_glossary, glossary_coverage_score, glossary_blocks_clarification
 from backend.cip_client import call_cip_brain, cip_health_snapshot, cip_settings
 from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, is_cip_clarification
 from backend.model_readiness import evaluate_preload_result
@@ -651,6 +651,16 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
             semantic_context=semantic_context,
         )
         cip_clarify = is_cip_clarification(cip)
+        session_key = request.session_id or identity
+        session_glossary = get_session_glossary(session_key)
+        if cip_clarify and glossary_blocks_clarification(
+            request.text,
+            interim.translated_text or refined_text,
+            session_glossary,
+            request.source_language,
+            request.target_language,
+        ):
+            cip_clarify = False
         final_text = "" if cip_clarify else choose_translation(cip, refined_text)
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
@@ -659,11 +669,10 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         tr_conf = estimate_translation_confidence(request.text, final_text)
         cip_conf = get_cip_confidence(cip)
         domains = detect_domains(request.text)
-        session_key = request.session_id or identity
         glossary_cov = glossary_coverage_score(
             request.text,
             final_text,
-            get_session_glossary(session_key),
+            session_glossary,
             request.source_language,
             request.target_language,
         )
@@ -846,6 +855,16 @@ async def translate_audio(
             semantic_context=semantic_context,
         )
         cip_clarify = is_cip_clarification(cip)
+        audio_session_key = session_id or identity
+        audio_glossary = get_session_glossary(audio_session_key)
+        if cip_clarify and glossary_blocks_clarification(
+            source_text,
+            interim.translated_text or refined_text,
+            audio_glossary,
+            source_language,
+            target_language,
+        ):
+            cip_clarify = False
         final_text = "" if cip_clarify else choose_translation(cip, refined_text)
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"

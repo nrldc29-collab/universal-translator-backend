@@ -179,3 +179,16 @@ def glossary_coverage_score(source_text: str, translated_text: str, glossary: li
         return 1.0
     hits = sum(1 for entry in matches if str(entry["target"]).lower() in translated_text.lower())
     return hits / len(matches)
+
+
+def glossary_blocks_clarification(
+    source_text: str,
+    translated_text: str,
+    glossary: list[dict[str, Any]],
+    source_lang: str,
+    target_lang: str,
+) -> bool:
+    """Built-in/session glossary hits should still translate under high-stakes CIP rules."""
+    if not find_glossary_matches(source_text, glossary, source_lang, target_lang):
+        return False
+    return glossary_coverage_score(source_text, translated_text, glossary, source_lang, target_lang) >= 1.0
