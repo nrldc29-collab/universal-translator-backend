@@ -23,6 +23,21 @@ def test_quota_default_supports_conversation_mode(monkeypatch):
     assert config.get_quota_limit() == 500
 
 
+def test_boolean_env_parsing(monkeypatch):
+    monkeypatch.setenv("PARTIAL_TTS_MODE", "off")
+    monkeypatch.setenv("PRELOAD_MODELS", "yes")
+
+    assert config.get_partial_tts_mode() is False
+    assert config.get_preload_models() is True
+
+
+def test_port_env_wins_over_backend_port(monkeypatch):
+    monkeypatch.setenv("PORT", "8080")
+    monkeypatch.setenv("BACKEND_PORT", "8000")
+
+    assert config.get_backend_port() == 8080
+
+
 def test_railway_bootstrap_fills_missing_production_defaults(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("JWT_SECRET", raising=False)
