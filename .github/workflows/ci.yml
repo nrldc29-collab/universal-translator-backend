@@ -13,12 +13,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng ffmpeg
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
       - name: Run backend tests
-        run: pytest --ignore=tests/test_websocket_integration.py --ignore=tests/test_stt_integration.py -q
+        run: pytest --ignore=tests/test_stt_integration.py -q
 
   ai-comm-system:
     runs-on: ubuntu-latest

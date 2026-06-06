@@ -8,13 +8,12 @@ export function useConnectionStatus({ apiUrl, pollIntervalMs, onLanguages, onOff
       .then((r) => r.json())
       .then((data) => {
         onLanguages?.(data.languages);
-        setConnectionStatus('online');
       })
       .catch(() => {
         onOffline?.();
         setConnectionStatus('offline');
       });
-  }, []);
+  }, [apiUrl, onLanguages, onOffline]);
 
   useEffect(() => {
     let cancelled = false;

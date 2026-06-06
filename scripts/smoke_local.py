@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -106,6 +108,53 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
     return errors
 
 
+def check_languages(base_url: str) -> list[str]:
+    errors: list[str] = []
+    url = f"{base_url.rstrip('/')}/languages"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        errors.append(f"languages check failed ({url}): {exc}")
+        return errors
+    languages = payload.get("languages")
+    if isinstance(languages, dict):
+        if not languages:
+            errors.append(f"languages endpoint returned empty map: {payload}")
+    elif isinstance(languages, list):
+        if not languages:
+            errors.append(f"languages endpoint returned empty list: {payload}")
+    else:
+        errors.append(f"languages endpoint invalid payload: {payload}")
+    return errors
+
+
+async def _ws_translate_roundtrip(base_url: str, token: str) -> list[str]:
+    import websockets
+
+    ws_base = base_url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = f"{ws_base}/ws/translate?access_token={quote(token)}"
+    try:
+        async with websockets.connect(ws_url, open_timeout=10) as ws:
+            ready = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            if ready.get("type") != "ready":
+                return [f"ws/translate bad ready frame: {ready}"]
+            await ws.send(json.dumps({"text": "hello", "source_language": "en", "target_language": "es"}))
+            reply = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
+            if reply.get("type") != "translation":
+                return [f"ws/translate unexpected reply: {reply}"]
+            translated = str(reply.get("translated_text") or "")
+            if "hola" not in translated.lower():
+                return [f"ws/translate en->es unexpected: {translated!r}"]
+    except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError) as exc:
+        return [f"ws/translate failed: {exc}"]
+    return []
+
+
+def check_websocket_translate(base_url: str, token: str) -> list[str]:
+    return asyncio.run(_ws_translate_roundtrip(base_url, token))
+
+
 def check_tts(base_url: str, auth: dict[str, str]) -> list[str]:
     errors: list[str] = []
     root = base_url.rstrip("/")
@@ -134,6 +183,7 @@ def main() -> int:
     base_url = sys.argv[1] if len(sys.argv) > 1 else ""
     if base_url:
         errors.extend(check_health(base_url))
+        errors.extend(check_languages(base_url))
         login_status, login_payload = _post_json(
             f"{base_url.rstrip('/')}/auth/login",
             {"username": "demo", "password": "demo"},
@@ -141,9 +191,11 @@ def main() -> int:
         if login_status != 200 or not isinstance(login_payload, dict) or not login_payload.get("access_token"):
             errors.append(f"auth login failed ({login_status}): {login_payload}")
         else:
-            auth = {"Authorization": f"Bearer {login_payload['access_token']}"}
+            token = login_payload["access_token"]
+            auth = {"Authorization": f"Bearer {token}"}
             errors.extend(check_translate(base_url, auth))
             errors.extend(check_tts(base_url, auth))
+            errors.extend(check_websocket_translate(base_url, token))
 
     if errors:
         print("Local smoke check failed:")
