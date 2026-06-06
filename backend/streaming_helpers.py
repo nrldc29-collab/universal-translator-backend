@@ -14,6 +14,7 @@ import asyncio
 import json
 import re
 import unicodedata
+from collections import Counter
 
 from fastapi.concurrency import run_in_threadpool
 
@@ -104,6 +105,40 @@ def folded_live_text(value: str) -> str:
     return " ".join(normalized_word(word) for word in normalize_live_text(value).split())
 
 
+def live_translation_redundant(previous: str, current: str) -> bool:
+    """Return True when `current` is already covered by spoken `previous` text."""
+
+    current_tokens = [token for token in folded_live_text(current).split() if token]
+    if not current_tokens:
+        return True
+    previous_tokens = [token for token in folded_live_text(previous).split() if token]
+    if not previous_tokens:
+        return False
+
+    previous_counts = Counter(previous_tokens)
+    current_counts = Counter(current_tokens)
+    covered = sum(min(previous_counts[token], count) for token, count in current_counts.items())
+    return covered == sum(current_counts.values())
+
+
+def is_internal_translation_artifact(text: str) -> bool:
+    """Return True for debug/model prompt text that must never reach users."""
+
+    value = normalize_live_text(text)
+    if not value:
+        return True
+    if re.match(r"^\[(?:AI|AI_ERROR|plugin-ai):", value, re.IGNORECASE):
+        return True
+    lowered = value.lower()
+    if "ensure this " in lowered and "keep meaning:" in lowered:
+        return True
+    if re.search(r"\[[a-z]{2,}(?:-[a-z0-9]+)?->none\]", value, re.IGNORECASE):
+        return True
+    if re.match(r"^\[[a-z]{2,}(?:-[a-z0-9]+)?->[a-z]{2,}(?:-[a-z0-9]+)?\]\s+", value, re.IGNORECASE):
+        return True
+    return False
+
+
 def live_translation_delta(previous: str, current: str) -> str:
     """Return only the newly translated words that are safe to speak live."""
 
@@ -153,6 +188,8 @@ def audio_suffix_for_mime(mime_type: str | None) -> str:
     """Map a MIME type to a sensible audio file suffix."""
 
     value = (mime_type or "").lower()
+    if "mpeg" in value or "mp3" in value:
+        return ".mp3"
     if "mp4" in value or "aac" in value or "m4a" in value:
         return ".m4a"
     if "ogg" in value:
@@ -160,6 +197,25 @@ def audio_suffix_for_mime(mime_type: str | None) -> str:
     if "wav" in value:
         return ".wav"
     return ".webm"
+
+
+def audio_suffix_for_bytes(audio_bytes: bytes | bytearray | memoryview | None, mime_type: str | None = None) -> str:
+    """Infer audio suffix from container magic bytes, falling back to MIME."""
+
+    if not audio_bytes:
+        return audio_suffix_for_mime(mime_type)
+    header = bytes(audio_bytes[:64])
+    if len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WAVE":
+        return ".wav"
+    if header.startswith(b"\x1a\x45\xdf\xa3"):
+        return ".webm"
+    if header.startswith(b"OggS"):
+        return ".ogg"
+    if len(header) >= 12 and header[4:8] == b"ftyp":
+        return ".m4a"
+    if header.startswith(b"ID3") or header[:2] in {b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"}:
+        return ".mp3"
+    return audio_suffix_for_mime(mime_type)
 
 
 def extract_client_voice_active(payload: dict):
@@ -223,10 +279,13 @@ __all__ = [
     "normalize_live_text",
     "normalized_word",
     "folded_live_text",
+    "live_translation_redundant",
+    "is_internal_translation_artifact",
     "live_translation_delta",
     "is_speakable_live_delta",
     "looks_like_container_audio",
     "audio_suffix_for_mime",
+    "audio_suffix_for_bytes",
     "extract_client_voice_active",
     "parse_provider_event",
     "PipelineStepTimeout",

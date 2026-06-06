@@ -1,6 +1,7 @@
 import React from 'react';
 import { Check, Download, Settings2, Share2, Wifi, WifiOff } from 'lucide-react';
 import VolumeControl from './VolumeControl';
+import AILangStatusBadge from './AILangStatusBadge';
 
 export default function AppHeader({
   connectionStatus,
@@ -12,6 +13,7 @@ export default function AppHeader({
   onVolumeChange,
   onOpenSettings,
   updateAvailable = false,
+  apiUrl,
 }) {
   const isOnline = connectionStatus === 'online';
   const isChecking = connectionStatus === 'checking';
@@ -35,6 +37,7 @@ export default function AppHeader({
           <span className="neo-conn-label">
             {isWarming ? 'WARMING' : isChecking ? 'SYNCING' : isOnline ? 'LIVE' : 'OFFLINE'}
           </span>
+          <AILangStatusBadge apiUrl={apiUrl} />
         </div>
       </div>
 

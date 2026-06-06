@@ -167,6 +167,8 @@ def extract_protected_terms(text: str) -> list[dict[str, str]]:
         "is", "are", "was", "were", "be", "been", "being",
         "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
         "can", "may", "might", "must", "shall", "very", "really", "just", "now", "here",
+        "hola", "bonjour", "bonsoir", "merci", "salut", "hallo", "ciao", "ola", "olá",
+        "bonjou", "mesi", "anpil", "kijan", "tanpri", "orevwa", "eskize", "mwen", "ou",
     }
 
     def add(kind: str, value: str) -> None:

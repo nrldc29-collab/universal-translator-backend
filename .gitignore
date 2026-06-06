@@ -72,6 +72,7 @@ Thumbs.db
 *.log
 
 # Local scratch/debug artifacts
+artifacts/
 patch.diff
 full_patch.diff
 temp_diff.txt

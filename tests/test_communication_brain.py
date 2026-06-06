@@ -309,6 +309,22 @@ def test_python_brain_protects_names_and_numbers():
     assert result["response_plan"]["conversation_contract"]["preserve_names_numbers_codes"] is True
 
 
+def test_python_brain_does_not_treat_haitian_common_phrase_as_name():
+    result = evaluate_translation_brain(
+        "Mesi anpil",
+        "ru",
+        source_language="ht",
+        fallback_translation="Большое спасибо.",
+        stt_confidence=0.9,
+        translation_confidence=0.9,
+    )
+
+    assert result["analysis"]["protected_terms"]["all"] == []
+    assert "missing_protected_terms" not in result["analysis"]["quality_flags"]
+    assert result["decision"]["type"] == "response"
+    assert result["response_plan"]["speak"] is True
+
+
 def test_python_brain_placeholder_with_protected_terms_uses_precision_prompt():
     result = evaluate_translation_brain(
         "Maria is in room 204",

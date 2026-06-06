@@ -10,10 +10,7 @@ export function useSpeechFastPath() {
   const speechAssistStopRequestedRef = useRef(false);
   const speechLastSentTextRef = useRef('');
   const speechLastSentAtRef = useRef(0);
-  const speechListenAltRef = useRef(false);
-  const speechLastDetectedLangRef = useRef('');
-  const speechLastLiveTargetRef = useRef('');
-  const speechPausedForTtsRef = useRef(false);
+  const speechUtteranceSeqRef = useRef(0);
 
   return {
     speechRecognitionRef,
@@ -25,9 +22,6 @@ export function useSpeechFastPath() {
     speechAssistStopRequestedRef,
     speechLastSentTextRef,
     speechLastSentAtRef,
-    speechListenAltRef,
-    speechLastDetectedLangRef,
-    speechLastLiveTargetRef,
-    speechPausedForTtsRef,
+    speechUtteranceSeqRef,
   };
 }

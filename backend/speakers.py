@@ -45,93 +45,141 @@ class SpeakerMemory:
             }
 
 
-ES_WORDS = {"el", "la", "los", "las", "de", "que", "y", "en", "con", "para", "por", "hola", "gracias"}
-FR_WORDS = {"le", "la", "les", "des", "et", "de", "bonjour", "avec", "pour", "merci"}
-HT_WORDS = {
-    "mwen", "ou", "li", "nou", "yo", "se", "pa", "nan", "ak", "pou", "ki", "sa", "gen", "ka", "ap", "te",
-    "la", "wi", "non", "mesi", "mèsi", "bonjou", "sak", "kijan", "kote", "jan", "poukisa", "bezwen", "ed", "èd",
+LANGUAGE_WORDS = {
+    "en": {
+        "hello", "hi", "hey", "thanks", "thank", "please", "yes", "no", "good", "morning",
+        "night", "how", "are", "you", "i", "we", "they", "what", "where", "when", "why",
+    },
+    "es": {
+        "el", "la", "los", "las", "de", "que", "y", "en", "con", "para", "por", "hola",
+        "gracias", "buenos", "dias", "como", "estas", "usted", "si", "no",
+    },
+    "ht": {
+        "bonjou", "mesi", "anpil", "mwen", "ou", "nou", "yo", "kijan", "sak", "pase",
+        "tanpri", "wi", "non", "byen", "zanmi",
+    },
+    "fr": {
+        "le", "la", "les", "des", "et", "de", "bonjour", "bonsoir", "avec", "pour",
+        "merci", "vous", "nous", "comment", "oui", "non", "bien",
+    },
+    "de": {
+        "hallo", "danke", "bitte", "und", "ich", "du", "sie", "wir", "nicht", "guten",
+        "morgen", "abend", "ja", "nein",
+    },
+    "it": {
+        "ciao", "grazie", "prego", "buongiorno", "buonasera", "come", "stai", "sono",
+        "si", "no", "per", "con",
+    },
+    "pt": {
+        "ola", "olá", "obrigado", "obrigada", "por", "favor", "voce", "você", "nao",
+        "não", "sim", "bom", "dia", "como",
+    },
+    "nl": {
+        "hallo", "dank", "bedankt", "alsjeblieft", "goed", "morgen", "avond", "ja",
+        "nee", "ik", "jij", "wij",
+    },
 }
 
+SCRIPT_LANGUAGES = (
+    ("ja", re.compile(r"[\u3040-\u30ff]")),
+    ("ko", re.compile(r"[\uac00-\ud7af]")),
+    ("ar", re.compile(r"[\u0600-\u06ff]")),
+    ("hi", re.compile(r"[\u0900-\u097f]")),
+    ("ru", re.compile(r"[\u0400-\u04ff]")),
+    ("zh", re.compile(r"[\u4e00-\u9fff]")),
+)
 
-def normalize_language_code(code: str | None) -> str:
-    return str(code or "en").lower().split("-")[0]
-
-
-def language_pair_has_ht(source_language: str | None, target_language: str | None) -> bool:
-    return normalize_language_code(source_language) == "ht" or normalize_language_code(target_language) == "ht"
-
-
-def resolve_whisper_language(
-    source_language: str | None,
-    target_language: str | None,
-    *,
-    stt_only: bool = False,
-) -> str | None:
-    """Return Whisper language code, or None to auto-detect."""
-
-    if stt_only or language_pair_has_ht(source_language, target_language):
-        return None
-    lang = normalize_language_code(source_language)
-    if lang in {"auto", "detect"}:
-        return None
-    return lang
+ACCENT_LANGUAGES = (
+    ("es", re.compile(r"[\u00e1\u00ed\u00f3\u00fa\u00f1\u00bf\u00a1]")),
+    ("pt", re.compile(r"[\u00e3\u00f5]")),
+    ("fr", re.compile(r"[\u00e0\u00e2\u00e7\u00e8\u00ea\u00eb\u00ee\u00ef\u00f4\u00f9\u00fb\u00fc\u00ff\u0153]")),
+)
 
 
-def detect_language_in_pair(text: str, source_language: str | None, target_language: str | None) -> str:
-    src = normalize_language_code(source_language)
-    tgt = normalize_language_code(target_language)
-    candidates = [code for code in (src, tgt) if code not in {"auto", "detect"}]
-    detected = detect_language_heuristic(text)
-    if detected in candidates:
-        return detected
-    return candidates[0] if candidates else "en"
+def _language_code(language: str | None) -> str:
+    return str(language or "").strip().lower().replace("_", "-").split("-")[0] or "en"
 
 
-def opposite_language_in_pair(
-    detected_source: str,
-    source_language: str | None,
-    target_language: str | None,
-) -> str:
-    src = normalize_language_code(source_language)
-    tgt = normalize_language_code(target_language)
-    if detected_source == src:
-        return tgt
-    if detected_source == tgt:
-        return src
-    return tgt
+def detect_language_with_confidence(text: str) -> Dict[str, Any]:
+    t = (text or "").lower()
+    if not t.strip():
+        return {"language": "en", "confidence": 0.0, "reason": "empty"}
 
+    for language, pattern in SCRIPT_LANGUAGES:
+        if pattern.search(t):
+            return {"language": language, "confidence": 0.96, "reason": "script"}
 
-def resolve_active_languages_in_pair(
-    text: str,
-    source_language: str | None,
-    target_language: str | None,
-) -> tuple[str, str]:
-    src = normalize_language_code(source_language)
-    tgt = normalize_language_code(target_language)
-    if language_pair_has_ht(source_language, target_language) and (text or "").strip():
-        active_src = detect_language_in_pair(text, source_language, target_language)
-        active_tgt = opposite_language_in_pair(active_src, source_language, target_language)
-        return active_src, active_tgt
-    return src, tgt
+    for language, pattern in ACCENT_LANGUAGES:
+        if pattern.search(t):
+            return {"language": language, "confidence": 0.84, "reason": "accent"}
+
+    tokens = set(re.findall(r"[a-z\u00c0-\u024f]+", t))
+    scores = {
+        language: len(tokens & words)
+        for language, words in LANGUAGE_WORDS.items()
+    }
+    best_language, best_score = max(scores.items(), key=lambda item: item[1])
+    sorted_scores = sorted(scores.values(), reverse=True)
+    runner_up = sorted_scores[1] if len(sorted_scores) > 1 else 0
+    if best_score > 0 and best_score > runner_up:
+        confidence = min(0.94, 0.72 + (best_score * 0.08))
+        return {"language": best_language, "confidence": confidence, "reason": "word_votes"}
+    if best_score > 0:
+        return {"language": best_language, "confidence": 0.5, "reason": "ambiguous_words"}
+    return {"language": "en", "confidence": 0.42, "reason": "default"}
 
 
 def detect_language_heuristic(text: str) -> str:
-    t = (text or "").lower()
-    tokens = set(re.findall(
-        r"[a-z\u00e0\u00e2\u00e4\u00e7\u00e9\u00e8\u00ea\u00eb\u00ee\u00ef\u00f4\u00f6\u00f9\u00fb\u00fc\u00ff\u0153\u00f1\u00e1\u00ed\u00f3\u00fa]+",
-        t,
-    ))
-    ht_votes = len(tokens & HT_WORDS)
-    es_votes = len(tokens & ES_WORDS)
-    fr_votes = len(tokens & FR_WORDS)
-    if ht_votes >= 1 and ht_votes >= max(es_votes, fr_votes):
-        return "ht"
-    if re.search(r"[\u00e1\u00e9\u00ed\u00f3\u00fa\u00f1\u00bf\u00a1]", t):
-        return "es"
-    if re.search(r"[\u00e0\u00e2\u00e4\u00e7\u00e9\u00e8\u00ea\u00eb\u00ee\u00ef\u00f4\u00f6\u00f9\u00fb\u00fc\u00ff\u0153]", t):
-        return "fr"
-    if es_votes > fr_votes and es_votes >= 1:
-        return "es"
-    if fr_votes > es_votes and fr_votes >= 1:
-        return "fr"
-    return "en"
+    return str(detect_language_with_confidence(text).get("language") or "en")
+
+
+def resolve_barrier_route(
+    text: str,
+    primary_source_language: str,
+    primary_target_language: str,
+    *,
+    enabled: bool = True,
+) -> Dict[str, Any]:
+    """Resolve the active speaker and translation direction for a two-language conversation.
+
+    Barrier mode treats the configured source/target languages as the two sides
+    of a conversation. The detected source language decides which side spoke
+    and automatically flips the translation direction for the listener.
+    """
+
+    primary_source = _language_code(primary_source_language)
+    primary_target = _language_code(primary_target_language)
+    detection = detect_language_with_confidence(text)
+    detected = _language_code(detection.get("language"))
+    confidence = float(detection.get("confidence") or 0.0)
+    in_pair = detected in {primary_source, primary_target}
+    if not enabled:
+        detected = primary_source
+        confidence = 1.0
+        in_pair = True
+
+    if enabled and in_pair and detected == primary_target and primary_source != primary_target:
+        source_language = primary_target
+        target_language = primary_source
+        speaker_index = 2
+    else:
+        source_language = primary_source
+        target_language = primary_target
+        speaker_index = 1
+
+    route_confidence = confidence if in_pair else min(confidence, 0.45)
+    return {
+        "barrier_mode": bool(enabled),
+        "source_language": source_language,
+        "target_language": target_language,
+        "detected_language": detected,
+        "detected_language_confidence": round(confidence, 3),
+        "route_confidence": round(route_confidence, 3),
+        "route_reason": detection.get("reason"),
+        "needs_confirmation": bool(enabled and (not in_pair or route_confidence < 0.5)),
+        "speaker": f"person-{speaker_index}",
+        "speaker_label": f"Person {speaker_index}",
+        "speaker_index": speaker_index,
+        "listener_label": f"Person {1 if speaker_index == 2 else 2}",
+        "detection": "language_route" if enabled else "manual",
+    }

@@ -3645,18 +3645,22 @@ select:focus-visible {
   z-index: 10000;
   padding: 20px;
   animation: fadeIn .25s ease both;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .onboarding-card {
+  box-sizing: border-box;
   background: rgba(8,13,28,.97);
   border: 1px solid rgba(45,212,191,.18);
   border-radius: 22px;
   padding: 30px 28px 24px;
-  max-width: 400px;
-  width: 100%;
+  width: calc(100vw - 32px);
+  max-width: 360px;
   box-shadow: 0 32px 80px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.04) inset;
   position: relative;
   animation: panelUp .35s cubic-bezier(.2,.8,.2,1) both;
+  overflow: hidden;
 }
 
 .onboarding-close {
@@ -3712,6 +3716,7 @@ select:focus-visible {
   color: rgba(148,163,184,.8);
   line-height: 1.65;
   margin: 0 0 18px;
+  overflow-wrap: break-word;
 }
 
 .onboarding-progress {
@@ -3764,6 +3769,8 @@ select:focus-visible {
 .onboarding-actions {
   display: flex;
   gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
 }
 
 .onboarding-skip {
@@ -3804,9 +3811,16 @@ select:focus-visible {
 }
 
 @media (max-width: 480px) {
-  .onboarding-footer { flex-direction: column; }
+  .onboarding-overlay { padding: 16px; }
+  .onboarding-card {
+    width: calc(100vw - 24px);
+    max-width: 348px;
+    padding: 28px 18px 20px;
+  }
+  .onboarding-footer { flex-direction: column; align-items: stretch; }
+  .dont-show-checkbox { justify-content: center; }
   .onboarding-actions { width: 100%; }
-  .onboarding-skip, .onboarding-next { flex: 1; justify-content: center; }
+  .onboarding-skip, .onboarding-next { flex: 1 1 0; justify-content: center; min-width: 0; }
 }
 
 /* ═══════════════════════════════════════════════════════════

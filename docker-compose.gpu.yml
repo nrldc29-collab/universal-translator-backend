@@ -1,4 +1,33 @@
 services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        /bin/ollama serve &
+        sleep 5
+        ollama pull ${OLLAMA_MODEL:-mistral}
+        wait
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
   backend:
     build:
       context: .
@@ -47,8 +76,17 @@ services:
       WHISPER_NUM_WORKERS: ${WHISPER_NUM_WORKERS:-1}
       PRELOAD_MODELS: ${PRELOAD_MODELS:-1}
       TRANSLATION_DEVICE: ${TRANSLATION_DEVICE:-cuda}
+      # Ollama — local LLM for AILang intelligence layer
+      OLLAMA_ENABLED: ${OLLAMA_ENABLED:-true}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-mistral}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-30}
+      USE_LLM_AGENTS: ${USE_LLM_AGENTS:-true}
     volumes:
       - ./models:/app/models
+    depends_on:
+      ollama:
+        condition: service_healthy
     restart: unless-stopped
     deploy:
       resources:
@@ -63,3 +101,6 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+volumes:
+  ollama_data:

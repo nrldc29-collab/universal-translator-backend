@@ -26,12 +26,10 @@ fn post_translate(original: string, translated: string, source_lang: string, tar
     relationship = detect_relationship(context)
     if relationship == "professional" || relationship == "stranger" {
         if target_lang == "es" {
-            prompt = f"Ensure this Spanish uses usted (formal). Keep meaning: {translated}"
-            return ask fast: prompt
+            return translated
         }
         if target_lang == "fr" {
-            prompt = f"Ensure this French uses vous (formal). Keep meaning: {translated}"
-            return ask fast: prompt
+            return translated
         }
     }
     return translated

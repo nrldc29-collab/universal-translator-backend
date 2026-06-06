@@ -1,6 +1,7 @@
 """Plugin Loader — Discovers and manages AILang plugins."""
 from __future__ import annotations
 import logging
+import re
 import time
 from pathlib import Path
 from threading import RLock
@@ -19,6 +20,20 @@ def get_plugin_loader() -> "PluginLoader":
     return _loader_instance
 
 HOOK_POINTS = ["pre_translate", "post_translate", "on_speaker_change", "on_domain_detected", "on_error", "custom_step"]
+
+
+def _looks_like_ai_artifact(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return True
+    if re.match(r"^\[(?:AI|AI_ERROR|plugin-ai):", text, re.IGNORECASE):
+        return True
+    lowered = text.lower()
+    if "ensure this " in lowered and "keep meaning:" in lowered:
+        return True
+    if re.search(r"\[[a-z]{2,}(?:-[a-z0-9]+)?->none\]", text, re.IGNORECASE):
+        return True
+    return False
 
 class PluginInfo:
     def __init__(self, name: str, version: str, path: Path, hooks: List[str]):
@@ -147,6 +162,34 @@ class PluginLoader:
         handlers = self._hooks[hook_name]
         if not handlers:
             return args[0] if args else None
+
+        if hook_name == "post_translate" and len(args) >= 2:
+            original = args[0]
+            translated = args[1]
+            result = translated
+            tail_args = args[2:]
+            for handler in handlers:
+                plugin_info = self._plugins.get(handler["plugin"])
+                if plugin_info and not plugin_info.enabled:
+                    continue
+                try:
+                    fn = handler["function"]
+                    candidate = fn(original, result, *tail_args, **kwargs)
+                    if isinstance(candidate, str) and not _looks_like_ai_artifact(candidate):
+                        result = candidate
+                    elif isinstance(candidate, str):
+                        logger.warning(
+                            "Plugin '%s' hook '%s' returned an internal artifact; keeping previous translation",
+                            handler["plugin"],
+                            hook_name,
+                        )
+                    plugin_info.record_hook_execution(hook_name, success=True)
+                except Exception as e:
+                    logger.error(f"Plugin '{handler['plugin']}' hook '{hook_name}' failed: {e}", exc_info=True)
+                    if plugin_info:
+                        plugin_info.record_hook_execution(hook_name, success=False)
+            return result
+
         result = args[0] if args else None
         for handler in handlers:
             plugin_info = self._plugins.get(handler["plugin"])

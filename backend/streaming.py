@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
 import unicodedata
 from contextlib import suppress
@@ -13,31 +14,20 @@ logger = logging.getLogger("anai_translator")
 
 from backend.conversation import ConversationBrain
 from backend.memory import ConversationMemory
-from backend.speakers import (
-    SpeakerMemory,
-    detect_language_heuristic,
-    detect_language_in_pair,
-    language_pair_has_ht,
-    opposite_language_in_pair,
-    resolve_active_languages_in_pair,
-    resolve_whisper_language,
-)
+from backend.speakers import SpeakerMemory, detect_language_heuristic, resolve_barrier_route
 from backend.refine import refine_translation
+
+# AILang enhancement — optional, degrades gracefully if ailang is not installed
+try:
+    from ailang_integration.runtime.backend_hook import enhance_translation_v2 as _ailang_enhance_v2
+    _AILANG_AVAILABLE = True
+except ImportError:
+    _AILANG_AVAILABLE = False
 from backend.latency import LatencyEngine
 from backend.stream_session import StreamSessionState
 from backend.audio import process_wav_for_stt, compute_rms
-from backend.cip_bridge import choose_translation, get_cip_confidence, get_cip_decision, is_cip_clarification, resolve_translation_text
-from backend.confidence import (
-    ConfidenceEngine,
-    assess_translation_confidence,
-    estimate_stt_confidence,
-    estimate_translation_confidence,
-    detect_ambiguities,
-    clarification_for,
-)
-from backend.communication_brain import detect_domains
-from backend.api_health import runtime_state
-from backend.glossary import get_session_glossary, glossary_coverage_score, glossary_blocks_clarification
+from backend.cip_bridge import choose_translation, get_cip_confidence, get_cip_decision, should_block_translation_for_cip
+from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
 from backend.config import (
     get_client_vad_mode,
     get_client_vad_threshold,
@@ -61,12 +51,72 @@ from backend.pipeline import TranslationResult
 from backend.security import usage_limiter
 from backend.sessions import session_registry
 from backend.tts_pacing import build_tts_pacing, emotion_config_from_style
+from backend.tts_cache import cached_tts_payload as _cached_tts_payload_impl
 from fastapi import WebSocket
 from fastapi.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
 
 from backend.pipeline import AnaiTranslatorPipeline
 from speech import SileroVoiceActivityDetector
+from tts import PiperTextToSpeech
+
+BACKEND_LIVE_TTS_LANGS = {"en", "es", "ht", "fr", "de", "it", "pt", "nl", "ru", "zh", "ja", "ko", "ar", "hi"}
+
+
+def _language_code(language: str | None) -> str:
+    if not language:
+        return "en"
+    return str(language).strip().lower().replace("_", "-").split("-")[0] or "en"
+
+
+def _truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "auto", "barrier"}
+
+
+def _should_use_backend_live_tts(language: str | None) -> bool:
+    return _language_code(language) in BACKEND_LIVE_TTS_LANGS
+
+
+def _ailang_enhancement_provider_enabled() -> bool:
+    explicit = os.getenv("AILANG_ENHANCEMENTS_ENABLED")
+    if explicit is not None:
+        return explicit.strip().lower() in {"1", "true", "yes", "on"}
+
+    def real_api_key(name: str) -> bool:
+        value = os.getenv(name, "").strip()
+        if not value:
+            return False
+        lowered = value.lower()
+        return lowered not in {"replace-this", "your_api_key_here", "your-api-key-here"} and not lowered.startswith("your_api")
+
+    ollama_enabled = os.getenv("OLLAMA_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+    return bool(ollama_enabled or real_api_key("OPENAI_API_KEY") or real_api_key("ANTHROPIC_API_KEY"))
+
+
+# Advanced optimization modules - optional, degrades gracefully
+try:
+    from backend.adaptive_vad import AdaptiveVAD
+    _ADAPTIVE_VAD_AVAILABLE = True
+except ImportError:
+    _ADAPTIVE_VAD_AVAILABLE = False
+
+try:
+    from backend.smart_buffer import SmartBuffer, Priority
+    _SMART_BUFFER_AVAILABLE = True
+except ImportError:
+    _SMART_BUFFER_AVAILABLE = False
+
+try:
+    from backend.audio_enhancer import AudioEnhancer
+    _AUDIO_ENHANCER_AVAILABLE = True
+except ImportError:
+    _AUDIO_ENHANCER_AVAILABLE = False
 
 # Circuit breaker for resilient service calls
 class CircuitBreaker:
@@ -117,18 +167,178 @@ translation_circuit_breaker = CircuitBreaker(failure_threshold=5, recovery_timeo
 stt_circuit_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=5.0)
 from speech.audio_decode import transcode_to_wav
 
+
+def _tts_file_ready(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size >= 100
+    except OSError:
+        return False
+
+
+def _unlink_temp_tts_file(path: str | Path | None) -> None:
+    if not path:
+        return
+    tts_path = Path(path)
+    try:
+        cache_dir = Path("models/tts/cache").resolve()
+        if tts_path.resolve().parent == cache_dir:
+            return
+        tts_path.unlink(missing_ok=True)
+    except (OSError, PermissionError):
+        pass
+
+
+def _synthesize_tts_resilient(
+    tts_engine,
+    text: str,
+    output_path: str | Path,
+    language: str,
+    google_api_key: str | None = None,
+    emotion_config: dict | None = None,
+) -> str:
+    output_path = Path(output_path)
+    first_error: Exception | None = None
+
+    try:
+        rendered = tts_engine.synthesize(
+            text,
+            str(output_path),
+            language=language,
+            google_api_key=google_api_key,
+            emotion_config=emotion_config,
+        )
+        rendered_path = Path(rendered or output_path)
+        if _tts_file_ready(rendered_path):
+            return str(rendered_path)
+        first_error = RuntimeError(f"TTS returned empty audio at {rendered_path}.")
+    except Exception as exc:
+        first_error = exc
+
+    logger.warning("stream_tts_primary_failed_retrying_fresh language=%s error=%s", language, first_error)
+    try:
+        rendered = PiperTextToSpeech().synthesize(
+            text,
+            str(output_path),
+            language=language,
+            google_api_key=google_api_key,
+            emotion_config=emotion_config,
+        )
+        rendered_path = Path(rendered or output_path)
+        if _tts_file_ready(rendered_path):
+            return str(rendered_path)
+    except Exception as exc:
+        raise RuntimeError(f"TTS failed after fresh retry: {exc}") from first_error
+
+    raise RuntimeError("TTS returned empty audio after fresh retry.") from first_error
+
+
+def _synthesize_live_tts_chunk(
+    tts_engine,
+    text: str,
+    output_path: str | Path,
+    language: str,
+    google_api_key: str | None = None,
+    emotion_config: dict | None = None,
+) -> str:
+    if emotion_config:
+        return _synthesize_tts_resilient(
+            tts_engine,
+            text,
+            output_path,
+            language=language,
+            google_api_key=google_api_key,
+            emotion_config=emotion_config,
+        )
+
+    payload = _cached_tts_payload_impl(
+        text,
+        language,
+        "url",
+        lambda temp_path: _synthesize_tts_resilient(
+            tts_engine,
+            text,
+            temp_path,
+            language=language,
+            google_api_key=google_api_key,
+            emotion_config=None,
+        ),
+    )
+    return payload["audio_output_path"]
+
+
+def _apply_ailang_enhancements(
+    translated_text: str,
+    source_text: str,
+    source_lang: str,
+    target_lang: str,
+    speaker: str,
+    memory=None,
+    speaker_memory=None,
+    tr_conf: float = 0.9,
+    session_context: dict = None,
+) -> str:
+    """Run AILang enhancement agents on an already-translated string.
+
+    Applies: confidence fallback, back-translation verify, dialect adapt,
+    speaker style, glossary injection, and context memory — in a single call.
+    Always returns a string; never raises.
+
+    session_context supports:
+        glossary         — list of {source, target, lang_pair, context} overrides
+        target_dialect   — e.g. 'es-MX'
+        quality_mode     — defaults to 'enhanced'
+        speaker_registry — dict, persisted across turns (pass by reference)
+        conversation_history — list of past turns
+    """
+    if not _AILANG_AVAILABLE or not translated_text or not _ailang_enhancement_provider_enabled():
+        return translated_text
+    try:
+        ctx = dict(session_context or {})
+        ctx["current_speaker"] = speaker
+        ctx["source_lang"] = source_lang
+        ctx["target_lang"] = target_lang
+        ctx.setdefault("quality_mode", "enhanced")
+        # Pull history from memory object if available
+        if memory is not None and not ctx.get("conversation_history"):
+            raw = memory.get_context()
+            if isinstance(raw, list):
+                ctx["conversation_history"] = raw
+        # stt_confidence feeds the confidence_fallback agent
+        ctx["stt_confidence"] = tr_conf
+        result = _ailang_enhance_v2(
+            text=source_text,
+            source_lang=source_lang,
+            target_lang=target_lang,
+            context=ctx,
+        )
+        enhanced = result.get("translated_text") or translated_text
+        if is_internal_translation_artifact(enhanced):
+            logger.warning(
+                "AILang enhancement returned internal artifact; keeping base translation source=%s target=%s artifact=%r",
+                source_lang,
+                target_lang,
+                str(enhanced)[:120],
+            )
+            return translated_text
+        return enhanced if enhanced else translated_text
+    except Exception as exc:
+        logger.debug("AILang enhancement skipped: %s", exc)
+        return translated_text
+
 # Pure helpers + pipeline-step plumbing live in a sibling module so this
 # file can focus on the WebSocket handlers below.
 from backend.streaming_helpers import (
     PipelineStepTimeout,
+    audio_suffix_for_bytes,
     audio_suffix_for_mime,
     call_cip_brain,
     chunk_text_for_tts,
     extract_client_voice_active,
     folded_live_text,
+    is_internal_translation_artifact,
     is_speakable_live_delta,
+    live_translation_redundant,
     live_translation_delta,
-    looks_like_container_audio,
     normalize_live_text,
     normalized_word,
     parse_provider_event,
@@ -148,8 +358,8 @@ async def websocket_text_translation(websocket: WebSocket, pipeline: AnaiTransla
             await websocket.send_json({"type": "pong"})
             continue
         text = payload.get("text", "")
-        source_language = payload.get("source_language", "en")
-        target_language = payload.get("target_language", "ht")
+        source_language = payload.get("source_language") or "en"
+        target_language = payload.get("target_language") or "es"
 
         if not text.strip():
             await websocket.send_json({"type": "error", "message": "Text is required."})
@@ -161,6 +371,13 @@ async def websocket_text_translation(websocket: WebSocket, pipeline: AnaiTransla
             target_language=target_language,
             synthesize_audio=False,
         )
+        # AILang enhancement for text translation
+        enhanced_text = _apply_ailang_enhancements(
+            result.translated_text, text, source_language, target_language,
+            "speaker",
+        )
+        if enhanced_text and enhanced_text != result.translated_text:
+            result.translated_text = enhanced_text
         await websocket.send_json({"type": "translation", **result.__dict__})
 
 
@@ -172,6 +389,7 @@ async def websocket_audio_translation(
     memory: ConversationMemory | None = None,
     speaker_memory: SpeakerMemory | None = None,
     identity: str = "anonymous",
+    global_latency_engine: LatencyEngine | None = None,
 ):
     await websocket.accept()
     observability.increment("websocket_connects_total")
@@ -180,16 +398,21 @@ async def websocket_audio_translation(
     memory = memory or ConversationMemory()
     speaker_memory = speaker_memory or SpeakerMemory()
 
+    # Initialize advanced optimization modules if available
+    adaptive_vad = AdaptiveVAD() if _ADAPTIVE_VAD_AVAILABLE else None
+    smart_buffer = SmartBuffer(max_size_mb=get_stream_buffer_max_mb()) if _SMART_BUFFER_AVAILABLE else None
+    audio_enhancer = AudioEnhancer() if _AUDIO_ENHANCER_AVAILABLE else None
+
     source_language = "en"
-    target_language = "ht"
+    target_language = "es"
     speaker = "speaker"
     speaker_label = "Person 1"
     speaker_index = 1
     speaker_mode = "manual"
     speaker_detection = "manual"
+    barrier_mode = False
     device_id = None
     session_id = "default"
-    stt_only = False
     audio_chunks = bytearray()
     recent_chunks = []
     speech_started = False
@@ -205,6 +428,8 @@ async def websocket_audio_translation(
     partial_text = ""
     partial_buffer = ""
     partial_tts_text = ""
+    last_live_tts_source_text = ""
+    last_live_tts_utterance_id = None
     last_sent_translation = ""
     last_active_speaker = None
     segment_generation = 0
@@ -213,25 +438,56 @@ async def websocket_audio_translation(
     live_text_pending = None
     live_text_revision = 0
     live_text_active_until = 0.0
-    live_text_final_until = 0.0
     latency_engine = LatencyEngine()
     confidence_engine = ConfidenceEngine()
     pipeline_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
     tts_active = False
     partial_tts_active = False
     last_partial_tts_at = 0.0
-    last_partial_clarify_at = 0.0
-    PARTIAL_TTS_MIN_INTERVAL = 0.8    # fire at most every 800ms
-    PARTIAL_CLARIFY_COOLDOWN_SECONDS = 8.0
-    PARTIAL_TTS_MIN_WORDS = 2         # need at least 2 words before speaking
-    PARTIAL_TTS_MAX_WORDS = 15        # cap phrase length
+    recent_audio_tts_texts: list[str] = []
     phrase_accumulation_buffer = ""
     phrase_accumulation_start = 0.0   # when accumulation began (never reset mid-speech)
+    try:
+        PARTIAL_TTS_MIN_INTERVAL = max(0.1, float(os.getenv("PARTIAL_TTS_MIN_INTERVAL", "0.45")))
+    except (TypeError, ValueError):
+        PARTIAL_TTS_MIN_INTERVAL = 0.45
+    try:
+        PARTIAL_TTS_MIN_WORDS = max(1, int(os.getenv("PARTIAL_TTS_MIN_WORDS", "1")))
+    except (TypeError, ValueError):
+        PARTIAL_TTS_MIN_WORDS = 1
+    try:
+        PARTIAL_TTS_MAX_WORDS = max(1, int(os.getenv("PARTIAL_TTS_MAX_WORDS", "15")))
+    except (TypeError, ValueError):
+        PARTIAL_TTS_MAX_WORDS = 15
     turn_announced_for_segment = False
     active_speaker_notice_at = 0.0
 
+    def remember_audio_tts(text: str) -> None:
+        spoken = normalize_live_text(text)
+        if not spoken:
+            return
+        recent_audio_tts_texts.append(spoken)
+        del recent_audio_tts_texts[:-6]
+
+    def recently_spoken_audio_tts(text: str) -> bool:
+        spoken = normalize_live_text(text)
+        if not spoken:
+            return True
+        return any(live_translation_redundant(previous, spoken) for previous in recent_audio_tts_texts)
+
+    # Advanced optimization tracking
+    environment = "quiet" if adaptive_vad else "unknown"
+    cache_hits = 0
+    cache_misses = 0
+
+    # Sync cache stats from pipeline
+    if pipeline.enable_predictive_cache and pipeline.predictive_cache:
+        cache_stats = pipeline.get_cache_statistics()
+        cache_hits = cache_stats.get("hits", 0)
+        cache_misses = cache_stats.get("misses", 0)
+
     def reset_segment_state() -> None:
-        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count, partial_text, partial_buffer, partial_tts_text, last_partial_at, last_sent_translation, last_active_speaker, turn_announced_for_segment, segment_generation, phrase_accumulation_buffer, phrase_accumulation_start
+        nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count, partial_text, partial_buffer, partial_tts_text, last_live_tts_source_text, last_live_tts_utterance_id, last_partial_at, last_sent_translation, last_active_speaker, turn_announced_for_segment, segment_generation, phrase_accumulation_buffer, phrase_accumulation_start
         audio_chunks = bytearray()
         recent_chunks = []
         speech_started = False
@@ -241,6 +497,8 @@ async def websocket_audio_translation(
         partial_text = ""
         partial_buffer = ""
         partial_tts_text = ""
+        last_live_tts_source_text = ""
+        last_live_tts_utterance_id = None
         last_partial_at = 0.0
         last_sent_translation = ""
         last_active_speaker = None
@@ -269,6 +527,11 @@ async def websocket_audio_translation(
             "behavior": decision.behavior,
             "active_speaker": decision.active_speaker,
             "playback_owner": decision.playback_owner,
+            "optimization": {
+                "environment": environment,
+                "cache_hits": cache_hits,
+                "cache_misses": cache_misses,
+            } if adaptive_vad or pipeline.predictive_cache else None,
         })
         await websocket.send_json({
             "type": "turn",
@@ -284,16 +547,6 @@ async def websocket_audio_translation(
 
     async def enqueue_finalize(reason: str) -> None:
         nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count
-        if live_text_active_until and time() < live_text_active_until:
-            audio_chunks.clear()
-            recent_chunks.clear()
-            reset_segment_state()
-            return
-        if live_text_final_until and time() < live_text_final_until:
-            audio_chunks.clear()
-            recent_chunks.clear()
-            reset_segment_state()
-            return
         if pipeline_queue.full():
             await websocket.send_json({"type": "stage", "stage": "queued", "message": "Already processing audio. Please wait..."})
             return
@@ -313,12 +566,13 @@ async def websocket_audio_translation(
             "speaker_index": speaker_index,
             "speaker_mode": speaker_mode,
             "speaker_detection": speaker_detection,
+            "barrier_mode": barrier_mode,
             "device_id": device_id,
             "session_id": session_id,
             "source_language": source_language,
             "target_language": target_language,
             "client_mime_type": client_mime_type,
-            "audio_suffix": audio_suffix,
+            "audio_suffix": audio_suffix_for_bytes(audio_chunks, client_mime_type),
             "partial_text": partial_text,
             "partial_translation": last_sent_translation,
             "partial_tts_text": partial_tts_text,
@@ -344,11 +598,12 @@ async def websocket_audio_translation(
         partial_started_at = time()
         last_partial_at = partial_started_at
         partial_audio = bytes(audio_chunks)
-        partial_suffix = audio_suffix
+        partial_suffix = audio_suffix_for_bytes(partial_audio, client_mime_type)
         partial_source_language = source_language
         partial_target_language = target_language
         partial_speaker = speaker
         partial_speaker_label = speaker_label
+        partial_barrier_mode = barrier_mode
         partial_generation = segment_generation
         partial_task = asyncio.create_task(run_partial_pipeline(
             partial_audio,
@@ -357,6 +612,7 @@ async def websocket_audio_translation(
             partial_target_language,
             partial_speaker,
             partial_speaker_label,
+            partial_barrier_mode,
             partial_generation,
             partial_started_at,
         ))
@@ -368,10 +624,11 @@ async def websocket_audio_translation(
         partial_target_language: str,
         partial_speaker: str,
         partial_speaker_label: str,
+        partial_barrier_mode: bool,
         partial_generation: int,
         partial_started_at: float,
     ) -> None:
-        nonlocal partial_text, partial_buffer, partial_tts_text, last_sent_translation, last_active_speaker, tts_active, partial_tts_active, last_partial_clarify_at
+        nonlocal partial_text, partial_buffer, partial_tts_text, last_sent_translation, last_active_speaker, tts_active, partial_tts_active
         upload_dir = Path("models/uploads")
         upload_dir.mkdir(parents=True, exist_ok=True)
         partial_audio_path = upload_dir / f"{uuid4()}-partial{partial_suffix}"
@@ -380,36 +637,35 @@ async def websocket_audio_translation(
         processed_partial_path = None
         stt_input_path = str(partial_audio_path)
         try:
-            if partial_suffix.lower() in {".webm", ".m4a", ".mp4", ".ogg", ".aac"}:
+            if partial_suffix.lower() in {".webm", ".m4a", ".mp4", ".ogg", ".aac", ".mp3"}:
                 transcoded_partial_path = await run_in_threadpool(transcode_to_wav, str(partial_audio_path))
                 if transcoded_partial_path:
                     stt_input_path = transcoded_partial_path
             # Denoise/normalize partial audio if possible
             processed_partial_path, metrics = process_wav_for_stt(stt_input_path)
             stt_input_path = processed_partial_path or stt_input_path
+
+            # Apply advanced audio enhancement if available
+            if audio_enhancer and processed_partial_path:
+                try:
+                    import numpy as np
+                    audio_data, sr = await run_in_threadpool(lambda: np.fromfile(processed_partial_path, dtype=np.int16))
+                    audio_float = audio_data.astype(np.float32) / 32768.0
+                    enhanced_audio = audio_enhancer.process(audio_float)
+                    enhanced_int16 = (enhanced_audio * 32768.0).astype(np.int16)
+                    enhanced_path = upload_dir / f"{uuid4()}-enhanced.wav"
+                    await run_in_threadpool(lambda: enhanced_int16.tofile(str(enhanced_path)))
+                    stt_input_path = str(enhanced_path)
+                except Exception as exc:
+                    logger.debug(f"Audio enhancement skipped: {exc}")
             try:
-                partial_stt_language = resolve_whisper_language(
-                    partial_source_language,
-                    partial_target_language,
-                    stt_only=stt_only,
-                )
-                next_partial_text = await run_pipeline_step(
-                    "partial STT",
-                    pipeline.stt.transcribe,
-                    stt_input_path,
-                    partial_stt_language,
-                )
+                stt_language_hint = None if partial_barrier_mode else partial_source_language
+                next_partial_text = await run_pipeline_step("partial STT", pipeline.stt.transcribe, stt_input_path, stt_language_hint)
             except PipelineStepTimeout as exc:
                 if partial_generation == segment_generation:
                     await websocket.send_json({"type": "stage", "stage": "partial_timeout", "message": str(exc)})
                 return
-            except (RuntimeError, ValueError, OSError) as exc:
-                if partial_generation == segment_generation:
-                    await websocket.send_json({
-                        "type": "stage",
-                        "stage": "partial_stt_failed",
-                        "message": str(exc) or "Partial speech recognition failed.",
-                    })
+            except (RuntimeError, ValueError, OSError):
                 return
         finally:
             partial_audio_path.unlink(missing_ok=True)
@@ -423,87 +679,105 @@ async def websocket_audio_translation(
         # Accumulate into partial_buffer conservatively to reduce flicker
         if len(next_partial_text) > len(partial_buffer):
             partial_buffer = next_partial_text
-        await websocket.send_json({"type": "partial_transcription", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": partial_text})
-        if stt_only:
-            return
+        partial_route = resolve_barrier_route(
+            partial_text,
+            partial_source_language,
+            partial_target_language,
+            enabled=partial_barrier_mode,
+        )
+        effective_source_language = partial_route["source_language"]
+        effective_target_language = partial_route["target_language"]
+        effective_speaker = partial_route["speaker"] if partial_barrier_mode else partial_speaker
+        effective_speaker_label = partial_route["speaker_label"] if partial_barrier_mode else partial_speaker_label
+        await websocket.send_json({
+            "type": "partial_transcription",
+            "speaker": effective_speaker,
+            "speaker_label": effective_speaker_label,
+            "text": partial_text,
+            "source_language": effective_source_language,
+            "target_language": effective_target_language,
+            "detected_language": partial_route["detected_language"],
+            "detected_language_confidence": partial_route["detected_language_confidence"],
+            "route_confidence": partial_route["route_confidence"],
+            "barrier_mode": partial_barrier_mode,
+        })
         # Adaptive thresholds: interruption and current system speed
-        interrupted = last_active_speaker is not None and last_active_speaker != partial_speaker
+        interrupted = last_active_speaker is not None and last_active_speaker != effective_speaker
         total_latency = latency_engine.total()
         fast_system = total_latency <= 0 or total_latency < 1.3
         min_words_base = get_partial_translation_min_words() if fast_system else max(3, get_partial_translation_min_words() + 1)
         min_words = (min_words_base - 1) if interrupted else min_words_base
         if bool(re.search(r"[.!?;:,]\s*$", partial_buffer.strip())) or len(partial_buffer.split()) >= min_words:
-            partial_active_src = partial_source_language
-            partial_active_tgt = partial_target_language
-            if language_pair_has_ht(partial_source_language, partial_target_language):
-                partial_active_src = detect_language_in_pair(
-                    partial_buffer,
-                    partial_source_language,
-                    partial_target_language,
-                )
-                partial_active_tgt = opposite_language_in_pair(
-                    partial_active_src,
-                    partial_source_language,
-                    partial_target_language,
-                )
             try:
-                partial_translation_raw = await run_pipeline_step(
-                    "partial translation",
-                    lambda: pipeline.translate_local(
-                        partial_buffer,
-                        partial_active_src,
-                        partial_active_tgt,
-                        session_id=session_id,
-                        original_source_text=partial_buffer,
-                    ),
-                )
+                partial_translation_raw = await run_pipeline_step("partial translation", pipeline.translator.translate, partial_buffer, effective_source_language, effective_target_language)
             except PipelineStepTimeout as exc:
                 if partial_generation == segment_generation:
                     await websocket.send_json({"type": "stage", "stage": "partial_timeout", "message": str(exc)})
                 return
-            except (RuntimeError, ValueError, OSError) as exc:
-                if partial_generation == segment_generation:
-                    await websocket.send_json({
-                        "type": "stage",
-                        "stage": "partial_translation_failed",
-                        "message": str(exc) or "Partial translation failed.",
-                    })
+            except (RuntimeError, ValueError, OSError):
                 return
             if partial_generation != segment_generation:
                 return
             # Lock or auto-detect language for this speaker once
-            if not speaker_memory.get_language(partial_speaker):
-                if language_pair_has_ht(partial_source_language, partial_target_language):
-                    speaker_memory.register(partial_speaker, language=partial_active_src)
-                else:
-                    auto_lang = detect_language_heuristic(partial_text)
-                    speaker_memory.register(partial_speaker, language=partial_source_language or auto_lang)
-            refined_partial = refine_translation(partial_buffer, partial_translation_raw, memory.get_context(), speaker_memory.get_context(partial_speaker))
-            # Confidence and ambiguity checks for partials
+            if not speaker_memory.get_language(effective_speaker):
+                auto_lang = detect_language_heuristic(partial_text)
+                speaker_memory.register(effective_speaker, language=effective_source_language or auto_lang)
+            refined_partial = refine_translation(partial_buffer, partial_translation_raw, memory.get_context(), speaker_memory.get_context(effective_speaker))
+            # AILang enhancement for partials (lightweight — context memory, glossary, dialect)
             stt_conf = estimate_stt_confidence(partial_text)
             tr_conf = estimate_translation_confidence(partial_buffer, refined_partial)
+            refined_partial = await run_in_threadpool(
+                _apply_ailang_enhancements,
+                refined_partial, partial_buffer, effective_source_language, effective_target_language,
+                effective_speaker, memory=memory, speaker_memory=speaker_memory, tr_conf=tr_conf,
+            )
+            # Confidence and ambiguity checks for partials
             conf_score = confidence_engine.evaluate(stt_conf, tr_conf)
             if conf_score < 0.4:
-                now = time()
-                if now - last_partial_clarify_at >= PARTIAL_CLARIFY_COOLDOWN_SECONDS:
-                    last_partial_clarify_at = now
-                    await websocket.send_json({"type": "clarify", "message": clarification_for(partial_buffer, detect_ambiguities(partial_buffer)), "stage": "partial_low_confidence"})
+                await websocket.send_json({"type": "clarify", "message": clarification_for(partial_buffer, detect_ambiguities(partial_buffer)), "stage": "partial_low_confidence"})
             # Adaptive partial update suppression if under heavy load
             allow_partial_updates = latency_engine.total() <= 2.5
             if allow_partial_updates and refined_partial and refined_partial != last_sent_translation:
                 last_sent_translation = refined_partial
-                await websocket.send_json({"type": "partial_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": refined_partial, "source_language": partial_active_src, "target_language": partial_active_tgt})
-                await websocket.send_json({"type": "live_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": refined_partial, "source_language": partial_active_src, "target_language": partial_active_tgt})
+                await websocket.send_json({
+                    "type": "partial_translation",
+                    "speaker": effective_speaker,
+                    "speaker_label": effective_speaker_label,
+                    "text": refined_partial,
+                    "source_text": partial_buffer,
+                    "source_language": effective_source_language,
+                    "target_language": effective_target_language,
+                    "detected_language": partial_route["detected_language"],
+                    "detected_language_confidence": partial_route["detected_language_confidence"],
+                    "route_confidence": partial_route["route_confidence"],
+                    "barrier_mode": partial_barrier_mode,
+                })
+                await websocket.send_json({
+                    "type": "live_translation",
+                    "speaker": effective_speaker,
+                    "speaker_label": effective_speaker_label,
+                    "text": refined_partial,
+                    "source_text": partial_buffer,
+                    "source_language": effective_source_language,
+                    "target_language": effective_target_language,
+                    "detected_language": partial_route["detected_language"],
+                    "detected_language_confidence": partial_route["detected_language_confidence"],
+                    "route_confidence": partial_route["route_confidence"],
+                    "barrier_mode": partial_barrier_mode,
+                })
             live_tts_delta = live_translation_delta(partial_tts_text, refined_partial)
             tts_text_to_speak = live_tts_delta if is_speakable_live_delta(live_tts_delta) else (refined_partial if refined_partial != partial_tts_text else "")
             if get_partial_tts_mode() and is_speakable_live_delta(tts_text_to_speak):
+                if recently_spoken_audio_tts(tts_text_to_speak):
+                    return
                 try:
                     partial_tts_path = await run_pipeline_step(
                         "partial TTS",
-                        lambda: pipeline.tts.synthesize(
+                        lambda: _synthesize_live_tts_chunk(
+                            pipeline.tts,
                             tts_text_to_speak,
                             f"models/tts/{uuid4()}-partial.wav",
-                            language=partial_active_tgt,
+                            language=effective_target_language,
                         ),
                     )
                 except Exception as exc:
@@ -515,62 +789,99 @@ async def websocket_audio_translation(
                             partial_tts_text = refined_partial
                             partial_tts_active = True
                             partial_tts_audio = Path(partial_tts_path).read_bytes()
-                            await websocket.send_json({"type": "tts_start", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "chunks": 1, "partial": True})
+                            await websocket.send_json({
+                                "type": "tts_start",
+                                "speaker": effective_speaker,
+                                "speaker_label": effective_speaker_label,
+                                "chunks": 1,
+                                "partial": True,
+                                "source_language": effective_source_language,
+                                "target_language": effective_target_language,
+                                "barrier_mode": partial_barrier_mode,
+                            })
                             await websocket.send_json({
                                 "type": "tts_audio_chunk",
-                                "speaker": partial_speaker,
-                                "speaker_label": partial_speaker_label,
+                                "speaker": effective_speaker,
+                                "speaker_label": effective_speaker_label,
                                 "index": 1,
                                 "total": 1,
                                 "text": tts_text_to_speak,
                                 "live_translation_text": refined_partial,
+                                "source_text": partial_buffer,
+                                "source_language": effective_source_language,
+                                "target_language": effective_target_language,
                                 "audio_base64": base64.b64encode(partial_tts_audio).decode("ascii"),
                                 "mime_type": "audio/wav",
                                 "partial": True,
+                                "barrier_mode": partial_barrier_mode,
                             })
-                            await websocket.send_json({"type": "tts_end", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "partial": True})
+                            remember_audio_tts(tts_text_to_speak)
+                            await websocket.send_json({
+                                "type": "tts_end",
+                                "speaker": effective_speaker,
+                                "speaker_label": effective_speaker_label,
+                                "partial": True,
+                                "source_language": effective_source_language,
+                                "target_language": effective_target_language,
+                                "barrier_mode": partial_barrier_mode,
+                            })
                     finally:
                         partial_tts_active = False
-                        Path(partial_tts_path).unlink(missing_ok=True)
-            observability.record_event("near_zero_partial", identity=identity, speaker=partial_speaker, latency_seconds=time() - partial_started_at)
+                        _unlink_temp_tts_file(partial_tts_path)
+            observability.record_event("near_zero_partial", identity=identity, speaker=effective_speaker, latency_seconds=time() - partial_started_at)
 
     async def schedule_live_text(payload: dict) -> None:
-        nonlocal live_text_pending, live_text_task, live_text_revision, live_text_active_until, live_text_final_until, speech_started, last_speech_at, silent_checks, partial_text, partial_buffer, audio_chunks, recent_chunks
+        nonlocal live_text_pending, live_text_task, live_text_revision, live_text_active_until, speech_started, last_speech_at, silent_checks, partial_text, partial_buffer
         live_text = normalize_live_text(payload.get("text", ""))
         if not live_text:
             return
         live_text_revision += 1
-        is_final = bool(payload.get("final"))
-        if is_final:
-            live_text_active_until = time() + 4.0
-            live_text_final_until = time() + 5.0
-            audio_chunks.clear()
-            recent_chunks.clear()
-            speech_started = False
-        else:
-            live_text_active_until = time() + 1.6
+        live_text_active_until = time() + 1.6
         speech_started = True
         last_speech_at = time()
         silent_checks = 0
         partial_text = live_text
         partial_buffer = live_text
+        live_barrier_mode = _truthy(payload.get("barrier_mode")) if "barrier_mode" in payload else barrier_mode
+        base_source_language = payload.get("source_language") or source_language
+        base_target_language = payload.get("target_language") or target_language
+        live_route = resolve_barrier_route(
+            live_text,
+            base_source_language,
+            base_target_language,
+            enabled=live_barrier_mode,
+        )
+        live_source_language = live_route["source_language"]
+        live_target_language = live_route["target_language"]
+        live_speaker = live_route["speaker"] if live_barrier_mode else speaker
+        live_speaker_label = live_route["speaker_label"] if live_barrier_mode else speaker_label
         await announce_active_speaker("browser_live_text", None)
         await websocket.send_json({
             "type": "partial_transcription",
-            "speaker": speaker,
-            "speaker_label": speaker_label,
+            "speaker": live_speaker,
+            "speaker_label": live_speaker_label,
             "text": live_text,
+            "source_language": live_source_language,
+            "target_language": live_target_language,
+            "detected_language": live_route["detected_language"],
+            "detected_language_confidence": live_route["detected_language_confidence"],
+            "route_confidence": live_route["route_confidence"],
+            "barrier_mode": live_barrier_mode,
             "source": "browser_live_text",
+            "utterance_id": payload.get("utterance_id"),
             "final": bool(payload.get("final")),
         })
         live_text_pending = {
             "revision": live_text_revision,
             "text": live_text,
             "final": bool(payload.get("final")),
-            "source_language": payload.get("source_language") or source_language,
-            "target_language": payload.get("target_language") or target_language,
-            "speaker": speaker,
-            "speaker_label": speaker_label,
+            "source_language": live_source_language,
+            "target_language": live_target_language,
+            "speaker": live_speaker,
+            "speaker_label": live_speaker_label,
+            "route": live_route,
+            "barrier_mode": live_barrier_mode,
+            "utterance_id": payload.get("utterance_id"),
             "started_at": time(),
         }
         if live_text_task is None or live_text_task.done():
@@ -587,34 +898,22 @@ async def websocket_audio_translation(
                 logger.warning("live_text_queue_error error=%s", exc)
 
     async def run_live_text_pipeline(payload: dict) -> None:
-        nonlocal last_sent_translation, partial_tts_text, tts_active, partial_tts_active, last_partial_tts_at, phrase_accumulation_buffer, phrase_accumulation_start
+        nonlocal last_sent_translation, partial_tts_text, last_live_tts_source_text, last_live_tts_utterance_id, tts_active, partial_tts_active, last_partial_tts_at, phrase_accumulation_buffer, phrase_accumulation_start
         text_value = payload["text"]
         payload_revision = payload["revision"]
         live_source_language = payload["source_language"]
         live_target_language = payload["target_language"]
-        if language_pair_has_ht(live_source_language, live_target_language) and text_value.strip():
-            live_source_language = detect_language_in_pair(
-                text_value,
-                live_source_language,
-                live_target_language,
-            )
-            live_target_language = opposite_language_in_pair(
-                live_source_language,
-                payload["source_language"],
-                payload["target_language"],
-            )
         live_speaker = payload["speaker"]
         live_speaker_label = payload["speaker_label"]
+        live_route = payload.get("route") or {}
+        live_barrier_mode = bool(payload.get("barrier_mode"))
         try:
             raw_translation = await run_pipeline_step(
                 "live text translation",
-                lambda: pipeline.translate_local(
-                    text_value,
-                    live_source_language,
-                    live_target_language,
-                    session_id=session_id,
-                    original_source_text=text_value,
-                ),
+                pipeline.translator.translate,
+                text_value,
+                live_source_language,
+                live_target_language,
             )
         except PipelineStepTimeout as exc:
             if payload_revision == live_text_revision:
@@ -622,203 +921,77 @@ async def websocket_audio_translation(
             return
         except Exception as exc:
             logger.warning("live_text_translation_failed error=%s", exc)
-            if payload_revision == live_text_revision:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"Translation failed: {exc}",
-                    "recoverable": True,
-                    "source": "browser_live_text",
-                })
             return
 
         if not speaker_memory.get_language(live_speaker):
             speaker_memory.register(live_speaker, language=live_source_language or detect_language_heuristic(text_value))
         refined = refine_translation(text_value, raw_translation, memory.get_context(), speaker_memory.get_context(live_speaker))
         if not refined:
-            if payload_revision == live_text_revision:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Translation empty",
-                    "recoverable": True,
-                    "source": "browser_live_text",
-                })
             return
-        if payload_revision != live_text_revision:
-            return
+        refined = _apply_ailang_enhancements(
+            refined, text_value, live_source_language, live_target_language,
+            live_speaker, memory=memory, speaker_memory=speaker_memory,
+        )
 
-        if refined != last_sent_translation:
+        live_utterance_id = payload.get("utterance_id")
+        normalized_live_utterance_id = str(live_utterance_id) if live_utterance_id is not None else None
+        previous_live_source = folded_live_text(last_live_tts_source_text)
+        current_live_source = folded_live_text(text_value)
+        utterance_changed = normalized_live_utterance_id is not None and last_live_tts_utterance_id is not None and normalized_live_utterance_id != last_live_tts_utterance_id
+        source_changed = bool(previous_live_source and current_live_source and not current_live_source.startswith(previous_live_source))
+        new_live_utterance = utterance_changed or source_changed
+
+        if refined != last_sent_translation or new_live_utterance:
             last_sent_translation = refined
             await websocket.send_json({
                 "type": "partial_translation",
                 "speaker": live_speaker,
                 "speaker_label": live_speaker_label,
                 "text": refined,
-                "source": "browser_live_text",
-                "final": payload["final"],
+                "source_text": text_value,
                 "source_language": live_source_language,
                 "target_language": live_target_language,
+                "detected_language": live_route.get("detected_language"),
+                "detected_language_confidence": live_route.get("detected_language_confidence"),
+                "route_confidence": live_route.get("route_confidence"),
+                "barrier_mode": live_barrier_mode,
+                "utterance_id": live_utterance_id,
+                "source": "browser_live_text",
+                "final": payload["final"],
             })
             await websocket.send_json({
                 "type": "live_translation",
                 "speaker": live_speaker,
                 "speaker_label": live_speaker_label,
                 "text": refined,
-                "source": "browser_live_text",
-                "final": payload["final"],
+                "source_text": text_value,
                 "source_language": live_source_language,
                 "target_language": live_target_language,
+                "detected_language": live_route.get("detected_language"),
+                "detected_language_confidence": live_route.get("detected_language_confidence"),
+                "route_confidence": live_route.get("route_confidence"),
+                "barrier_mode": live_barrier_mode,
+                "utterance_id": live_utterance_id,
+                "source": "browser_live_text",
             })
 
-        is_final = bool(payload.get("final"))
-
-        async def emit_live_tts(live_tts_to_speak: str, *, partial: bool) -> bool:
-            nonlocal partial_tts_text, last_partial_tts_at, partial_tts_active
-            if payload_revision != live_text_revision:
-                return False
-            if not live_tts_to_speak or not is_speakable_live_delta(live_tts_to_speak):
-                return False
-            live_tts_path = None
-            max_retries = 2
-            for attempt in range(max_retries):
-                try:
-                    live_tts_path = await tts_circuit_breaker.call(
-                        run_pipeline_step,
-                        "live text TTS",
-                        lambda text=live_tts_to_speak: pipeline.tts.synthesize(
-                            text,
-                            f"models/tts/{uuid4()}-live-text.wav",
-                            language=live_target_language,
-                        ),
-                    )
-                    break
-                except Exception as exc:
-                    logger.warning("live_tts_failed attempt=%d/%d error=%s", attempt + 1, max_retries, exc)
-                    if attempt < max_retries - 1:
-                        await asyncio.sleep(0.1 * (2 ** attempt))
-                    else:
-                        logger.error("live_tts_failed_all_attempts error=%s", exc)
-                        live_tts_path = None
-            if not live_tts_path:
-                return False
-            try:
-                partial_tts_text = refined
-                last_partial_tts_at = time()
-                partial_tts_active = True
-                audio_bytes = Path(live_tts_path).read_bytes()
-                if len(audio_bytes) < 100:
-                    return False
-                await websocket.send_json({
-                    "type": "tts_start",
-                    "speaker": live_speaker,
-                    "speaker_label": live_speaker_label,
-                    "chunks": 1,
-                    "partial": partial,
-                    "source": "browser_live_text",
-                })
-                await websocket.send_json({
-                    "type": "tts_audio_chunk",
-                    "speaker": live_speaker,
-                    "speaker_label": live_speaker_label,
-                    "index": 1,
-                    "total": 1,
-                    "text": live_tts_to_speak,
-                    "live_translation_text": refined,
-                    "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
-                    "mime_type": "audio/wav",
-                    "partial": partial,
-                    "source": "browser_live_text",
-                })
-                await websocket.send_json({
-                    "type": "tts_end",
-                    "speaker": live_speaker,
-                    "speaker_label": live_speaker_label,
-                    "partial": partial,
-                    "source": "browser_live_text",
-                })
-                await websocket.send_json({
-                    "type": "latency",
-                    "metric": "live_text_voice",
-                    "ms": round((time() - payload["started_at"]) * 1000),
-                })
-                return True
-            finally:
-                partial_tts_active = False
-                Path(live_tts_path).unlink(missing_ok=True)
-
-        if is_final:
-            pending_tail = phrase_accumulation_buffer.strip()
-            live_tail = live_translation_delta(partial_tts_text, refined)
-            if is_speakable_live_delta(live_tail):
-                tts_playback_text = live_tail
-            elif pending_tail:
-                tts_playback_text = pending_tail
-            elif not partial_tts_text or folded_live_text(refined) != folded_live_text(partial_tts_text):
-                tts_playback_text = refined
-            else:
-                tts_playback_text = ""
+        if new_live_utterance:
+            live_tts_delta = refined
             phrase_accumulation_buffer = ""
             phrase_accumulation_start = 0.0
-            if tts_playback_text:
-                await emit_live_tts(tts_playback_text, partial=False)
-            else:
-                await websocket.send_json({
-                    "type": "tts_end",
-                    "speaker": live_speaker,
-                    "speaker_label": live_speaker_label,
-                    "partial": False,
-                    "source": "browser_live_text",
-                })
-            if payload_revision != live_text_revision:
-                return
-            memory.add(live_speaker, text_value, refined, {"source": "browser_live_text"})
-            speaker_memory.add_message(live_speaker, text_value)
-            shared_session = session_registry.record_turn(
-                session_id,
-                identity,
-                live_speaker,
-                text_value,
-                refined,
-                {},
-                device_id=device_id,
-                speaker_label=live_speaker_label,
-            )
-            result = TranslationResult(
-                source_text=text_value,
-                improved_text=text_value,
-                translated_text=refined,
-                audio_output_path=None,
-            )
-            await websocket.send_json({"type": "session_sync", "session": shared_session})
-            await websocket.send_json({
-                "type": "final",
-                "speaker": live_speaker,
-                "speaker_label": live_speaker_label,
-                "speaker_index": speaker_index,
-                "device_id": device_id,
-                "detection": speaker_detection,
-                "source": "browser_live_text",
-                "translated_by": "UT",
-                "clarify": False,
-                "session": shared_session,
-                **result.__dict__,
-            })
-            complete_decision = conversation_brain.end_turn(live_speaker)
-            await websocket.send_json({
-                "type": "turn",
-                "speaker": live_speaker,
-                "speaker_label": live_speaker_label,
-                "allowed": complete_decision.allowed,
-                "reason": complete_decision.reason,
-                "behavior": complete_decision.behavior,
-                "active_speaker": complete_decision.active_speaker,
-                "playback_owner": complete_decision.playback_owner,
-            })
-            return
-
-        live_tts_delta = live_translation_delta(partial_tts_text, refined)
+            last_partial_tts_at = 0.0
+        else:
+            live_tts_delta = live_translation_delta(partial_tts_text, refined)
         # Only speak new words (real delta). Never fall back to full sentence —
         # that causes repeating from the start when translation rewrites itself.
         if not get_partial_tts_mode() or not is_speakable_live_delta(live_tts_delta):
+            return
+        if not _should_use_backend_live_tts(live_target_language):
+            logger.info(
+                "live_tts_browser_fallback target=%s text=%r",
+                live_target_language,
+                refined[:60],
+            )
             return
         candidate = live_tts_delta
 
@@ -828,15 +1001,15 @@ async def websocket_audio_translation(
             phrase_accumulation_start = now
         phrase_accumulation_buffer = candidate
 
-        # Fire when: interval elapsed OR enough words accumulated
-        elapsed = now - last_partial_tts_at
+        # Fire when: interval elapsed OR enough words accumulated.
+        elapsed = now - last_partial_tts_at if last_partial_tts_at else None
         word_count = len(phrase_accumulation_buffer.split())
         time_accumulating = now - phrase_accumulation_start
 
-        too_soon = elapsed < PARTIAL_TTS_MIN_INTERVAL
+        too_soon = elapsed is not None and elapsed < PARTIAL_TTS_MIN_INTERVAL
         too_short = word_count < PARTIAL_TTS_MIN_WORDS
         # Force fire if we've been accumulating > 2s regardless of word count
-        force = time_accumulating >= 1.5 and word_count >= 2
+        force = bool(payload.get("final") and word_count >= 1) or (new_live_utterance and word_count >= 1) or (time_accumulating >= 1.5 and word_count >= 2)
 
         if too_soon and not force:
             return
@@ -845,10 +1018,95 @@ async def websocket_audio_translation(
 
         words = phrase_accumulation_buffer.split()
         live_tts_to_speak = " ".join(words[:PARTIAL_TTS_MAX_WORDS])
-        logger.info("live_tts_firing words=%d elapsed=%.1fs text=%r", word_count, elapsed, live_tts_to_speak[:60])
+        logger.info("live_tts_firing words=%d elapsed=%.1fs text=%r", word_count, elapsed or 0.0, live_tts_to_speak[:60])
         phrase_accumulation_buffer = ""
         phrase_accumulation_start = 0.0
-        await emit_live_tts(live_tts_to_speak, partial=True)
+
+        # TTS with circuit breaker and retry logic
+        live_tts_path = None
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                live_tts_path = await tts_circuit_breaker.call(
+                    run_pipeline_step,
+                    "live text TTS",
+                    lambda: _synthesize_live_tts_chunk(
+                        pipeline.tts,
+                        live_tts_to_speak,
+                        f"models/tts/{uuid4()}-live-text.wav",
+                        language=live_target_language,
+                    ),
+                )
+                break  # Success - exit retry loop
+            except Exception as exc:
+                logger.warning("live_tts_failed attempt=%d/%d error=%s", attempt + 1, max_retries, exc)
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.1 * (2 ** attempt))  # Exponential backoff: 100ms, 200ms
+                else:
+                    logger.error("live_tts_failed_all_attempts error=%s", exc)
+                    live_tts_path = None
+        if not live_tts_path:
+            return
+
+        try:
+            partial_tts_text = refined
+            last_live_tts_source_text = text_value
+            last_live_tts_utterance_id = normalized_live_utterance_id
+            last_partial_tts_at = time()
+            partial_tts_active = True
+            audio_bytes = Path(live_tts_path).read_bytes()
+            if len(audio_bytes) < 100:
+                return
+            await websocket.send_json({
+                "type": "tts_start",
+                "speaker": live_speaker,
+                "speaker_label": live_speaker_label,
+                "chunks": 1,
+                "partial": True,
+                "source_language": live_source_language,
+                "target_language": live_target_language,
+                "barrier_mode": live_barrier_mode,
+                "source": "browser_live_text",
+            })
+            await websocket.send_json({
+                "type": "tts_audio_chunk",
+                "speaker": live_speaker,
+                "speaker_label": live_speaker_label,
+                "index": 1,
+                "total": 1,
+                "text": live_tts_to_speak,
+                "live_translation_text": refined,
+                "source_text": text_value,
+                "source_language": live_source_language,
+                "target_language": live_target_language,
+                "utterance_id": live_utterance_id,
+                "detected_language": live_route.get("detected_language"),
+                "detected_language_confidence": live_route.get("detected_language_confidence"),
+                "route_confidence": live_route.get("route_confidence"),
+                "barrier_mode": live_barrier_mode,
+                "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+                "mime_type": "audio/wav",
+                "partial": True,
+                "source": "browser_live_text",
+            })
+            await websocket.send_json({
+                "type": "tts_end",
+                "speaker": live_speaker,
+                "speaker_label": live_speaker_label,
+                "partial": True,
+                "source_language": live_source_language,
+                "target_language": live_target_language,
+                "barrier_mode": live_barrier_mode,
+                "source": "browser_live_text",
+            })
+            await websocket.send_json({
+                "type": "latency",
+                "metric": "live_text_voice",
+                "ms": round((time() - payload["started_at"]) * 1000),
+            })
+        finally:
+            partial_tts_active = False
+            _unlink_temp_tts_file(live_tts_path)
 
     async def finalize_segment(segment: dict):
         nonlocal speaker, speaker_label, speaker_index, speaker_detection, device_id, finalizing, last_active_speaker, tts_active
@@ -862,11 +1120,12 @@ async def websocket_audio_translation(
             audio_bytes = segment["audio_bytes"]
             segment_speaker_mode = segment["speaker_mode"]
             segment_speaker_detection = segment.get("speaker_detection", "manual")
+            segment_barrier_mode = bool(segment.get("barrier_mode"))
             segment_session_id = segment["session_id"]
             segment_source_language = segment["source_language"]
             segment_target_language = segment["target_language"]
             segment_mime_type = segment["client_mime_type"]
-            segment_audio_suffix = segment["audio_suffix"]
+            segment_audio_suffix = audio_suffix_for_bytes(audio_bytes, segment.get("client_mime_type") or segment.get("mime_type"))
             segment_partial_text = segment.get("partial_text", "")
             segment_partial_tts_text = segment.get("partial_tts_text", "")
             speaker = segment["speaker"]
@@ -920,14 +1179,12 @@ async def websocket_audio_translation(
                     detection=speaker_detection,
                 )
 
-            # Speaker memory: lock language per speaker unless HT/auto STT is active
-            auto_stt = stt_only or language_pair_has_ht(segment_source_language, segment_target_language)
-            if auto_stt:
-                active_source_language = segment_source_language
-            else:
+            # In Barrier Mode, STT should not be locked to the previous turn's language.
+            active_source_language = segment_source_language
+            active_target_language = segment_target_language
+            if not segment_barrier_mode:
                 speaker_memory.register(speaker, language=segment_source_language)
                 active_source_language = speaker_memory.get_language(speaker) or segment_source_language
-            active_target_language = segment_target_language
             await websocket.send_json({
                 "type": "speaker_detected",
                 "speaker": speaker,
@@ -939,6 +1196,7 @@ async def websocket_audio_translation(
                 "device_id": device_id,
                 "source_language": active_source_language,
                 "target_language": active_target_language,
+                "barrier_mode": segment_barrier_mode,
             })
 
             decision = conversation_brain.request_turn(speaker)
@@ -963,7 +1221,7 @@ async def websocket_audio_translation(
             # Re-mux iOS Safari WebM/MP4 chunks to clean PCM WAV before decoding
             stt_input_path = str(audio_path)
             transcoded_path = None
-            if segment_audio_suffix.lower() in {".webm", ".m4a", ".mp4", ".ogg", ".aac"}:
+            if segment_audio_suffix.lower() in {".webm", ".m4a", ".mp4", ".ogg", ".aac", ".mp3"}:
                 try:
                     transcoded_path = await run_in_threadpool(transcode_to_wav, str(audio_path))
                 except (RuntimeError, ValueError, OSError) as transcode_exc:
@@ -984,12 +1242,8 @@ async def websocket_audio_translation(
             processed_path, proc_metrics = process_wav_for_stt(str(stt_input_path))
             stt_call_input = processed_path or str(stt_input_path)
             try:
-                stt_language = resolve_whisper_language(
-                    segment_source_language,
-                    segment_target_language,
-                    stt_only=stt_only,
-                )
-                source_text = await run_pipeline_step("STT", pipeline.stt.transcribe, stt_call_input, stt_language)
+                stt_language_hint = None if segment_barrier_mode else active_source_language
+                source_text = await run_pipeline_step("STT", pipeline.stt.transcribe, stt_call_input, stt_language_hint)
             except (RuntimeError, ValueError, OSError) as stt_exc:
                 message = str(stt_exc)
                 if "Invalid data found" in message or "1094995529" in message:
@@ -1018,40 +1272,73 @@ async def websocket_audio_translation(
             if not source_text.strip():
                 await websocket.send_json({"type": "error", "message": "No clear speech recognized. Try speaking closer to the mic."})
                 return
-            if auto_stt:
-                active_source_language = detect_language_in_pair(
-                    source_text,
-                    segment_source_language,
-                    segment_target_language,
-                )
-                active_target_language = opposite_language_in_pair(
+            barrier_route = resolve_barrier_route(
+                source_text,
+                segment_source_language,
+                segment_target_language,
+                enabled=segment_barrier_mode,
+            )
+            if segment_barrier_mode:
+                speaker = barrier_route["speaker"]
+                speaker_label = barrier_route["speaker_label"]
+                speaker_index = barrier_route["speaker_index"]
+                speaker_detection = barrier_route["detection"]
+                active_source_language = barrier_route["source_language"]
+                active_target_language = barrier_route["target_language"]
+                session_registry.bind(
+                    segment_session_id,
+                    speaker,
+                    identity,
                     active_source_language,
-                    segment_source_language,
-                    segment_target_language,
+                    active_target_language,
+                    device_id=device_id,
+                    speaker_label=speaker_label,
+                    speaker_index=speaker_index,
+                    detection=speaker_detection,
                 )
                 speaker_memory.register(speaker, language=active_source_language)
-            await websocket.send_json({"type": "final_transcription", "speaker": speaker, "speaker_label": speaker_label, "text": source_text})
-            if stt_only:
                 await websocket.send_json({
-                    "type": "stt_only",
+                    "type": "speaker_detected",
                     "speaker": speaker,
                     "speaker_label": speaker_label,
-                    "text": source_text,
+                    "speaker_index": speaker_index,
+                    "mode": segment_speaker_mode,
+                    "detection": speaker_detection,
+                    "confidence": barrier_route["route_confidence"],
+                    "device_id": device_id,
                     "source_language": active_source_language,
                     "target_language": active_target_language,
+                    "detected_language": barrier_route["detected_language"],
+                    "detected_language_confidence": barrier_route["detected_language_confidence"],
+                    "route_confidence": barrier_route["route_confidence"],
+                    "route_reason": barrier_route["route_reason"],
+                    "needs_confirmation": barrier_route["needs_confirmation"],
+                    "listener_label": barrier_route["listener_label"],
+                    "barrier_mode": segment_barrier_mode,
                 })
-                complete_decision = conversation_brain.end_turn(speaker)
-                await websocket.send_json({
-                    "type": "turn",
-                    "speaker": speaker,
-                    "speaker_label": speaker_label,
-                    "allowed": complete_decision.allowed,
-                    "reason": complete_decision.reason,
-                    "behavior": complete_decision.behavior,
-                    "active_speaker": complete_decision.active_speaker,
-                    "playback_owner": complete_decision.playback_owner,
-                })
-                return
+            else:
+                barrier_route = {
+                    "detected_language": active_source_language,
+                    "detected_language_confidence": 1.0,
+                    "route_confidence": 1.0,
+                    "needs_confirmation": False,
+                    "listener_label": None,
+                    "barrier_mode": False,
+                }
+            await websocket.send_json({
+                "type": "final_transcription",
+                "speaker": speaker,
+                "speaker_label": speaker_label,
+                "text": source_text,
+                "source_language": active_source_language,
+                "target_language": active_target_language,
+                "detected_language": barrier_route["detected_language"],
+                "detected_language_confidence": barrier_route["detected_language_confidence"],
+                "route_confidence": barrier_route["route_confidence"],
+                "needs_confirmation": barrier_route["needs_confirmation"],
+                "listener_label": barrier_route["listener_label"],
+                "barrier_mode": segment_barrier_mode,
+            })
             semantic_context = conversation_brain.analyze_semantics(speaker, source_text)
             await websocket.send_json({"type": "semantic_context", "speaker": speaker, "speaker_label": speaker_label, **semantic_context})
             await websocket.send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
@@ -1069,21 +1356,24 @@ async def websocket_audio_translation(
             )
             raw_translated_text = await run_pipeline_step(
                 "translation",
-                lambda: pipeline.translate_local(
-                    improved_text,
-                    active_source_language,
-                    active_target_language,
-                    session_id=segment_session_id,
-                    original_source_text=source_text,
-                ),
+                pipeline.translator.translate,
+                improved_text,
+                active_source_language,
+                active_target_language,
             )
             memory_context = memory.get_context()
             speaker_context = speaker_memory.get_context(speaker)
             translated_text = refine_translation(source_text, raw_translated_text, memory_context, speaker_context)
-            # CIP override and decision
-            cip = None
             stt_conf = estimate_stt_confidence(source_text)
             tr_conf = estimate_translation_confidence(source_text, translated_text)
+            translated_text = await run_in_threadpool(
+                _apply_ailang_enhancements,
+                translated_text, source_text, active_source_language, active_target_language,
+                speaker, memory, speaker_memory, tr_conf,
+            )
+            tr_conf = estimate_translation_confidence(source_text, translated_text)
+            # CIP override and decision
+            cip = None
             try:
                 cip = await call_cip_brain(
                     source_text,
@@ -1100,52 +1390,39 @@ async def websocket_audio_translation(
             except (RuntimeError, ValueError, ConnectionError):
                 cip = None
             cip_decision = get_cip_decision(cip)
-            cip_clarify = is_cip_clarification(cip)
-            pre_cip_translation = translated_text
-            segment_glossary = get_session_glossary(segment_session_id)
-            if cip_clarify and glossary_blocks_clarification(
-                source_text,
-                pre_cip_translation,
-                segment_glossary,
-                active_source_language,
-                active_target_language,
-            ):
-                cip_clarify = False
+            cip_clarify = should_block_translation_for_cip(cip, translated_text, tr_conf)
             cip_response_plan = cip.get("response_plan") if isinstance(cip, dict) and isinstance(cip.get("response_plan"), dict) else {}
             cip_turn_policy = cip_response_plan.get("turn_policy") if isinstance(cip_response_plan.get("turn_policy"), dict) else {}
             cip_client_hints = cip_response_plan.get("client_hints") if isinstance(cip_response_plan.get("client_hints"), dict) else {}
-            translated_text = resolve_translation_text(cip_clarify, cip, translated_text)
+            if not cip_clarify and cip_client_hints.get("skip_tts"):
+                cip_response_plan = dict(cip_response_plan)
+                cip_turn_policy = dict(cip_turn_policy)
+                cip_client_hints = dict(cip_client_hints)
+                cip_client_hints["skip_tts"] = False
+                cip_client_hints["tts_mode"] = "speak"
+                cip_client_hints["ask_before_speaking"] = False
+                cip_turn_policy["tts"] = "speak"
+                cip_turn_policy["speak_to_listener"] = True
+                cip_response_plan["client_hints"] = cip_client_hints
+                cip_response_plan["turn_policy"] = cip_turn_policy
+            translated_text = "" if cip_clarify else choose_translation(cip, translated_text)
             # Confidence and ambiguity checks for final
             tr_conf = estimate_translation_confidence(source_text, translated_text)
             cip_conf = get_cip_confidence(cip)
-            domains = detect_domains(source_text)
-            glossary_cov = glossary_coverage_score(
-                source_text,
-                translated_text,
-                segment_glossary,
-                active_source_language,
-                active_target_language,
-            )
-            assessment = assess_translation_confidence(
-                source_text,
-                translated_text,
-                stt_confidence=stt_conf,
-                domains=domains,
-                glossary_coverage=glossary_cov,
-            )
-            conf_score = cip_conf if cip_conf is not None else assessment["confidence"]
-            if assessment["low_confidence"] and not cip_clarify:
-                await websocket.send_json({
-                    "type": "confidence_warning",
-                    "confidence": assessment["confidence"],
-                    "threshold": assessment["confidence_threshold"],
-                    "high_stakes": assessment["high_stakes"],
-                    "needs_confirmation": assessment["needs_confirmation"],
-                    "message": assessment["confidence_message"],
-                    "domains": assessment["high_stakes"],
-                })
+            conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
             if conf_score < 0.4 and not cip_clarify:
-                await websocket.send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
+                await websocket.send_json({
+                    "type": "clarify",
+                    "message": clarification_for(source_text, detect_ambiguities(source_text)),
+                    "stage": "final_low_confidence",
+                    "speaker": speaker,
+                    "speaker_label": speaker_label,
+                    "source_language": active_source_language,
+                    "target_language": active_target_language,
+                    "detected_language": barrier_route["detected_language"],
+                    "route_confidence": barrier_route["route_confidence"],
+                    "barrier_mode": segment_barrier_mode,
+                })
             translation_ms = round((time() - translation_started_at) * 1000)
             intent = semantic_context.get("last_intent") or semantic_context.get("intent") or "statement"
             urgency = "high" if semantic_context.get("conversation_mood") == "urgent" else None
@@ -1175,18 +1452,48 @@ async def websocket_audio_translation(
                     "client_hints": cip_client_hints,
                     "translated_by": cip.get("translation_source"),
                 })
-            if translated_text.strip():
-                await websocket.send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": translated_text})
             if not cip_clarify:
+                await websocket.send_json({
+                    "type": "live_translation",
+                    "speaker": speaker,
+                    "speaker_label": speaker_label,
+                    "text": translated_text,
+                    "source_text": source_text,
+                    "source_language": active_source_language,
+                    "target_language": active_target_language,
+                    "detected_language": barrier_route["detected_language"],
+                    "detected_language_confidence": barrier_route["detected_language_confidence"],
+                    "route_confidence": barrier_route["route_confidence"],
+                    "needs_confirmation": barrier_route["needs_confirmation"],
+                    "listener_label": barrier_route["listener_label"],
+                    "barrier_mode": segment_barrier_mode,
+                })
                 await websocket.send_json({"type": "tts_style", "speaker": speaker, "speaker_label": speaker_label, **tts_pacing})
             observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="translation_done", translated_text=translated_text)
             # If CIP requested clarification, inform client and skip TTS
-            skip_tts = bool(cip_client_hints.get("skip_tts")) or not is_speakable_live_delta(tts_playback_text)
+            browser_voice_target = not _should_use_backend_live_tts(active_target_language)
+            skip_tts = bool(cip_client_hints.get("skip_tts")) or browser_voice_target or not is_speakable_live_delta(tts_playback_text)
             if cip_clarify:
                 msg = cip_decision.get("message") or "Can you rephrase that?"
-                await websocket.send_json({"type": "clarify", "message": msg, "stage": "cip_clarification"})
+                await websocket.send_json({
+                    "type": "clarify",
+                    "message": msg,
+                    "stage": "cip_clarification",
+                    "speaker": speaker,
+                    "speaker_label": speaker_label,
+                    "source_language": active_source_language,
+                    "target_language": active_target_language,
+                    "detected_language": barrier_route["detected_language"],
+                    "route_confidence": barrier_route["route_confidence"],
+                    "barrier_mode": segment_barrier_mode,
+                })
                 skip_tts = True
-            skip_message = "Clarification requested. Skipping TTS." if cip_clarify else "Live voice already streamed."
+            if cip_clarify:
+                skip_message = "Clarification requested. Skipping TTS."
+            elif browser_voice_target:
+                skip_message = "Browser voice handles this language."
+            else:
+                skip_message = "Live voice already streamed."
             await websocket.send_json({"type": "stage", "stage": "tts" if not skip_tts else "tts_skipped", "message": "Translation ready. Streaming voice..." if not skip_tts else skip_message})
             playback_decision = conversation_brain.begin_playback(speaker)
             await websocket.send_json({
@@ -1209,14 +1516,31 @@ async def websocket_audio_translation(
             if not skip_tts:
                 for tts_segment in tts_pacing["segments"]:
                     tts_chunks.extend(chunk_text_for_tts(tts_segment))
-                await websocket.send_json({
-                    "type": "tts_start",
-                    "speaker": speaker,
-                    "speaker_label": speaker_label,
-                    "chunks": len(tts_chunks),
-                    "cip_turn_policy": cip_turn_policy,
-                    "latency_budget_ms": cip_client_hints.get("latency_budget_ms"),
-                })
+                tts_chunks = [chunk for chunk in tts_chunks if not recently_spoken_audio_tts(chunk)]
+                if not tts_chunks:
+                    skip_tts = True
+                    await websocket.send_json({
+                        "type": "stage",
+                        "stage": "tts_skipped",
+                        "message": "Live voice already streamed.",
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "tts_start",
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "chunks": len(tts_chunks),
+                        "source_language": active_source_language,
+                        "target_language": active_target_language,
+                        "detected_language": barrier_route["detected_language"],
+                        "detected_language_confidence": barrier_route["detected_language_confidence"],
+                        "route_confidence": barrier_route["route_confidence"],
+                        "needs_confirmation": barrier_route["needs_confirmation"],
+                        "listener_label": barrier_route["listener_label"],
+                        "barrier_mode": segment_barrier_mode,
+                        "cip_turn_policy": cip_turn_policy,
+                        "latency_budget_ms": cip_client_hints.get("latency_budget_ms"),
+                    })
 
             tts_started_at = time()
             tts_active = True
@@ -1224,7 +1548,8 @@ async def websocket_audio_translation(
                 try:
                     chunk_output_path = await run_pipeline_step(
                         "TTS",
-                        lambda c=chunk, idx=index: pipeline.tts.synthesize(
+                        lambda c=chunk, idx=index: _synthesize_live_tts_chunk(
+                            pipeline.tts,
                             c,
                             f"models/tts/{uuid4()}-{idx}.wav",
                             language=active_target_language,
@@ -1250,6 +1575,15 @@ async def websocket_audio_translation(
                         "index": index,
                         "total": len(tts_chunks),
                         "text": chunk,
+                        "source_text": source_text,
+                        "source_language": active_source_language,
+                        "target_language": active_target_language,
+                        "detected_language": barrier_route["detected_language"],
+                        "detected_language_confidence": barrier_route["detected_language_confidence"],
+                        "route_confidence": barrier_route["route_confidence"],
+                        "needs_confirmation": barrier_route["needs_confirmation"],
+                        "listener_label": barrier_route["listener_label"],
+                        "barrier_mode": segment_barrier_mode,
                         "tts_style": tts_pacing["style"],
                         "emotion": tts_pacing["emotion"],
                         "intent": tts_pacing["intent"],
@@ -1257,6 +1591,7 @@ async def websocket_audio_translation(
                         "audio_base64": base64.b64encode(tts_audio_bytes).decode("ascii"),
                         "mime_type": "audio/wav",
                     })
+                    remember_audio_tts(chunk)
                 except (RuntimeError, ValueError, OSError, base64.Error) as e:
                     stream_debug_log(f"TTS synthesis failed for chunk {index}: {e}")
                     observability.record_event("mobile_stream_error", identity=identity, speaker=speaker, error=str(e), chunk_index=index)
@@ -1267,7 +1602,15 @@ async def websocket_audio_translation(
                     })
                     break
 
-            await websocket.send_json({"type": "tts_end", "speaker": speaker, "speaker_label": speaker_label})
+            if not skip_tts:
+                await websocket.send_json({
+                    "type": "tts_end",
+                    "speaker": speaker,
+                    "speaker_label": speaker_label,
+                    "source_language": active_source_language,
+                    "target_language": active_target_language,
+                    "barrier_mode": segment_barrier_mode,
+                })
             tts_active = False
             memory.add(speaker, source_text, translated_text, {"cip": cip})
             speaker_memory.add_message(speaker, source_text)
@@ -1296,8 +1639,6 @@ async def websocket_audio_translation(
                 "speaker_index": speaker_index,
                 "device_id": device_id,
                 "detection": speaker_detection,
-                "source_language": active_source_language,
-                "target_language": active_target_language,
                 "semantic_context": semantic_context,
                 "cip_decision": cip_decision,
                 "cip_analysis": cip.get("analysis") if isinstance(cip, dict) else None,
@@ -1307,14 +1648,16 @@ async def websocket_audio_translation(
                 "cip_turn_policy": cip_turn_policy if cip_turn_policy else None,
                 "cip_client_hints": cip_client_hints if cip_client_hints else None,
                 "translated_by": cip.get("translation_source") if isinstance(cip, dict) and cip.get("translated") and cip.get("translation_source") else "UT",
-                "clarify": cip_clarify or assessment["low_confidence"] or conf_score < 0.4,
-                "confidence": assessment["confidence"],
-                "confidence_threshold": assessment["confidence_threshold"],
-                "low_confidence": assessment["low_confidence"],
-                "needs_confirmation": assessment["needs_confirmation"],
-                "confidence_message": assessment["confidence_message"],
-                "high_stakes_domains": assessment["high_stakes"],
+                "clarify": cip_clarify or conf_score < 0.4,
                 "session": shared_session,
+                "source_language": active_source_language,
+                "target_language": active_target_language,
+                "detected_language": barrier_route["detected_language"],
+                "detected_language_confidence": barrier_route["detected_language_confidence"],
+                "route_confidence": barrier_route["route_confidence"],
+                "needs_confirmation": barrier_route["needs_confirmation"],
+                "listener_label": barrier_route["listener_label"],
+                "barrier_mode": segment_barrier_mode,
                 **result.__dict__,
             })
             observability.observe_latency("streaming_segment", time() - segment_started_at)
@@ -1323,6 +1666,16 @@ async def websocket_audio_translation(
             await websocket.send_json({"type": "latency", "metric": "backend_response", "ms": total_ms})
             # Update latency engine for adaptive decisions next turns
             latency_engine.update(stt=stt_ms / 1000.0, translate=translation_ms / 1000.0, tts=(0.0))
+            # Feed global latency engine for /latency dashboard
+            if global_latency_engine:
+                run = global_latency_engine.begin_run(
+                    f"ws-{identity}-{segment_generation}",
+                    speaker=speaker, source_lang=source_language, target_lang=target_language,
+                )
+                global_latency_engine.record_stage("stt", stt_ms)
+                global_latency_engine.record_stage("translation", translation_ms)
+                global_latency_engine.record_stage("tts", total_ms - stt_ms - translation_ms)
+                global_latency_engine.end_run()
             usage_limiter.track_audio(identity, estimated_seconds, "streaming_segments")
             complete_decision = conversation_brain.end_turn(speaker)
             await websocket.send_json({
@@ -1343,6 +1696,7 @@ async def websocket_audio_translation(
         finally:
             if audio_path is not None:
                 audio_path.unlink(missing_ok=True)
+            recent_audio_tts_texts.clear()
             finalizing = False
 
     async def process_pipeline_queue() -> None:
@@ -1366,14 +1720,7 @@ async def websocket_audio_translation(
             try:
                 message = await asyncio.wait_for(websocket.receive(), timeout=0.08)
             except asyncio.TimeoutError:
-                if (
-                    speech_started
-                    and audio_chunks
-                    and last_speech_at
-                    and time() - last_speech_at > get_vad_force_final_seconds()
-                    and not (live_text_active_until and time() < live_text_active_until)
-                    and not (live_text_final_until and time() < live_text_final_until)
-                ):
+                if speech_started and audio_chunks and last_speech_at and time() - last_speech_at > get_vad_force_final_seconds():
                     stream_debug_log("FORCE FINAL")
                     await enqueue_finalize("force_timeout")
                 continue
@@ -1387,6 +1734,46 @@ async def websocket_audio_translation(
 
                 if message_type == "ping":
                     await websocket.send_json({"type": "pong"})
+                    continue
+
+                if message_type == "config":
+                    next_source_language = payload.get("source_language") or source_language
+                    next_target_language = payload.get("target_language") or target_language
+                    if "barrier_mode" in payload:
+                        barrier_mode = _truthy(payload.get("barrier_mode"))
+                    changed_language = (
+                        next_source_language != source_language
+                        or next_target_language != target_language
+                    )
+                    source_language = next_source_language
+                    target_language = next_target_language
+                    speaker_mode = payload.get("speaker_mode") or speaker_mode
+                    if payload.get("session_id"):
+                        session_id = payload.get("session_id")
+                    if payload.get("device_id"):
+                        device_id = payload.get("device_id")
+                    requested_speaker_label = payload.get("speaker_name") or payload.get("speaker_label") or speaker_label
+                    if payload.get("speaker") and payload.get("speaker") != "auto":
+                        speaker = payload.get("speaker")
+                        speaker_label = requested_speaker_label or speaker_label or f"Speaker {speaker}"
+                    if changed_language:
+                        last_sent_translation = ""
+                        partial_tts_text = ""
+                        last_live_tts_source_text = ""
+                        last_live_tts_utterance_id = None
+                        phrase_accumulation_buffer = ""
+                        phrase_accumulation_start = 0.0
+                        last_partial_tts_at = 0.0
+                    await websocket.send_json({
+                        "type": "config_ack",
+                        "source_language": source_language,
+                        "target_language": target_language,
+                        "speaker_mode": speaker_mode,
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "session_id": session_id,
+                        "barrier_mode": barrier_mode,
+                    })
                     continue
 
                 if message_type == "live_text":
@@ -1408,29 +1795,16 @@ async def websocket_audio_translation(
                     continue
 
                 if message_type == "start":
-                    if not runtime_state.get("ready"):
-                        await websocket.send_json({
-                            "type": "error",
-                            "message": "Models still loading. Wait for LIVE.",
-                            "recoverable": True,
-                            "warming": True,
-                        })
-                        continue
                     previous_session_id = session_id
                     previous_speaker = speaker
                     previous_device_id = device_id
-                    speaker_mode = payload.get("speaker_mode", "manual")
-                    session_id = payload.get("session_id", "default")
-                    source_language = payload.get("source_language", "en")
-                    target_language = payload.get("target_language", "ht")
-                    stt_only = bool(payload.get("stt_only"))
+                    speaker_mode = payload.get("speaker_mode") or "manual"
+                    barrier_mode = _truthy(payload.get("barrier_mode"))
+                    session_id = payload.get("session_id") or "default"
+                    source_language = payload.get("source_language") or "en"
+                    target_language = payload.get("target_language") or "es"
                     device_id = payload.get("device_id")
                     requested_speaker_label = payload.get("speaker_name") or payload.get("speaker_label")
-                    if previous_device_id:
-                        session_registry.disconnect(previous_session_id, previous_speaker, identity, previous_device_id)
-                    if session_registry.active_stream_count(identity) >= get_max_active_streams_per_user():
-                        await websocket.send_json({"type": "error", "message": "Too many active streams for this user.", "recoverable": True})
-                        continue
                     if speaker_mode == "auto":
                         speaker_profile = session_registry.resolve_auto_speaker(
                             session_id,
@@ -1462,6 +1836,14 @@ async def websocket_audio_translation(
                         )
                         speaker_index = session_state.get("speaker_index", speaker_index)
                         device_id = session_state.get("device_id")
+                    if previous_device_id and (
+                        previous_session_id != session_id or previous_speaker != speaker or previous_device_id != device_id
+                    ):
+                        session_registry.disconnect(previous_session_id, previous_speaker, identity, previous_device_id)
+                    if session_registry.active_stream_count(identity) > get_max_active_streams_per_user():
+                        session_registry.disconnect(session_id, speaker, identity, device_id)
+                        await websocket.send_json({"type": "error", "message": "Too many active streams for this user."})
+                        continue
                     client_mime_type = payload.get("mime_type") or client_mime_type
                     audio_suffix = audio_suffix_for_mime(client_mime_type)
                     await websocket.send_json({
@@ -1475,6 +1857,7 @@ async def websocket_audio_translation(
                         "device_id": device_id,
                         "source_language": source_language,
                         "target_language": target_language,
+                        "barrier_mode": barrier_mode,
                     })
                     await websocket.send_json({
                         "type": "turn",
@@ -1499,7 +1882,8 @@ async def websocket_audio_translation(
                         "speaker_mode": speaker_mode,
                         "detection": speaker_detection,
                         "device_id": device_id,
-                        "message": "Receiving audio for transcription only." if stt_only else "Receiving audio chunks with Silero VAD.",
+                        "barrier_mode": barrier_mode,
+                        "message": "Receiving audio chunks with Silero VAD.",
                     })
 
                 if message_type == "finalize":
@@ -1518,6 +1902,7 @@ async def websocket_audio_translation(
                     await websocket.send_json({"type": "latency", "metric": "mic_to_backend", "ms": mic_to_backend_ms})
                     observability.record_event("mobile_latency", identity=identity, metric="mic_to_backend", ms=mic_to_backend_ms, chunk_bytes=len(chunk))
                 audio_chunks.extend(chunk)
+                audio_suffix = audio_suffix_for_bytes(audio_chunks, client_mime_type)
                 observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="audio_chunk", chunk_bytes=len(chunk), total_audio_bytes=len(audio_chunks))
                 if len(audio_chunks) > max_buffer_bytes:
                     await websocket.send_json({"type": "error", "message": "Audio buffer limit reached. Please speak in shorter turns."})
@@ -1623,7 +2008,6 @@ async def websocket_audio_translation(
         observability.increment("websocket_errors_total")
         raise
     finally:
-        session_registry.disconnect(session_id, speaker, identity, device_id)
         if partial_task is not None:
             partial_task.cancel()
             with suppress(asyncio.CancelledError, Exception):
@@ -1666,19 +2050,19 @@ async def websocket_streaming_stt_translation(
     memory = memory or ConversationMemory()
     speaker_memory = speaker_memory or SpeakerMemory()
     source_language = "en"
-    target_language = "ht"
+    target_language = "es"
     speaker = "speaker"
     speaker_label = "Person 1"
     speaker_index = 1
     speaker_mode = "manual"
     speaker_detection = "manual"
+    barrier_mode = False
     session_id = "default"
     device_id = None
     provider_ws = None
     provider_receiver_task = None
     provider_language = None
     send_lock = asyncio.Lock()
-    container_audio_warned = False
 
     async def send_json(payload: dict) -> None:
         async with send_lock:
@@ -1699,38 +2083,40 @@ async def websocket_streaming_stt_translation(
             provider_ws = None
         provider_language = None
 
-    async def emit_translated_final(
-        source_text: str,
-        *,
-        src_lang: str | None = None,
-        tgt_lang: str | None = None,
-        live_text_source: bool = False,
-    ) -> None:
+    async def emit_translated_final(source_text: str) -> None:
         source_text = normalize_live_text(source_text)
         if not source_text:
             return
-        pair_src = src_lang or source_language
-        pair_tgt = tgt_lang or target_language
-        active_src, active_tgt = resolve_active_languages_in_pair(source_text, pair_src, pair_tgt)
 
-        if live_text_source:
-            await send_json({
-                "type": "partial_transcription",
-                "speaker": speaker,
-                "speaker_label": speaker_label,
-                "text": source_text,
-                "source": "browser_live_text",
-                "final": True,
-            })
-        else:
-            await send_json({
-                "type": "final_transcription",
-                "speaker": speaker,
-                "speaker_label": speaker_label,
-                "text": source_text,
-            })
-        semantic_context = conversation_brain.analyze_semantics(speaker, source_text)
-        await send_json({"type": "semantic_context", "speaker": speaker, "speaker_label": speaker_label, **semantic_context})
+        barrier_route = resolve_barrier_route(
+            source_text,
+            source_language,
+            target_language,
+            enabled=barrier_mode,
+        )
+        effective_source_language = barrier_route["source_language"]
+        effective_target_language = barrier_route["target_language"]
+        effective_speaker = barrier_route["speaker"] if barrier_mode else speaker
+        effective_speaker_label = barrier_route["speaker_label"] if barrier_mode else speaker_label
+        effective_speaker_index = barrier_route["speaker_index"] if barrier_mode else speaker_index
+        effective_detection = barrier_route["detection"] if barrier_mode else speaker_detection
+
+        await send_json({
+            "type": "final_transcription",
+            "speaker": effective_speaker,
+            "speaker_label": effective_speaker_label,
+            "text": source_text,
+            "source_language": effective_source_language,
+            "target_language": effective_target_language,
+            "detected_language": barrier_route["detected_language"],
+            "detected_language_confidence": barrier_route["detected_language_confidence"],
+            "route_confidence": barrier_route["route_confidence"],
+            "needs_confirmation": barrier_route["needs_confirmation"],
+            "listener_label": barrier_route["listener_label"],
+            "barrier_mode": barrier_mode,
+        })
+        semantic_context = conversation_brain.analyze_semantics(effective_speaker, source_text)
+        await send_json({"type": "semantic_context", "speaker": effective_speaker, "speaker_label": effective_speaker_label, **semantic_context})
         await send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
 
         translation_started_at = time()
@@ -1738,33 +2124,36 @@ async def websocket_streaming_stt_translation(
             "context improvement",
             pipeline.context_layer.improve,
             source_text,
-            active_src,
-            active_tgt,
+            effective_source_language,
+            effective_target_language,
             None,
         )
         raw_translated_text = await run_pipeline_step(
             "translation",
-            lambda: pipeline.translate_local(
-                improved_text,
-                active_src,
-                active_tgt,
-                session_id=session_id,
-                original_source_text=source_text,
-            ),
+            pipeline.translator.translate,
+            improved_text,
+            effective_source_language,
+            effective_target_language,
         )
         memory_context = memory.get_context()
-        speaker_context = speaker_memory.get_context(speaker)
+        speaker_context = speaker_memory.get_context(effective_speaker)
         translated_text = refine_translation(source_text, raw_translated_text, memory_context, speaker_context)
         stt_conf = estimate_stt_confidence(source_text)
+        tr_conf = estimate_translation_confidence(source_text, translated_text)
+        translated_text = await run_in_threadpool(
+            _apply_ailang_enhancements,
+            translated_text, source_text, effective_source_language, effective_target_language,
+            effective_speaker, memory, speaker_memory, tr_conf,
+        )
         tr_conf = estimate_translation_confidence(source_text, translated_text)
         cip = None
         try:
             cip = await call_cip_brain(
                 source_text,
-                active_tgt,
+                effective_target_language,
                 identity,
                 fallback_translation=translated_text,
-                source_language=active_src,
+                source_language=effective_source_language,
                 stt_confidence=stt_conf,
                 translation_confidence=tr_conf,
                 context=memory_context,
@@ -1774,46 +2163,32 @@ async def websocket_streaming_stt_translation(
         except (ConnectionError, TimeoutError, RuntimeError, ValueError):
             cip = None
         cip_decision = get_cip_decision(cip)
-        cip_clarify = is_cip_clarification(cip)
-        pre_cip_translation = translated_text
-        text_glossary = get_session_glossary(session_id)
-        if cip_clarify and glossary_blocks_clarification(
-            source_text,
-            pre_cip_translation,
-            text_glossary,
-            active_src,
-            active_tgt,
-        ):
-            cip_clarify = False
+        cip_clarify = should_block_translation_for_cip(cip, translated_text, tr_conf)
         cip_response_plan = cip.get("response_plan") if isinstance(cip, dict) and isinstance(cip.get("response_plan"), dict) else {}
         cip_turn_policy = cip_response_plan.get("turn_policy") if isinstance(cip_response_plan.get("turn_policy"), dict) else {}
         cip_client_hints = cip_response_plan.get("client_hints") if isinstance(cip_response_plan.get("client_hints"), dict) else {}
-        translated_text = resolve_translation_text(cip_clarify, cip, translated_text)
+        if not cip_clarify and cip_client_hints.get("skip_tts"):
+            cip_response_plan = dict(cip_response_plan)
+            cip_turn_policy = dict(cip_turn_policy)
+            cip_client_hints = dict(cip_client_hints)
+            cip_client_hints["skip_tts"] = False
+            cip_client_hints["tts_mode"] = "speak"
+            cip_client_hints["ask_before_speaking"] = False
+            cip_turn_policy["tts"] = "speak"
+            cip_turn_policy["speak_to_listener"] = True
+            cip_response_plan["client_hints"] = cip_client_hints
+            cip_response_plan["turn_policy"] = cip_turn_policy
+        translated_text = "" if cip_clarify else choose_translation(cip, translated_text)
         tr_conf = estimate_translation_confidence(source_text, translated_text)
         cip_conf = get_cip_confidence(cip)
-        domains = detect_domains(source_text)
-        glossary_cov = glossary_coverage_score(
-            source_text,
-            translated_text,
-            text_glossary,
-            active_src,
-            active_tgt,
-        )
-        assessment = assess_translation_confidence(
-            source_text,
-            translated_text,
-            stt_confidence=stt_conf,
-            domains=domains,
-            glossary_coverage=glossary_cov,
-        )
-        conf_score = cip_conf if cip_conf is not None else assessment["confidence"]
+        conf_score = cip_conf if cip_conf is not None else ConfidenceEngine().evaluate(stt_conf, tr_conf)
         translation_ms = round((time() - translation_started_at) * 1000)
         await send_json({"type": "latency", "metric": "translation", "ms": translation_ms})
         if cip:
             await send_json({
                 "type": "cip",
-                "speaker": speaker,
-                "speaker_label": speaker_label,
+                "speaker": effective_speaker,
+                "speaker_label": effective_speaker_label,
                 "provider": cip.get("provider"),
                 "confidence": cip.get("confidence"),
                 "decision": cip_decision,
@@ -1823,94 +2198,61 @@ async def websocket_streaming_stt_translation(
                 "client_hints": cip_client_hints,
                 "translated_by": cip.get("translation_source"),
             })
-        if assessment["low_confidence"] and not cip_clarify:
-            await send_json({
-                "type": "confidence_warning",
-                "confidence": assessment["confidence"],
-                "threshold": assessment["confidence_threshold"],
-                "high_stakes": assessment["high_stakes"],
-                "needs_confirmation": assessment["needs_confirmation"],
-                "message": assessment["confidence_message"],
-                "domains": assessment["high_stakes"],
-            })
-        if translated_text.strip():
-            live_payload = {
-                "type": "live_translation",
-                "speaker": speaker,
-                "speaker_label": speaker_label,
-                "text": translated_text,
-                "final": True,
-                "confidence": assessment["confidence"],
-                "low_confidence": assessment["low_confidence"],
-                "source_language": active_src,
-                "target_language": active_tgt,
-            }
-            if live_text_source:
-                live_payload["source"] = "browser_live_text"
-            await send_json(live_payload)
         if cip_clarify:
-            await send_json({"type": "clarify", "message": cip_decision.get("message") or "Can you rephrase that?", "stage": "cip_clarification"})
+            await send_json({
+                "type": "clarify",
+                "message": cip_decision.get("message") or "Can you rephrase that?",
+                "stage": "cip_clarification",
+                "speaker": effective_speaker,
+                "speaker_label": effective_speaker_label,
+                "source_language": effective_source_language,
+                "target_language": effective_target_language,
+                "detected_language": barrier_route["detected_language"],
+                "route_confidence": barrier_route["route_confidence"],
+                "barrier_mode": barrier_mode,
+            })
         elif conf_score < 0.4:
-            await send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
+            await send_json({
+                "type": "clarify",
+                "message": clarification_for(source_text, detect_ambiguities(source_text)),
+                "stage": "final_low_confidence",
+                "speaker": effective_speaker,
+                "speaker_label": effective_speaker_label,
+                "source_language": effective_source_language,
+                "target_language": effective_target_language,
+                "detected_language": barrier_route["detected_language"],
+                "route_confidence": barrier_route["route_confidence"],
+                "barrier_mode": barrier_mode,
+            })
+        else:
+            await send_json({
+                "type": "live_translation",
+                "speaker": effective_speaker,
+                "speaker_label": effective_speaker_label,
+                "text": translated_text,
+                "source_text": source_text,
+                "source_language": effective_source_language,
+                "target_language": effective_target_language,
+                "detected_language": barrier_route["detected_language"],
+                "detected_language_confidence": barrier_route["detected_language_confidence"],
+                "route_confidence": barrier_route["route_confidence"],
+                "needs_confirmation": barrier_route["needs_confirmation"],
+                "listener_label": barrier_route["listener_label"],
+                "barrier_mode": barrier_mode,
+            })
 
-        tts_meta = {"source": "browser_live_text"} if live_text_source else {}
-        if translated_text.strip() and not cip_clarify:
-            tts_path = None
-            try:
-                tts_path = await run_pipeline_step(
-                    "streaming STT TTS",
-                    lambda: pipeline.tts.synthesize(
-                        translated_text,
-                        f"models/tts/{uuid4()}-streaming-stt.wav",
-                        language=active_tgt,
-                    ),
-                )
-                audio_bytes = Path(tts_path).read_bytes()
-                if len(audio_bytes) >= 100:
-                    await send_json({
-                        "type": "tts_start",
-                        "speaker": speaker,
-                        "speaker_label": speaker_label,
-                        "chunks": 1,
-                        "partial": False,
-                        **tts_meta,
-                    })
-                    await send_json({
-                        "type": "tts_audio_chunk",
-                        "speaker": speaker,
-                        "speaker_label": speaker_label,
-                        "index": 1,
-                        "total": 1,
-                        "text": translated_text,
-                        "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
-                        "mime_type": "audio/wav",
-                        "partial": False,
-                        **tts_meta,
-                    })
-            except Exception as exc:
-                logger.warning("streaming_stt_tts_failed error=%s", exc)
-            finally:
-                if tts_path:
-                    Path(tts_path).unlink(missing_ok=True)
-        await send_json({
-            "type": "tts_end",
-            "speaker": speaker,
-            "speaker_label": speaker_label,
-            "partial": False,
-            **tts_meta,
-        })
-
-        memory.add(speaker, source_text, translated_text, {"cip": cip})
-        speaker_memory.add_message(speaker, source_text)
+        memory.add(effective_speaker, source_text, translated_text, {"cip": cip})
+        speaker_memory.register(effective_speaker, language=effective_source_language)
+        speaker_memory.add_message(effective_speaker, source_text)
         shared_session = session_registry.record_turn(
             session_id,
             identity,
-            speaker,
+            effective_speaker,
             source_text,
             translated_text,
             semantic_context,
             device_id=device_id,
-            speaker_label=speaker_label,
+            speaker_label=effective_speaker_label,
         )
         result = TranslationResult(
             source_text=source_text,
@@ -1919,15 +2261,13 @@ async def websocket_streaming_stt_translation(
             audio_output_path=None,
         )
         await send_json({"type": "session_sync", "session": shared_session})
-        final_payload = {
+        await send_json({
             "type": "final",
-            "speaker": speaker,
-            "speaker_label": speaker_label,
-            "speaker_index": speaker_index,
+            "speaker": effective_speaker,
+            "speaker_label": effective_speaker_label,
+            "speaker_index": effective_speaker_index,
             "device_id": device_id,
-            "detection": speaker_detection,
-            "source_language": active_src,
-            "target_language": active_tgt,
+            "detection": effective_detection,
             "semantic_context": semantic_context,
             "cip_decision": cip_decision,
             "cip_analysis": cip.get("analysis") if isinstance(cip, dict) else None,
@@ -1937,24 +2277,23 @@ async def websocket_streaming_stt_translation(
             "cip_turn_policy": cip_turn_policy if cip_turn_policy else None,
             "cip_client_hints": cip_client_hints if cip_client_hints else None,
             "translated_by": cip.get("translation_source") if isinstance(cip, dict) and cip.get("translated") and cip.get("translation_source") else "UT",
-            "clarify": cip_clarify or assessment["low_confidence"] or conf_score < 0.4,
-            "confidence": assessment["confidence"],
-            "confidence_threshold": assessment["confidence_threshold"],
-            "low_confidence": assessment["low_confidence"],
-            "needs_confirmation": assessment["needs_confirmation"],
-            "confidence_message": assessment["confidence_message"],
-            "high_stakes_domains": assessment["high_stakes"],
+            "clarify": cip_clarify or conf_score < 0.4,
             "session": shared_session,
+            "source_language": effective_source_language,
+            "target_language": effective_target_language,
+            "detected_language": barrier_route["detected_language"],
+            "detected_language_confidence": barrier_route["detected_language_confidence"],
+            "route_confidence": barrier_route["route_confidence"],
+            "needs_confirmation": barrier_route["needs_confirmation"],
+            "listener_label": barrier_route["listener_label"],
+            "barrier_mode": barrier_mode,
             **result.__dict__,
-        }
-        if live_text_source:
-            final_payload["source"] = "browser_live_text"
-        await send_json(final_payload)
-        complete_decision = conversation_brain.end_turn(speaker)
+        })
+        complete_decision = conversation_brain.end_turn(effective_speaker)
         await send_json({
             "type": "turn",
-            "speaker": speaker,
-            "speaker_label": speaker_label,
+            "speaker": effective_speaker,
+            "speaker_label": effective_speaker_label,
             "allowed": complete_decision.allowed,
             "reason": complete_decision.reason,
             "behavior": complete_decision.behavior,
@@ -1979,7 +2318,23 @@ async def websocket_streaming_stt_translation(
             await send_json({"type": "stage", "stage": "stt_provider_connected", "message": "Streaming STT provider connected."})
         elif event_type == "transcript.partial":
             if text:
-                await send_json({"type": "partial_transcription", "speaker": speaker, "speaker_label": speaker_label, "text": text})
+                partial_route = resolve_barrier_route(text, source_language, target_language, enabled=barrier_mode)
+                partial_speaker = partial_route["speaker"] if barrier_mode else speaker
+                partial_speaker_label = partial_route["speaker_label"] if barrier_mode else speaker_label
+                await send_json({
+                    "type": "partial_transcription",
+                    "speaker": partial_speaker,
+                    "speaker_label": partial_speaker_label,
+                    "text": text,
+                    "source_language": partial_route["source_language"],
+                    "target_language": partial_route["target_language"],
+                    "detected_language": partial_route["detected_language"],
+                    "detected_language_confidence": partial_route["detected_language_confidence"],
+                    "route_confidence": partial_route["route_confidence"],
+                    "needs_confirmation": partial_route["needs_confirmation"],
+                    "listener_label": partial_route["listener_label"],
+                    "barrier_mode": barrier_mode,
+                })
         elif event_type == "transcript.final":
             if text:
                 await emit_translated_final(text)
@@ -1989,36 +2344,21 @@ async def websocket_streaming_stt_translation(
             await send_json({"type": "error", "message": event.get("message") or "Streaming STT provider error.", "recoverable": True})
 
     async def provider_receive_loop(active_provider_ws) -> None:
-        try:
-            async for raw_message in active_provider_ws:
-                try:
-                    await handle_provider_event(raw_message)
-                except Exception as exc:
-                    logger.warning("provider_event_error error=%s", exc)
-                    await send_json({
-                        "type": "error",
-                        "message": f"STT provider event error: {exc}",
-                        "recoverable": True,
-                    })
-        except Exception as exc:
-            logger.warning("provider_receive_loop_failed error=%s", exc)
-            await send_json({
-                "type": "error",
-                "message": f"STT provider disconnected: {exc}",
-                "recoverable": True,
-            })
+        async for raw_message in active_provider_ws:
+            await handle_provider_event(raw_message)
 
     async def ensure_provider_connected() -> None:
         nonlocal provider_ws, provider_receiver_task, provider_language
-        if provider_ws is not None and provider_language == resolve_whisper_language(source_language, target_language):
+        provider_language_hint = None if barrier_mode else source_language
+        provider_language_key = "auto" if barrier_mode else source_language
+        if provider_ws is not None and provider_language == provider_language_key:
             return
         await close_provider()
         stt_bridge = pipeline.stt
         if not hasattr(stt_bridge, "is_streaming") or not stt_bridge.is_streaming:
             raise RuntimeError("STT provider is not configured for streaming mode.")
         client = stt_bridge.get_streaming_client()
-        whisper_lang = resolve_whisper_language(source_language, target_language)
-        provider_url = client._stream_url(language=whisper_lang)
+        provider_url = client._stream_url(language=provider_language_hint)
         provider_ws = await websockets.connect(
             provider_url,
             max_size=8 * 1024 * 1024,
@@ -2026,7 +2366,7 @@ async def websocket_streaming_stt_translation(
             ping_timeout=client.connection_timeout,
             ping_interval=20,
         )
-        provider_language = whisper_lang
+        provider_language = provider_language_key
         provider_receiver_task = asyncio.create_task(provider_receive_loop(provider_ws))
 
     try:
@@ -2046,29 +2386,16 @@ async def websocket_streaming_stt_translation(
                     continue
 
                 if msg_type in {"config", "start"}:
-                    if not runtime_state.get("ready"):
-                        await send_json({
-                            "type": "error",
-                            "message": "Models still loading. Wait for LIVE.",
-                            "recoverable": True,
-                            "warming": True,
-                        })
-                        continue
-                    previous_session_id = session_id
-                    previous_speaker = speaker
-                    previous_device_id = device_id
                     previous_source_language = source_language
+                    previous_barrier_mode = barrier_mode
                     source_language = data.get("source_language", source_language)
                     target_language = data.get("target_language", target_language)
+                    if "barrier_mode" in data:
+                        barrier_mode = _truthy(data.get("barrier_mode"))
                     speaker_mode = data.get("speaker_mode", speaker_mode)
                     session_id = data.get("session_id", session_id)
                     device_id = data.get("device_id", device_id)
                     requested_speaker_label = data.get("speaker_name") or data.get("speaker_label")
-                    if previous_device_id:
-                        session_registry.disconnect(previous_session_id, previous_speaker, identity, previous_device_id)
-                    if session_registry.active_stream_count(identity) >= get_max_active_streams_per_user():
-                        await send_json({"type": "error", "message": "Too many active streams for this user.", "recoverable": True})
-                        continue
                     if speaker_mode == "auto":
                         speaker_profile = session_registry.resolve_auto_speaker(
                             session_id,
@@ -2100,7 +2427,7 @@ async def websocket_streaming_stt_translation(
                         )
                         speaker_index = session_state.get("speaker_index", speaker_index)
                         device_id = session_state.get("device_id")
-                    if previous_source_language != source_language:
+                    if previous_source_language != source_language or previous_barrier_mode != barrier_mode:
                         await close_provider()
                     await send_json({
                         "type": "speaker_detected",
@@ -2113,6 +2440,589 @@ async def websocket_streaming_stt_translation(
                         "device_id": device_id,
                         "source_language": source_language,
                         "target_language": target_language,
+                        "barrier_mode": barrier_mode,
+                    })
+                    await websocket.send_json({
+                        "type": "turn",
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "allowed": True,
+                        "reason": "Speaker connected",
+                        "behavior": "ready",
+                        "active_speaker": conversation_brain.active_speaker,
+                        "playback_owner": conversation_brain.playback_owner,
+                    })
+                    reset_segment_state()
+                    await websocket.send_json({
+                        "type": "session_restored",
+                        "session": session_state,
+                        "message": "Speaker stream bound to session.",
+                    })
+                    await websocket.send_json({
+                        "type": "listening",
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "speaker_mode": speaker_mode,
+                        "detection": speaker_detection,
+                        "device_id": device_id,
+                        "message": "Receiving audio chunks with Silero VAD.",
+                    })
+
+                if message_type == "finalize":
+                    await enqueue_finalize("client_finalize")
+
+                if message_type == "cancel":
+                    conversation_brain.cancel(speaker)
+                    reset_segment_state()
+                    await websocket.send_json({"type": "cancelled"})
+
+            if "bytes" in message:
+                chunk = message["bytes"]
+                stream_debug_log("AUDIO RECEIVED:", len(chunk))
+                if last_chunk_meta.get("sent_at_ms"):
+                    mic_to_backend_ms = round(time() * 1000 - float(last_chunk_meta["sent_at_ms"]))
+                    await websocket.send_json({"type": "latency", "metric": "mic_to_backend", "ms": mic_to_backend_ms})
+                    observability.record_event("mobile_latency", identity=identity, metric="mic_to_backend", ms=mic_to_backend_ms, chunk_bytes=len(chunk))
+                audio_chunks.extend(chunk)
+                audio_suffix = audio_suffix_for_bytes(audio_chunks, client_mime_type)
+                observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="audio_chunk", chunk_bytes=len(chunk), total_audio_bytes=len(audio_chunks))
+                if len(audio_chunks) > max_buffer_bytes:
+                    await websocket.send_json({"type": "error", "message": "Audio buffer limit reached. Please speak in shorter turns."})
+                    reset_segment_state()
+                    continue
+                recent_chunks.append(chunk)
+                recent_chunks = recent_chunks[-get_vad_recent_chunks():]
+
+                client_vad_available = get_client_vad_mode() and last_chunk_meta.get("client_voice_active") is not None
+                if client_vad_available:
+                    try:
+                        audio_level = float(last_chunk_meta.get("audio_level") or 0.0)
+                    except (TypeError, ValueError):
+                        audio_level = 0.0
+                    voice_active = bool(last_chunk_meta.get("client_voice_active")) or audio_level >= get_client_vad_threshold()
+                    if voice_active:
+                        speech_started = True
+                        last_speech_at = time()
+                        silent_checks = 0
+                        await announce_active_speaker("client_vad", audio_level)
+                        await emit_partial_pipeline()
+                        await websocket.send_json({
+                            "type": "vad",
+                            "speech_detected": True,
+                            "source": "client",
+                            "audio_level": audio_level,
+                        })
+                        continue
+                    if speech_started:
+                        silent_checks += 1
+                        if (time() - last_speech_at) * 1000 < get_speech_merge_ms():
+                            continue
+                        await websocket.send_json({
+                            "type": "vad",
+                            "speech_detected": False,
+                            "source": "client",
+                            "silent_checks": silent_checks,
+                            "audio_level": audio_level,
+                        })
+                        if silent_checks >= get_vad_silent_checks():
+                            await enqueue_finalize("client_vad_silence")
+                        continue
+                    audio_chunks = bytearray()
+                    recent_chunks = []
+                    continue
+
+                try:
+                    vad_result = await run_in_threadpool(vad.detect_bytes, b"".join(recent_chunks), audio_suffix)
+                except (RuntimeError, ValueError, OSError) as exc:
+                    observability.increment("vad_errors_total")
+                    vad_error_count += 1
+                    if len(audio_chunks) >= get_min_speech_bytes():
+                        speech_started = True
+                        last_speech_at = time()
+                        await announce_active_speaker("byte_buffer", None)
+                        await websocket.send_json({"type": "stage", "stage": "listening", "message": "Audio buffered. Keep talking..."})
+                    elif vad_error_count == 1:
+                        await websocket.send_json({"type": "partial_transcription", "text": f"Preparing audio stream ({len(audio_chunks)} bytes)..."})
+                    if vad_error_count in {1, 5}:
+                        await websocket.send_json({"type": "vad_error", "message": str(exc), "fallback": "byte_buffer"})
+                    continue
+
+                if vad_result["speech_detected"]:
+                    stream_debug_log("VAD:", True)
+                    observability.increment("vad_speech_total")
+                    speech_started = True
+                    last_speech_at = time()
+                    silent_checks = 0
+                    await announce_active_speaker("server_vad", None)
+                    await emit_partial_pipeline()
+                    observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="vad_speech", speech_seconds=vad_result["speech_seconds"])
+                    await websocket.send_json({
+                        "type": "vad",
+                        "speech_detected": True,
+                        "speech_seconds": vad_result["speech_seconds"],
+                    })
+                    await websocket.send_json({"type": "stage", "stage": "listening", "message": "Speech detected. Keep talking..."})
+                elif speech_started:
+                    stream_debug_log("VAD:", False)
+                    observability.increment("vad_silence_total")
+                    silent_checks += 1
+                    if (time() - last_speech_at) * 1000 < get_speech_merge_ms():
+                        await websocket.send_json({"type": "stage", "stage": "smoothing", "message": "Merging short speech gap..."})
+                        continue
+                    observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="vad_silence", silent_checks=silent_checks)
+                    await websocket.send_json({
+                        "type": "vad",
+                        "speech_detected": False,
+                        "silent_checks": silent_checks,
+                    })
+                    if silent_checks >= get_vad_silent_checks():
+                        await enqueue_finalize("vad_silence")
+                else:
+                    stream_debug_log("VAD:", False)
+                    observability.increment("vad_silence_total")
+                    await websocket.send_json({"type": "partial_transcription", "text": "Waiting for speech..."})
+
+    except WebSocketDisconnect:
+        observability.increment("websocket_disconnects_total")
+        session_registry.disconnect(session_id, speaker, identity, device_id)
+        return
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
+        observability.increment("websocket_errors_total")
+        raise
+    finally:
+        if partial_task is not None:
+            partial_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await partial_task
+        if live_text_task is not None:
+            live_text_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await live_text_task
+        pipeline_worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await pipeline_worker
+
+
+# ---------------------------------------------------------------------------
+# Streaming STT Provider — real-time transcription via the STT provider
+# ---------------------------------------------------------------------------
+
+
+async def websocket_streaming_stt_translation(
+    websocket: WebSocket,
+    pipeline: AnaiTranslatorPipeline,
+    conversation_brain: ConversationBrain,
+    memory: ConversationMemory | None = None,
+    speaker_memory: SpeakerMemory | None = None,
+    identity: str = "anonymous",
+):
+    """WebSocket handler that proxies audio to the streaming STT provider.
+
+    When ``STT_PROVIDER=streaming``, this handler replaces the local
+    VAD + Whisper pipeline with the STT provider's WebSocket streaming
+    API.  The browser sends PCM16 audio frames; we forward them to the
+    STT provider and receive ``transcript.partial`` / ``transcript.final``
+    events.  Final transcripts are then sent through the translator pipeline.
+    """
+    import websockets
+
+    await websocket.accept()
+    observability.increment("websocket_connects_total")
+
+    memory = memory or ConversationMemory()
+    speaker_memory = speaker_memory or SpeakerMemory()
+    source_language = "en"
+    target_language = "es"
+    speaker = "speaker"
+    speaker_label = "Person 1"
+    speaker_index = 1
+    speaker_mode = "manual"
+    speaker_detection = "manual"
+    barrier_mode = False
+    session_id = "default"
+    device_id = None
+    provider_ws = None
+    provider_receiver_task = None
+    provider_language = None
+    send_lock = asyncio.Lock()
+
+    async def send_json(payload: dict) -> None:
+        async with send_lock:
+            await websocket.send_json(payload)
+
+    await send_json({"type": "ready", "message": "Streaming STT connected."})
+
+    async def close_provider() -> None:
+        nonlocal provider_ws, provider_receiver_task, provider_language
+        if provider_receiver_task is not None:
+            provider_receiver_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await provider_receiver_task
+            provider_receiver_task = None
+        if provider_ws is not None:
+            with suppress(Exception):
+                await provider_ws.close()
+            provider_ws = None
+        provider_language = None
+
+    async def emit_translated_final(source_text: str) -> None:
+        source_text = normalize_live_text(source_text)
+        if not source_text:
+            return
+
+        barrier_route = resolve_barrier_route(
+            source_text,
+            source_language,
+            target_language,
+            enabled=barrier_mode,
+        )
+        effective_source_language = barrier_route["source_language"]
+        effective_target_language = barrier_route["target_language"]
+        effective_speaker = barrier_route["speaker"] if barrier_mode else speaker
+        effective_speaker_label = barrier_route["speaker_label"] if barrier_mode else speaker_label
+        effective_speaker_index = barrier_route["speaker_index"] if barrier_mode else speaker_index
+        effective_detection = barrier_route["detection"] if barrier_mode else speaker_detection
+
+        await send_json({
+            "type": "final_transcription",
+            "speaker": effective_speaker,
+            "speaker_label": effective_speaker_label,
+            "text": source_text,
+            "source_language": effective_source_language,
+            "target_language": effective_target_language,
+            "detected_language": barrier_route["detected_language"],
+            "detected_language_confidence": barrier_route["detected_language_confidence"],
+            "route_confidence": barrier_route["route_confidence"],
+            "needs_confirmation": barrier_route["needs_confirmation"],
+            "listener_label": barrier_route["listener_label"],
+            "barrier_mode": barrier_mode,
+        })
+        semantic_context = conversation_brain.analyze_semantics(effective_speaker, source_text)
+        await send_json({"type": "semantic_context", "speaker": effective_speaker, "speaker_label": effective_speaker_label, **semantic_context})
+        await send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
+
+        translation_started_at = time()
+        improved_text = await run_pipeline_step(
+            "context improvement",
+            pipeline.context_layer.improve,
+            source_text,
+            effective_source_language,
+            effective_target_language,
+            None,
+        )
+        raw_translated_text = await run_pipeline_step(
+            "translation",
+            pipeline.translator.translate,
+            improved_text,
+            effective_source_language,
+            effective_target_language,
+        )
+        memory_context = memory.get_context()
+        speaker_context = speaker_memory.get_context(effective_speaker)
+        translated_text = refine_translation(source_text, raw_translated_text, memory_context, speaker_context)
+        stt_conf = estimate_stt_confidence(source_text)
+        tr_conf = estimate_translation_confidence(source_text, translated_text)
+        translated_text = await run_in_threadpool(
+            _apply_ailang_enhancements,
+            translated_text, source_text, effective_source_language, effective_target_language,
+            effective_speaker, memory, speaker_memory, tr_conf,
+        )
+        tr_conf = estimate_translation_confidence(source_text, translated_text)
+        cip = None
+        try:
+            cip = await call_cip_brain(
+                source_text,
+                effective_target_language,
+                identity,
+                fallback_translation=translated_text,
+                source_language=effective_source_language,
+                stt_confidence=stt_conf,
+                translation_confidence=tr_conf,
+                context=memory_context,
+                speaker_context=speaker_context,
+                semantic_context=semantic_context,
+            )
+        except (ConnectionError, TimeoutError, RuntimeError, ValueError):
+            cip = None
+        cip_decision = get_cip_decision(cip)
+        cip_clarify = should_block_translation_for_cip(cip, translated_text, tr_conf)
+        cip_response_plan = cip.get("response_plan") if isinstance(cip, dict) and isinstance(cip.get("response_plan"), dict) else {}
+        cip_turn_policy = cip_response_plan.get("turn_policy") if isinstance(cip_response_plan.get("turn_policy"), dict) else {}
+        cip_client_hints = cip_response_plan.get("client_hints") if isinstance(cip_response_plan.get("client_hints"), dict) else {}
+        if not cip_clarify and cip_client_hints.get("skip_tts"):
+            cip_response_plan = dict(cip_response_plan)
+            cip_turn_policy = dict(cip_turn_policy)
+            cip_client_hints = dict(cip_client_hints)
+            cip_client_hints["skip_tts"] = False
+            cip_client_hints["tts_mode"] = "speak"
+            cip_client_hints["ask_before_speaking"] = False
+            cip_turn_policy["tts"] = "speak"
+            cip_turn_policy["speak_to_listener"] = True
+            cip_response_plan["client_hints"] = cip_client_hints
+            cip_response_plan["turn_policy"] = cip_turn_policy
+        translated_text = "" if cip_clarify else choose_translation(cip, translated_text)
+        tr_conf = estimate_translation_confidence(source_text, translated_text)
+        cip_conf = get_cip_confidence(cip)
+        conf_score = cip_conf if cip_conf is not None else ConfidenceEngine().evaluate(stt_conf, tr_conf)
+        translation_ms = round((time() - translation_started_at) * 1000)
+        await send_json({"type": "latency", "metric": "translation", "ms": translation_ms})
+        if cip:
+            await send_json({
+                "type": "cip",
+                "speaker": effective_speaker,
+                "speaker_label": effective_speaker_label,
+                "provider": cip.get("provider"),
+                "confidence": cip.get("confidence"),
+                "decision": cip_decision,
+                "analysis": cip.get("analysis"),
+                "response_plan": cip_response_plan,
+                "turn_policy": cip_turn_policy,
+                "client_hints": cip_client_hints,
+                "translated_by": cip.get("translation_source"),
+            })
+        if cip_clarify:
+            await send_json({
+                "type": "clarify",
+                "message": cip_decision.get("message") or "Can you rephrase that?",
+                "stage": "cip_clarification",
+                "speaker": effective_speaker,
+                "speaker_label": effective_speaker_label,
+                "source_language": effective_source_language,
+                "target_language": effective_target_language,
+                "detected_language": barrier_route["detected_language"],
+                "route_confidence": barrier_route["route_confidence"],
+                "barrier_mode": barrier_mode,
+            })
+        elif conf_score < 0.4:
+            await send_json({
+                "type": "clarify",
+                "message": clarification_for(source_text, detect_ambiguities(source_text)),
+                "stage": "final_low_confidence",
+                "speaker": effective_speaker,
+                "speaker_label": effective_speaker_label,
+                "source_language": effective_source_language,
+                "target_language": effective_target_language,
+                "detected_language": barrier_route["detected_language"],
+                "route_confidence": barrier_route["route_confidence"],
+                "barrier_mode": barrier_mode,
+            })
+        else:
+            await send_json({
+                "type": "live_translation",
+                "speaker": effective_speaker,
+                "speaker_label": effective_speaker_label,
+                "text": translated_text,
+                "source_text": source_text,
+                "source_language": effective_source_language,
+                "target_language": effective_target_language,
+                "detected_language": barrier_route["detected_language"],
+                "detected_language_confidence": barrier_route["detected_language_confidence"],
+                "route_confidence": barrier_route["route_confidence"],
+                "needs_confirmation": barrier_route["needs_confirmation"],
+                "listener_label": barrier_route["listener_label"],
+                "barrier_mode": barrier_mode,
+            })
+
+        memory.add(effective_speaker, source_text, translated_text, {"cip": cip})
+        speaker_memory.register(effective_speaker, language=effective_source_language)
+        speaker_memory.add_message(effective_speaker, source_text)
+        shared_session = session_registry.record_turn(
+            session_id,
+            identity,
+            effective_speaker,
+            source_text,
+            translated_text,
+            semantic_context,
+            device_id=device_id,
+            speaker_label=effective_speaker_label,
+        )
+        result = TranslationResult(
+            source_text=source_text,
+            improved_text=improved_text,
+            translated_text=translated_text,
+            audio_output_path=None,
+        )
+        await send_json({"type": "session_sync", "session": shared_session})
+        await send_json({
+            "type": "final",
+            "speaker": effective_speaker,
+            "speaker_label": effective_speaker_label,
+            "speaker_index": effective_speaker_index,
+            "device_id": device_id,
+            "detection": effective_detection,
+            "semantic_context": semantic_context,
+            "cip_decision": cip_decision,
+            "cip_analysis": cip.get("analysis") if isinstance(cip, dict) else None,
+            "cip_confidence": cip.get("confidence") if isinstance(cip, dict) else None,
+            "cip_provider": cip.get("provider") if isinstance(cip, dict) else None,
+            "cip_response_plan": cip_response_plan if cip_response_plan else None,
+            "cip_turn_policy": cip_turn_policy if cip_turn_policy else None,
+            "cip_client_hints": cip_client_hints if cip_client_hints else None,
+            "translated_by": cip.get("translation_source") if isinstance(cip, dict) and cip.get("translated") and cip.get("translation_source") else "UT",
+            "clarify": cip_clarify or conf_score < 0.4,
+            "session": shared_session,
+            "source_language": effective_source_language,
+            "target_language": effective_target_language,
+            "detected_language": barrier_route["detected_language"],
+            "detected_language_confidence": barrier_route["detected_language_confidence"],
+            "route_confidence": barrier_route["route_confidence"],
+            "needs_confirmation": barrier_route["needs_confirmation"],
+            "listener_label": barrier_route["listener_label"],
+            "barrier_mode": barrier_mode,
+            **result.__dict__,
+        })
+        complete_decision = conversation_brain.end_turn(effective_speaker)
+        await send_json({
+            "type": "turn",
+            "speaker": effective_speaker,
+            "speaker_label": effective_speaker_label,
+            "allowed": complete_decision.allowed,
+            "reason": complete_decision.reason,
+            "behavior": complete_decision.behavior,
+            "active_speaker": complete_decision.active_speaker,
+            "playback_owner": complete_decision.playback_owner,
+        })
+
+    async def handle_provider_event(raw_message) -> None:
+        if isinstance(raw_message, bytes):
+            raw_message = raw_message.decode("utf-8", errors="ignore")
+        try:
+            event = json.loads(raw_message)
+        except (TypeError, json.JSONDecodeError):
+            return
+        event_type = event.get("type", "unknown")
+        if event_type == "transcript" and event.get("is_final") is True:
+            event_type = "transcript.final"
+        elif event_type == "transcript" and event.get("is_final") is False:
+            event_type = "transcript.partial"
+        text = normalize_live_text(event.get("text") or event.get("data", {}).get("text") or "")
+        if event_type == "session.started":
+            await send_json({"type": "stage", "stage": "stt_provider_connected", "message": "Streaming STT provider connected."})
+        elif event_type == "transcript.partial":
+            if text:
+                partial_route = resolve_barrier_route(text, source_language, target_language, enabled=barrier_mode)
+                partial_speaker = partial_route["speaker"] if barrier_mode else speaker
+                partial_speaker_label = partial_route["speaker_label"] if barrier_mode else speaker_label
+                await send_json({
+                    "type": "partial_transcription",
+                    "speaker": partial_speaker,
+                    "speaker_label": partial_speaker_label,
+                    "text": text,
+                    "source_language": partial_route["source_language"],
+                    "target_language": partial_route["target_language"],
+                    "detected_language": partial_route["detected_language"],
+                    "detected_language_confidence": partial_route["detected_language_confidence"],
+                    "route_confidence": partial_route["route_confidence"],
+                    "needs_confirmation": partial_route["needs_confirmation"],
+                    "listener_label": partial_route["listener_label"],
+                    "barrier_mode": barrier_mode,
+                })
+        elif event_type == "transcript.final":
+            if text:
+                await emit_translated_final(text)
+        elif event_type == "session.flushed":
+            await send_json({"type": "stage", "stage": "stt_provider_flushed", "message": "Streaming STT provider flushed."})
+        elif event_type == "error":
+            await send_json({"type": "error", "message": event.get("message") or "Streaming STT provider error.", "recoverable": True})
+
+    async def provider_receive_loop(active_provider_ws) -> None:
+        async for raw_message in active_provider_ws:
+            await handle_provider_event(raw_message)
+
+    async def ensure_provider_connected() -> None:
+        nonlocal provider_ws, provider_receiver_task, provider_language
+        provider_language_hint = None if barrier_mode else source_language
+        provider_language_key = "auto" if barrier_mode else source_language
+        if provider_ws is not None and provider_language == provider_language_key:
+            return
+        await close_provider()
+        stt_bridge = pipeline.stt
+        if not hasattr(stt_bridge, "is_streaming") or not stt_bridge.is_streaming:
+            raise RuntimeError("STT provider is not configured for streaming mode.")
+        client = stt_bridge.get_streaming_client()
+        provider_url = client._stream_url(language=provider_language_hint)
+        provider_ws = await websockets.connect(
+            provider_url,
+            max_size=8 * 1024 * 1024,
+            close_timeout=client.connection_timeout,
+            ping_timeout=client.connection_timeout,
+            ping_interval=20,
+        )
+        provider_language = provider_language_key
+        provider_receiver_task = asyncio.create_task(provider_receive_loop(provider_ws))
+
+    try:
+        while True:
+            message = await websocket.receive()
+
+            if "text" in message and message["text"] is not None:
+                try:
+                    data = json.loads(message["text"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                msg_type = data.get("type")
+
+                if msg_type == "ping":
+                    await send_json({"type": "pong"})
+                    continue
+
+                if msg_type in {"config", "start"}:
+                    previous_source_language = source_language
+                    previous_barrier_mode = barrier_mode
+                    source_language = data.get("source_language", source_language)
+                    target_language = data.get("target_language", target_language)
+                    if "barrier_mode" in data:
+                        barrier_mode = _truthy(data.get("barrier_mode"))
+                    speaker_mode = data.get("speaker_mode", speaker_mode)
+                    session_id = data.get("session_id", session_id)
+                    device_id = data.get("device_id", device_id)
+                    requested_speaker_label = data.get("speaker_name") or data.get("speaker_label")
+                    if speaker_mode == "auto":
+                        speaker_profile = session_registry.resolve_auto_speaker(
+                            session_id,
+                            identity,
+                            device_id,
+                            source_language,
+                            target_language,
+                            requested_speaker_label,
+                        )
+                        speaker = speaker_profile["speaker"]
+                        speaker_label = speaker_profile["speaker_label"]
+                        speaker_index = speaker_profile["speaker_index"]
+                        device_id = speaker_profile["device_id"]
+                        speaker_detection = speaker_profile["detection"]
+                        session_state = speaker_profile["session"]
+                    else:
+                        speaker = data.get("speaker", speaker)
+                        speaker_label = requested_speaker_label or data.get("speaker_label") or speaker_label
+                        speaker_detection = "manual"
+                        session_state = session_registry.bind(
+                            session_id,
+                            speaker,
+                            identity,
+                            source_language,
+                            target_language,
+                            device_id=device_id,
+                            speaker_label=speaker_label,
+                            detection=speaker_detection,
+                        )
+                        speaker_index = session_state.get("speaker_index", speaker_index)
+                        device_id = session_state.get("device_id")
+                    if previous_source_language != source_language or previous_barrier_mode != barrier_mode:
+                        await close_provider()
+                    await send_json({
+                        "type": "speaker_detected",
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "speaker_index": speaker_index,
+                        "mode": speaker_mode,
+                        "detection": speaker_detection,
+                        "confidence": 1.0 if speaker_detection == "device_source" else None,
+                        "device_id": device_id,
+                        "source_language": source_language,
+                        "target_language": target_language,
+                        "barrier_mode": barrier_mode,
                     })
                     await send_json({
                         "type": "turn",
@@ -2132,45 +3042,51 @@ async def websocket_streaming_stt_translation(
                         "speaker_mode": speaker_mode,
                         "detection": speaker_detection,
                         "device_id": device_id,
+                        "barrier_mode": barrier_mode,
                         "message": "Receiving PCM16 audio chunks via streaming STT provider.",
                     })
-                    await send_json({"type": "config_ack", "source_language": source_language, "target_language": target_language})
+                    await send_json({"type": "config_ack", "source_language": source_language, "target_language": target_language, "barrier_mode": barrier_mode})
 
                 elif msg_type == "translate" and data.get("text"):
                     text = data["text"].strip()
                     if text:
+                        text_route = resolve_barrier_route(text, source_language, target_language, enabled=barrier_mode)
+                        text_source_language = text_route["source_language"]
+                        text_target_language = text_route["target_language"]
+                        text_speaker = text_route["speaker"] if barrier_mode else speaker
+                        text_speaker_label = text_route["speaker_label"] if barrier_mode else speaker_label
                         result = await run_pipeline_step(
                             "text translation",
                             pipeline.translate_text,
                             text,
-                            source_language,
-                            target_language,
+                            text_source_language,
+                            text_target_language,
                         )
+                        # AILang enhancement for streaming STT text translation
+                        enhanced_text = _apply_ailang_enhancements(
+                            result.translated_text, text, text_source_language, text_target_language,
+                            text_speaker,
+                        )
+                        if enhanced_text and enhanced_text != result.translated_text:
+                            result.translated_text = enhanced_text
                         await send_json({
                             "type": "translation",
+                            "speaker": text_speaker,
+                            "speaker_label": text_speaker_label,
+                            "source_language": text_source_language,
+                            "target_language": text_target_language,
+                            "detected_language": text_route["detected_language"],
+                            "detected_language_confidence": text_route["detected_language_confidence"],
+                            "route_confidence": text_route["route_confidence"],
+                            "needs_confirmation": text_route["needs_confirmation"],
+                            "listener_label": text_route["listener_label"],
+                            "barrier_mode": barrier_mode,
                             **result.__dict__,
                         })
 
-                elif msg_type == "live_text" and data.get("text"):
-                    if not runtime_state.get("ready"):
-                        await send_json({
-                            "type": "error",
-                            "message": "Models still loading. Wait for LIVE.",
-                            "recoverable": True,
-                            "warming": True,
-                        })
-                        continue
-                    if bool(data.get("final")):
-                        await emit_translated_final(
-                            data.get("text", ""),
-                            src_lang=data.get("source_language") or source_language,
-                            tgt_lang=data.get("target_language") or target_language,
-                            live_text_source=True,
-                        )
-
                 elif msg_type == "finalize":
                     if provider_ws is not None:
-                        await provider_ws.send(json.dumps({"type": "flush"}))
+                                     await provider_ws.send(json.dumps({"type": "flush"}))
 
                 elif msg_type == "cancel":
                     conversation_brain.cancel(speaker)
@@ -2183,19 +3099,6 @@ async def websocket_streaming_stt_translation(
                 continue
             pcm16_audio = message["bytes"]
             if not pcm16_audio:
-                continue
-
-            if looks_like_container_audio(pcm16_audio):
-                if not container_audio_warned:
-                    container_audio_warned = True
-                    await send_json({
-                        "type": "error",
-                        "message": (
-                            "Container audio (WebM/WAV) is not supported on streaming STT. "
-                            "Use STT_PROVIDER=local or browser speech recognition."
-                        ),
-                        "recoverable": True,
-                    })
                 continue
 
             try:
@@ -2212,4 +3115,3 @@ async def websocket_streaming_stt_translation(
         raise
     finally:
         await close_provider()
-        session_registry.disconnect(session_id, speaker, identity, device_id)

@@ -1,10 +1,22 @@
 services:
+  ollama:
+    # CPU-only in dev; override with docker-compose.gpu.yml for GPU
+    deploy:
+      resources:
+        reservations:
+          devices: []
+
   backend:
     environment:
       ENVIRONMENT: development
       FRONTEND_URL: http://127.0.0.1:5173
       SERVE_FRONTEND_DIST: "0"
       PRELOAD_MODELS: "0"
+      # Ollama defaults for dev (reaches container at http://ollama:11434)
+      OLLAMA_ENABLED: "true"
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: mistral
+      USE_LLM_AGENTS: "true"
     volumes:
       - ./models:/app/models
       - ./logs:/app/logs

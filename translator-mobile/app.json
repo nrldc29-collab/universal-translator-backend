@@ -11,8 +11,10 @@
     "scheme": "anaitranslator",
     "userInterfaceStyle": "dark",
     "extra": {
+      "apiUrl": "http://192.168.12.243:8000",
+      "router": {},
       "eas": {
-        "projectId": "replace-with-your-eas-project-id"
+        "projectId": "38c5acaf-9582-4533-8822-a31f06a6e21d"
       }
     },
     "newArchEnabled": true,
@@ -23,7 +25,12 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Anai Translator needs microphone access to capture speech for real-time translation.",
         "NSCameraUsageDescription": "Anai Translator uses the camera for scanning text to translate.",
-        "NSLocalNetworkUsageDescription": "Anai Translator connects to your local translation server."
+        "NSLocalNetworkUsageDescription": "Anai Translator connects to your local translation server.",
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "android": {
@@ -40,7 +47,8 @@
       "permissions": [
         "android.permission.RECORD_AUDIO",
         "android.permission.INTERNET",
-        "android.permission.ACCESS_NETWORK_STATE"
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },
     "web": {
@@ -65,7 +73,10 @@
         {
           "microphonePermission": "Anai Translator needs microphone access to capture speech for real-time translation."
         }
-      ]
+      ],
+      "./plugins/withAndroidCleartext",
+      "expo-font",
+      "expo-router"
     ],
     "experiments": {
       "typedRoutes": true,

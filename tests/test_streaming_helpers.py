@@ -11,9 +11,11 @@ from backend.streaming_helpers import (
     normalize_live_text,
     normalized_word,
     folded_live_text,
+    live_translation_redundant,
+    is_internal_translation_artifact,
     live_translation_delta,
     is_speakable_live_delta,
-    looks_like_container_audio,
+    audio_suffix_for_bytes,
     audio_suffix_for_mime,
     extract_client_voice_active,
     parse_provider_event,
@@ -132,6 +134,43 @@ def test_folded_live_text_normalizes_all_words():
 
 
 # ---------------------------------------------------------------------------
+# live_translation_redundant
+# ---------------------------------------------------------------------------
+
+def test_live_translation_redundant_matches_exact_text():
+    assert live_translation_redundant("Merci beaucoup.", "merci beaucoup") is True
+
+
+def test_live_translation_redundant_matches_reordered_words():
+    assert live_translation_redundant("Большое спасибо.", "Спасибо большое.") is True
+
+
+def test_live_translation_redundant_allows_fuller_translation():
+    assert live_translation_redundant("Спасибо.", "Большое спасибо.") is False
+
+
+def test_live_translation_redundant_returns_false_without_previous():
+    assert live_translation_redundant("", "Спасибо.") is False
+
+
+# ---------------------------------------------------------------------------
+# is_internal_translation_artifact
+# ---------------------------------------------------------------------------
+
+def test_is_internal_translation_artifact_rejects_ai_stub_prompt():
+    text = "[AI:fast] Ensure this French uses vous (formal). Keep meaning: [en->None] Hello..."
+    assert is_internal_translation_artifact(text) is True
+
+
+def test_is_internal_translation_artifact_rejects_placeholder_translation():
+    assert is_internal_translation_artifact("[en->fr] Hello") is True
+
+
+def test_is_internal_translation_artifact_allows_real_translation():
+    assert is_internal_translation_artifact("Bonjour.") is False
+
+
+# ---------------------------------------------------------------------------
 # live_translation_delta
 # ---------------------------------------------------------------------------
 
@@ -177,23 +216,6 @@ def test_is_speakable_live_delta_requires_min_length():
 
 
 # ---------------------------------------------------------------------------
-# looks_like_container_audio
-# ---------------------------------------------------------------------------
-
-def test_looks_like_container_audio_webm():
-    assert looks_like_container_audio(b"\x1aE\xdf\xa3") is True
-
-
-def test_looks_like_container_audio_wav():
-    assert looks_like_container_audio(b"RIFFxxxxWAVE") is True
-
-
-def test_looks_like_container_audio_pcm16_false():
-    assert looks_like_container_audio(b"\x00\x01\x02\x03") is False
-    assert looks_like_container_audio(b"") is False
-
-
-# ---------------------------------------------------------------------------
 # audio_suffix_for_mime
 # ---------------------------------------------------------------------------
 
@@ -215,6 +237,18 @@ def test_audio_suffix_for_mime_default_webm():
     assert audio_suffix_for_mime("audio/webm") == ".webm"
     assert audio_suffix_for_mime(None) == ".webm"
     assert audio_suffix_for_mime("") == ".webm"
+
+
+def test_audio_suffix_for_bytes_prefers_container_over_mime():
+    assert audio_suffix_for_bytes(b"RIFF\x24\x00\x00\x00WAVEfmt ", "audio/mp4") == ".wav"
+    assert audio_suffix_for_bytes(b"\x1a\x45\xdf\xa3webm-data", "audio/mp4") == ".webm"
+    assert audio_suffix_for_bytes(b"OggS\x00\x02", "audio/mp4") == ".ogg"
+    assert audio_suffix_for_bytes(b"\x00\x00\x00\x18ftypM4A ", "audio/webm") == ".m4a"
+
+
+def test_audio_suffix_for_bytes_falls_back_to_mime():
+    assert audio_suffix_for_bytes(b"\x00\x00\x01D", "audio/aac") == ".m4a"
+    assert audio_suffix_for_bytes(b"", "audio/ogg") == ".ogg"
 
 
 # ---------------------------------------------------------------------------

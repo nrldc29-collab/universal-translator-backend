@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const STORAGE_KEY = 'ut_settings_v1';
+const SETTINGS_VERSION = 2;
 
 const DEFAULTS = {
   // Language
@@ -13,7 +14,7 @@ const DEFAULTS = {
   // Translation
   translationMode: 'fast',
   partialTts: true,
-  translationProvider: 'marian',
+  translationProvider: 'hybrid',
   // Display
   theme: 'dark',
   textSize: 'medium',
@@ -27,18 +28,21 @@ const DEFAULTS = {
   debugMode: false,
   backendUrl: '',
   googleTtsApiKey: '',
+  settingsVersion: SETTINGS_VERSION,
 };
 
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = { ...DEFAULTS, ...JSON.parse(raw) };
-      // Local-first: legacy hybrid/remote selections mapped to Marian NMT.
-      if (parsed.translationProvider === 'hybrid' || parsed.translationProvider === 'remote') {
-        parsed.translationProvider = 'marian';
+      const loaded = { ...DEFAULTS, ...JSON.parse(raw) };
+      if ((loaded.settingsVersion || 0) < SETTINGS_VERSION) {
+        loaded.partialTts = true;
+        loaded.lowBandwidthMode = false;
+        loaded.settingsVersion = SETTINGS_VERSION;
+        save(loaded);
       }
-      return parsed;
+      return loaded;
     }
   } catch {}
   return { ...DEFAULTS };

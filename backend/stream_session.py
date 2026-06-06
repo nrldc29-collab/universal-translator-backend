@@ -90,11 +90,7 @@ class StreamSessionState:
         logger.debug(f"StreamSessionState created for session {self.session_id}")
 
     def reset_segment(self) -> None:
-        """Clear per-utterance state between speaker turns.
-
-        Equivalent to the ``reset_segment_state`` closure that previously
-        lived inside ``websocket_audio_translation``.
-        """
+        """Clear per-utterance state between speaker turns."""
         self.audio_chunks = bytearray()
         self.recent_chunks = []
         self.speech_started = False
@@ -110,35 +106,27 @@ class StreamSessionState:
         self.turn_announced_for_segment = False
         self.segment_generation += 1
         self.total_segments_processed += 1
-        logger.debug(f"Segment reset for session {self.session_id}, generation {self.segment_generation}")
 
-    def update_activity(self) -> None:
-        """Update last activity timestamp."""
+    def update_activity(self):
         self.last_activity_at = time.time()
 
-    def get_session_age(self) -> float:
-        """Get session age in seconds."""
+    def get_session_age(self):
         return time.time() - self.created_at
 
-    def get_idle_time(self) -> float:
-        """Get idle time in seconds since last activity."""
+    def get_idle_time(self):
         return time.time() - self.last_activity_at
 
-    def is_buffer_overflow(self) -> bool:
-        """Check if audio buffer exceeds max size."""
+    def is_buffer_overflow(self):
         return len(self.audio_chunks) > self.max_buffer_bytes
 
-    def cleanup_tasks(self) -> None:
-        """Cancel any pending async tasks."""
+    def cleanup_tasks(self):
         for task in [self.partial_task, self.live_text_task]:
             if task and not task.done():
                 task.cancel()
-                logger.debug(f"Cancelled task for session {self.session_id}")
         self.partial_task = None
         self.live_text_task = None
 
-    def get_stats(self) -> dict:
-        """Get session statistics."""
+    def get_stats(self):
         return {
             "session_id": self.session_id,
             "age_seconds": self.get_session_age(),

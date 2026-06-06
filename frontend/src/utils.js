@@ -23,22 +23,27 @@ export function isLocalHost(hostname) {
 }
 
 export function isSameOriginBackendHost(hostname) {
+  if (!hostname || isLocalHost(hostname)) return false;
   return (
     hostname.endsWith('.trycloudflare.com') ||
     hostname.endsWith('.up.railway.app') ||
     hostname.endsWith('.onrender.com') ||
-    hostname.endsWith('.fly.dev')
+    hostname.endsWith('.fly.dev') ||
+    hostname.includes('.')
   );
 }
 
 export function defaultApiUrl() {
+  if (window.location.port === '5173') {
+    return window.location.origin;
+  }
   if (isLocalHost(window.location.hostname)) {
     return `${window.location.protocol}//${window.location.hostname}:8000`;
   }
   if (isSameOriginBackendHost(window.location.hostname)) {
     return window.location.origin;
   }
-  return '';
+  return window.location.origin;
 }
 
 /** Treat `your-backend.example.com`-style placeholders as unset. */
@@ -120,6 +125,8 @@ export const TARGET_LANGUAGE_OPTIONS = [
   { code: 'ko', label: 'Korean', native: '한국어', flag: '🇰🇷', dir: 'ltr', group: 'asian', popularity: 10, family: 'Koreanic', speakers: '80M', difficulty: 4, script: 'Hangul', currency: '₩', ttsVoice: 'ko-KR-Neural2', units: 'metric', keyboard: 'Hangul', cultural: 'Respect for age, honorifics, communal dining', dateFormat: 'YMD', nameOrder: 'lastFirst', font: 'system-ui, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif' },
   { code: 'ar', label: 'Arabic', native: 'العربية', flag: '🇸🇦', dir: 'rtl', group: 'middle-eastern', popularity: 4, family: 'Semitic', speakers: '370M', difficulty: 5, script: 'Arabic', currency: '﷼', ttsVoice: 'ar-SA-Standard', units: 'metric', keyboard: 'Arabic', cultural: 'Hospitality, religious phrases, gender-specific forms', dateFormat: 'DMY', nameOrder: 'firstLast', variants: ['ar-EG', 'ar-MA'], font: 'system-ui, "Segoe UI", "Arial", sans-serif' },
   { code: 'ru', label: 'Russian', native: 'Русский', flag: '🇷🇺', dir: 'ltr', group: 'european', popularity: 11, family: 'Indo-European', speakers: '260M', difficulty: 4, script: 'Cyrillic', currency: '₽', ttsVoice: 'ru-RU-Neural2', units: 'metric', keyboard: 'JCUKEN', cultural: 'Formal vy, patronymics, direct expression', dateFormat: 'DMY', nameOrder: 'firstLast', font: 'system-ui, "Segoe UI", "Arial", sans-serif' },
+  { code: 'nl', label: 'Dutch', native: 'Nederlands', flag: '\uD83C\uDDF3\uD83C\uDDF1', dir: 'ltr', group: 'european', popularity: 13, family: 'Indo-European', speakers: '30M', difficulty: 3, script: 'Latin', currency: '\u20AC', ttsVoice: 'nl-NL-Standard', units: 'metric', keyboard: 'QWERTY', cultural: 'Direct communication, practical tone, informal je/u distinction', dateFormat: 'DMY', nameOrder: 'firstLast', variants: ['nl-BE'] },
+  { code: 'hi', label: 'Hindi', native: '\u0939\u093F\u0928\u094D\u0926\u0940', flag: '\uD83C\uDDEE\uD83C\uDDF3', dir: 'ltr', group: 'asian', popularity: 14, family: 'Indo-Aryan', speakers: '600M', difficulty: 4, script: 'Devanagari', currency: '\u20B9', ttsVoice: 'hi-IN-Neural2', units: 'metric', keyboard: 'InScript', cultural: 'Respectful address, context-sensitive formality, family-centered phrasing', dateFormat: 'DMY', nameOrder: 'firstLast', font: 'system-ui, "Nirmala UI", "Mangal", sans-serif' },
 ];
 
 export const VOICE_WARMUP_PHRASES = {
@@ -426,7 +433,7 @@ export const VOICE_WARMUP_COOLDOWN_MS = 5 * 60 * 1000;
 export const VOICE_PREFETCH_TIMEOUT_MS = 4000;
 export const HOLD_TO_TALK_DELAY_MS = 260;
 export const EXPECTED_BACKEND_RELEASE = '2026-05-13-active-speaker-v19';
-export const FRONTEND_BUILD_ID = 'continuous-interpreter-v29-browser-live-text';
+export const FRONTEND_BUILD_ID = 'continuous-interpreter-v32-soothing-voice';
 export const EXPERIMENTAL_IOS_STREAMING = true;
 
 // ---------- Persistence ----------

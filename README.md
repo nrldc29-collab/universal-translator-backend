@@ -1536,6 +1536,204 @@ Additional references:
 - docs/ARCHITECTURE.md
 - docs/DEPLOYMENT_CHECKLIST.md
 
+## AILang Intelligence Layer
+
+The `ailang_integration/` package adds an optional intelligence layer on top of the base MarianMT translation pipeline. It runs in two modes.
+
+### Offline mode (default — no setup required)
+
+Everything runs locally with zero external dependencies. No API key needed, no internet, no cost. The rule engine handles:
+
+- **Domain detection** — medical, legal, financial, technical, travel, education (keyword matching with word boundaries)
+- **Urgency routing** — detects emergency language and adjusts TTS speed and model selection
+- **Formality matching** — formal/informal/slang detection applied to target language register
+- **Dialect targeting** — routes to the right regional variant (es-MX, pt-BR, zh-CN, ar-EG, en-US, fr-FR, de-DE, and more)
+- **Glossary enforcement** — your custom terms always translated correctly (string match)
+- **Idiom flagging** — known idiomatic phrases detected and annotated before translation
+- **Pronoun resolution** — tracks named entities across turns to resolve "him/her/them" references
+- **Speaker profiling** — adapts vocabulary level and register per speaker over a session
+- **Emotion-aware TTS** — adjusts speed, pause, and voice style based on detected emotion
+- **Quality heuristics** — flags empty translations, broken length ratios, missing dosage numbers
+
+### Activation: LLM-enhanced mode
+
+AILang supports multiple LLM providers, tried in order: **Ollama (local, free)** → **OpenAI (cloud)** → **CIP (brain fallback)** → **offline rules (stub)**.
+
+#### Option A: Ollama — fully offline, zero cost (recommended)
+
+No API key needed. Runs entirely on your machine.
+
+1. Install Ollama: [ollama.com](https://ollama.com) or run the setup script:
+
+```powershell
+powershell -File Setup-Ollama.ps1
+```
+
+2. Pull a model:
+
+```bash
+ollama pull mistral
+```
+
+3. Add to `.env`:
+
+```env
+OLLAMA_ENABLED=true
+USE_LLM_AGENTS=true
+```
+
+That's it. AILang now uses a local LLM for all intelligence agents — no internet, no API key, no cost.
+
+##### Available Ollama models
+
+| Model | Size | Speed | Accuracy | Best for |
+|---|---|---|---|---|
+| `mistral` | ~4GB | Fast | Good | General use, balanced |
+| `llama3` | ~5GB | Medium | Better | Higher accuracy translations |
+| `phi3` | ~2GB | Very fast | OK | Speed-critical, limited RAM |
+| `tinyllama` | ~1GB | Fastest | Basic | Minimum hardware |
+
+Pull additional models at any time:
+
+```bash
+ollama pull llama3
+ollama pull phi3
+```
+
+##### Switch models at runtime (no restart)
+
+Use the **AILang** section in Settings to switch models from the UI, or call the API directly:
+
+```bash
+curl -X POST http://localhost:8000/health/ollama/model \
+  -H "Content-Type: application/json" \
+  -d '{"model": "llama3"}'
+```
+
+Check current status:
+
+```bash
+curl http://localhost:8000/health/ollama
+```
+
+#### Option B: OpenAI — cloud LLM
+
+Requires an OpenAI API key with billing enabled.
+
+```env
+OPENAI_API_KEY=sk-...
+USE_LLM_AGENTS=true
+```
+
+#### Option C: No LLM — offline rules only
+
+If neither Ollama nor OpenAI is configured, AILang still works using pure rule-based logic. No setup required — it's the default.
+
+#### Comparison: what each mode provides
+
+| Feature | Offline (rule-based) | Ollama / OpenAI (LLM-enhanced) |
+|---|---|---|
+| Domain detection | Keyword match ~95% | Same (already accurate) |
+| Idiom handling | Known-phrase dict | Novel idioms detected and culturally adapted |
+| Ambiguity resolution | Flag known phrases | Contextual resolution using conversation history |
+| Back-translation verify | Word overlap score | Full back-translation + semantic comparison, rewrites if meaning lost |
+| Confidence fallback | Flag low scores | Actually retranslates using LLM when confidence is low |
+| Speaker profiling | Word complexity heuristic | Nuanced style analysis with vocabulary/register learning |
+| Pronoun resolution | Single-candidate heuristic | Full co-reference resolution |
+| Quality review | Length/number heuristics | Full semantic translation quality review |
+| Cultural adaptation | Dialect hint injection | Active cultural sensitivity check per target region |
+
+### Ollama in Docker
+
+The `docker-compose.yml` and `docker-compose.gpu.yml` include an Ollama service by default:
+
+```bash
+# CPU + GPU
+docker compose -f docker-compose.gpu.yml up --build -d
+
+# CPU only
+docker compose up --build -d
+```
+
+The Ollama container:
+- Auto-pulls the default model (`mistral`) on first boot
+- Persists models in a `ollama_data` Docker volume
+- Has a healthcheck — the backend waits for Ollama before starting
+- Backend reaches Ollama at `http://ollama:11434` (internal Docker network)
+
+Override the model in your compose environment:
+
+```yaml
+environment:
+  - OLLAMA_MODEL=llama3
+```
+
+### Backend warm-up
+
+On startup, the backend automatically warms up the Ollama model with a tiny prompt. This eliminates the 10-30s cold-start delay on the first real translation. Check warm-up status:
+
+```bash
+curl http://localhost:8000/health/ollama
+```
+
+Response:
+
+```json
+{
+  "enabled": true,
+  "reachable": true,
+  "model": "mistral",
+  "model_loaded": true,
+  "warmup": {
+    "status": "active",
+    "warmup_ms": 5234,
+    "message": "Ollama model 'mistral' loaded and ready (5234ms)"
+  }
+}
+```
+
+### AILang status in the UI
+
+The header shows a live status badge:
+
+- **AILang: mistral** (green) — Ollama is active and the model is loaded
+- **AILang: Cloud** (green) — OpenAI cloud LLM is being used
+- **AILang: Degraded** (amber) — Ollama is enabled but unreachable, using offline fallbacks
+- **AILang: Offline** (gray) — No LLM configured, rule-based agents only
+
+The badge polls `/health/ollama` every 30 seconds and reflects Ollama going down or recovering in real time.
+
+### Glossary setup (works in both modes)
+
+Pass a glossary in your context to enforce custom terminology:
+
+```python
+from ailang_integration.runtime.backend_hook import enhance_translation_v2
+
+result = enhance_translation_v2(
+    text="The patient needs metformin and should contact NAIA",
+    source_lang="en",
+    target_lang="es",
+    glossary=[
+        {"source": "NAIA",    "target": "NAIA",    "lang_pair": "*",    "context": "do not translate"},
+        {"source": "metformin","target":"metformina","lang_pair":"en-es","context":"drug name"},
+    ],
+    dialect_preference="es-MX",
+    context={
+        "current_speaker":       "Doctor",
+        "conversation_history":  [],   # list of {speaker, text, translated} — persist across turns
+        "speaker_registry":      {},   # persist across turns for per-speaker profiling
+    }
+)
+translated = result["translated_text"]
+```
+
+### Disabling the integration
+
+The integration degrades gracefully at every step. To disable it entirely, remove or rename `ailang_integration/` — the core STT → MarianMT → TTS pipeline is unaffected.
+
+---
+
 ## Governance and Support
 
 - `CONTRIBUTING.md`

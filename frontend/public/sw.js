@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v30-futuristic-ui';
+const CACHE_VERSION = 'v32-soothing-voice';
 const CACHE_NAME = `anai-translator-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `anai-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';

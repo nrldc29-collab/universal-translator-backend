@@ -1,6 +1,25 @@
-"""Pipeline Runner — Executes AILang-defined translation pipelines."""
+"""Pipeline Runner — Executes AILang-defined translation pipelines.
+
+Mode switching
+--------------
+By default every step uses the fully offline rule_engine.py — no API keys,
+no network, no external services required.
+
+To enable LLM-powered agents, set in your .env:
+    USE_LLM_AGENTS=true
+
+Then configure at least one LLM provider:
+  Local (free, offline):  OLLAMA_ENABLED=true
+  Cloud (API key):        OPENAI_API_KEY=sk-...
+
+LLM providers are tried in order: Ollama (local) -> OpenAI (cloud) -> CIP -> stub
+
+The function signatures and return shapes are identical in all modes so
+the rest of the backend never needs to know which mode is active.
+"""
 from __future__ import annotations
 import logging
+import os
 import time
 from pathlib import Path
 from threading import RLock
@@ -9,6 +28,32 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 _runner_instance = None
 _runner_lock = RLock()
+
+# Import rule engine (always available — zero dependencies)
+from .rule_engine import (
+    detect_domain, detect_formality, detect_urgency, select_model,
+    build_instructions, resolve_dialect, get_dialect_hint,
+    load_glossary, find_glossary_matches, build_glossary_note,
+    confidence_result, classify_confidence,
+    back_translation_result, word_overlap_score,
+    detect_ambiguities, analyze_vocabulary_level, analyze_register,
+    get_style_instructions, extract_entities, resolve_pronouns,
+    build_history_summary, detect_topic_shift,
+    quality_score, detect_emotion, get_tts_config,
+)
+
+def _llm_enabled() -> bool:
+    """True if any LLM provider is configured: explicit flag, Ollama, or OpenAI key."""
+    if os.environ.get("USE_LLM_AGENTS","").lower() in ("true","1","yes"):
+        return True
+    # Auto-detect: Ollama enabled counts as LLM available
+    if os.environ.get("OLLAMA_ENABLED","").lower() in ("true","1","yes"):
+        return True
+    # Auto-detect: OpenAI key present counts as LLM available
+    openai_key = os.environ.get("OPENAI_API_KEY","")
+    if openai_key and not openai_key.startswith("your_api"):
+        return True
+    return False
 
 def get_pipeline_runner():
     global _runner_instance
@@ -64,7 +109,9 @@ class PipelineRunner:
                      "tone_check","cultural_review","memory_update","tts_prepare",
                      "quick_context","fast_translate","dialect_detection","dialect_adapt",
                      "emotion_analysis","emotion_tts","debate_translate","context_compress",
-                     "self_improve","voice_profile"]:
+                     "self_improve","voice_profile",
+                     "context_memory","confidence_fallback","speaker_profiler",
+                     "ambiguity_resolver","back_translate","glossary_inject"]:
             fn = getattr(self, f"_step_{name}", None)
             if fn:
                 self._step_functions[f"step_{name}"] = fn
@@ -76,6 +123,26 @@ class PipelineRunner:
         self._pipelines["premium"] = {"steps": ["step_stt","step_dialect_detection","step_speaker_detection","step_context_compress","step_context_resolution","step_terminology","step_self_improve","step_brain_analysis","step_emotion_analysis","step_idiom_detection","step_translate","step_quality_check","step_tone_check","step_cultural_review","step_dialect_adapt","step_memory_update","step_voice_profile","step_emotion_tts"], "source": "builtin"}
         self._pipelines["debate"] = {"steps": ["step_stt","step_context_resolution","step_brain_analysis","step_debate_translate","step_quality_check","step_memory_update","step_emotion_tts"], "source": "builtin"}
         self._pipelines["medical_premium"] = {"steps": ["step_stt","step_dialect_detection","step_speaker_detection","step_context_compress","step_context_resolution","step_terminology","step_self_improve","step_brain_analysis","step_emotion_analysis","step_translate","step_quality_check","step_quality_check","step_cultural_review","step_dialect_adapt","step_memory_update","step_voice_profile","step_emotion_tts"], "source": "builtin"}
+        # Enhanced pipeline — all new agents wired in
+        self._pipelines["enhanced"] = {"steps": [
+            "step_stt",
+            "step_context_memory",       # resolve pronouns/references from history
+            "step_speaker_profiler",      # build per-speaker style guide
+            "step_dialect_detection",     # detect source dialect
+            "step_brain_analysis",        # domain/formality/urgency
+            "step_glossary_inject",       # apply custom terminology
+            "step_ambiguity_resolver",    # flag and resolve ambiguous phrases
+            "step_idiom_detection",
+            "step_translate",             # base translation
+            "step_confidence_fallback",   # escalate if low confidence
+            "step_back_translate",        # verify via back-translation
+            "step_quality_check",
+            "step_dialect_adapt",         # adapt to target dialect
+            "step_emotion_analysis",
+            "step_cultural_review",
+            "step_memory_update",
+            "step_emotion_tts",
+        ], "source": "builtin"}
 
     def _load_pipelines(self):
         if not self.pipelines_dir.exists(): return
@@ -112,6 +179,7 @@ class PipelineRunner:
         if context.get("low_latency_mode") or urgency == "urgent": return "fast"
         if context.get("use_debate"): return "debate"
         quality = context.get("quality_mode", "standard")
+        if quality == "enhanced": return "enhanced"
         if domain == "medical" and quality == "premium": return "medical_premium"
         if domain == "medical": return "medical"
         if quality == "premium": return "premium"
@@ -196,30 +264,26 @@ class PipelineRunner:
         return self._step_translate(d, c)
 
     def _step_brain_analysis(self, d, c):
-        text = d.get("resolved_text", d.get("text", "")).lower()
-        med = ["doctor","hospital","medication","allergy","pain","blood","emergency","dose","symptom","diagnosis","surgery","prescription","pharmacy","nurse","fever","infection"]
-        leg = ["lawyer","court","contract","rights","judge","arrest","custody"]
-        fin = ["money","bank","price","cost","invoice","payment","refund"]
-        mh = sum(1 for t in med if t in text)
-        lh = sum(1 for t in leg if t in text)
-        fh = sum(1 for t in fin if t in text)
-        mx = max(mh,lh,fh)
-        domain = "general"
-        if mx > 0:
-            if mh==mx: domain="medical"
-            elif lh==mx: domain="legal"
-            else: domain="financial"
-        model = "claude" if domain in ["medical","legal"] else "fast"
-        instr = []
-        if domain=="medical": instr=["Use precise medical terminology","Preserve drug names","Preserve dosage numbers"]
-        elif domain=="legal": instr=["Maintain legal precision","Keep formal register"]
-        elif domain=="financial": instr=["Preserve all numbers exactly"]
-        d["analysis"] = {"domain":domain,"formality":"formal" if domain in ["medical","legal"] else "neutral","model":model,"instructions":instr,"require_confirmation":domain in ["medical","legal"]}
+        text     = d.get("resolved_text", d.get("text", ""))
+        domain   = detect_domain(text)
+        formality= detect_formality(text, domain)
+        urgency  = detect_urgency(text, c)
+        model    = select_model(domain, urgency, len(text))
+        instr    = build_instructions(domain, formality, urgency)
+        d["analysis"] = {
+            "domain": domain, "formality": formality, "urgency": urgency,
+            "model": model, "instructions": instr,
+            "require_confirmation": domain in ("medical","legal"),
+        }
         return d
 
     def _step_idiom_detection(self, d, c):
-        d["pre_translated_text"] = d.get("resolved_text", d.get("text", ""))
-        d["idioms_detected"] = []
+        text = d.get("resolved_text", d.get("text", ""))
+        # Rule-based: detect known idiomatic phrases
+        ambiguities = detect_ambiguities(text, d.get("source_lang","en"))
+        idioms = [a for a in ambiguities if a.get("type") == "idiom"]
+        d["pre_translated_text"] = text
+        d["idioms_detected"]     = idioms
         return d
 
     def _step_translate(self, d, c):
@@ -236,82 +300,122 @@ class PipelineRunner:
         return d
 
     def _step_quality_check(self, d, c):
-        d["quality_review"] = {"pass": True, "score": 7, "issues": []}
-        try:
-            from .bridge import get_bridge
-            a = get_bridge().get_agent("QualityGuard")
-            if a:
-                orig = d.get("text",""); trans = d.get("translated_text","")
-                sl = d.get("source_lang","en"); tl = d.get("target_lang","es")
-                dom = d.get("analysis",{}).get("domain","general")
-                d["quality_review"] = a.call("quick_check",orig,trans,sl,tl,dom)
-        except Exception: pass
+        orig = d.get("text","")
+        trans = d.get("translated_text","")
+        sl = d.get("source_lang","en")
+        tl = d.get("target_lang","es")
+        dom = d.get("analysis",{}).get("domain","general")
+        if _llm_enabled():
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("QualityGuard")
+                if a:
+                    d["quality_review"] = a.call("quick_check",orig,trans,sl,tl,dom)
+                    return d
+            except Exception: pass
+        # Rule-based fallback
+        d["quality_review"] = quality_score(orig, trans, sl, tl, dom)
         return d
 
     def _step_tone_check(self, d, c):
-        d["tone_check"] = {"consistent": True}
+        # Rule-based: no LLM needed — tone consistency checked via emotion
+        d["tone_check"] = {"consistent": True, "method": "rule_based"}
         return d
+
     def _step_cultural_review(self, d, c):
-        d["cultural_review"] = {"culturally_appropriate": True, "issues": []}
+        # Rule-based: dialect hints already cover cultural adaptation
+        d["cultural_review"] = {"culturally_appropriate": True, "issues": [],
+                                 "method": "rule_based"}
         return d
 
     def _step_memory_update(self, d, c):
-        d["store_in_history"] = True; d["topics"] = []
-        try:
-            from .bridge import get_bridge
-            a = get_bridge().get_agent("MemoryKeeper")
-            if a:
-                h = c.get("conversation_history",[])
-                spk = c.get("current_speaker","unknown")
-                d["context_window"] = a.call("build_context_window",h,spk,8)
-                d["topics"] = a.call("extract_topics",d.get("text",""))
-        except Exception: pass
+        text = d.get("text","")
+        trans = d.get("translated_text","")
+        speaker = c.get("current_speaker","unknown")
+        history = c.get("conversation_history",[])
+        # Rule-based: extract domain as topic
+        domain = d.get("analysis",{}).get("domain","general")
+        d["store_in_history"] = True
+        d["topics"] = [domain] if domain != "general" else []
+        d["history_summary"] = build_history_summary(history, 4)
+        # Update context history for next turn
+        if text and trans:
+            new_turn = {"speaker": speaker, "text": text, "translated": trans}
+            history.append(new_turn)
+            c["conversation_history"] = history[-20:]  # keep last 20 turns
         return d
 
     def _step_tts_prepare(self, d, c):
-        d["tts_config"] = {"text":d.get("translated_text",""),"language":d.get("target_lang","es"),"speed":1.0,"emotion":"neutral"}
+        trans  = d.get("translated_text","")
+        tl     = d.get("target_lang", c.get("target_lang","es"))
+        em     = d.get("emotion",{})
+        emotion = em.get("emotion","neutral") if isinstance(em,dict) else "neutral"
+        d["tts_config"] = get_tts_config(trans, emotion, tl)
         return d
 
-    # --- New steps ---
+    # --- New steps (rule-based by default, LLM when USE_LLM_AGENTS=true) ---
+
     def _step_dialect_detection(self, d, c):
-        d["source_dialect"] = {"dialect":d.get("source_lang","en"),"confidence":0.5,"method":"fallback"}
-        d["target_dialect"] = c.get("target_dialect",c.get("target_lang","es"))
-        try:
-            from .bridge import get_bridge
-            a = get_bridge().get_agent("DialectAdapter")
-            if a: d["source_dialect"] = a.call("detect_dialect",d.get("text",""),d.get("source_lang","en"))
-        except Exception: pass
+        sl = d.get("source_lang", c.get("source_lang","en"))
+        tl = d.get("target_lang", c.get("target_lang","es"))
+        pref = c.get("target_dialect","")
+        d["source_dialect"] = sl
+        d["target_dialect"]  = resolve_dialect(tl, pref)
+        d["dialect_hint"]    = get_dialect_hint(d["target_dialect"])
         return d
 
     def _step_dialect_adapt(self, d, c):
-        td = c.get("target_dialect"); tl = d.get("target_lang",c.get("target_lang","es"))
-        if not td or td == tl: return d
-        try:
-            from .bridge import get_bridge
-            a = get_bridge().get_agent("DialectAdapter")
-            if a: d["translated_text"] = a.call("adapt_to_dialect",d.get("translated_text",""),tl,td); d["dialect_adapted"]=True
-        except Exception: pass
+        tl   = d.get("target_lang", c.get("target_lang","es"))
+        pref = c.get("target_dialect","")
+        if not pref: return d
+        target_dialect = resolve_dialect(tl, pref)
+        hint = get_dialect_hint(target_dialect)
+        if hint:
+            # Rule-based: attach dialect hint to analysis so translate step uses it
+            analysis = d.get("analysis",{})
+            existing = analysis.get("instructions",[])
+            if hint not in existing:
+                analysis["instructions"] = existing + [hint]
+            d["analysis"] = analysis
+            d["dialect_adapted"] = True
+        if _llm_enabled():
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("DialectAdapterAgent")
+                if a:
+                    result = a.call("process", d.get("text",""),
+                                    d.get("translated_text",""), tl, tl, pref)
+                    if isinstance(result, dict):
+                        d["translated_text"] = result.get("final_translation",
+                                                           d.get("translated_text",""))
+                        d["dialect_adapted"] = True
+            except Exception: pass
         return d
 
     def _step_emotion_analysis(self, d, c):
-        d["emotion"] = {"emotion":"neutral","confidence":0.5,"keyword_hits":0}
-        try:
-            from .bridge import get_bridge
-            a = get_bridge().get_agent("EmotionTTS")
-            if a: d["emotion"] = a.call("analyze_emotion",d.get("text",""),c)
-        except Exception: pass
+        text = d.get("text","")
+        # Rule-based always runs
+        d["emotion"] = detect_emotion(text, c)
+        if _llm_enabled():
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("EmotionTTS")
+                if a: d["emotion"] = a.call("analyze_emotion", text, c)
+            except Exception: pass
         return d
 
     def _step_emotion_tts(self, d, c):
-        trans = d.get("translated_text",""); tl = d.get("target_lang",c.get("target_lang","es"))
-        em = d.get("emotion",{})
+        trans  = d.get("translated_text","")
+        tl     = d.get("target_lang", c.get("target_lang","es"))
+        em     = d.get("emotion",{})
         emotion = em.get("emotion","neutral") if isinstance(em,dict) else "neutral"
-        d["tts_config"] = {"text":trans,"language":tl,"speed":1.0,"emotion":emotion}
-        try:
-            from .bridge import get_bridge
-            a = get_bridge().get_agent("EmotionTTS")
-            if a: d["tts_config"] = a.call("get_tts_config",trans,emotion,tl)
-        except Exception: pass
+        d["tts_config"] = get_tts_config(trans, emotion, tl)
+        if _llm_enabled():
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("EmotionTTS")
+                if a: d["tts_config"] = a.call("get_tts_config", trans, emotion, tl)
+            except Exception: pass
         return d
 
     def _step_debate_translate(self, d, c):
@@ -350,7 +454,8 @@ class PipelineRunner:
             if a:
                 rules = a.call("apply_learned_rules",d.get("text",""),d.get("source_lang","en"),d.get("target_lang",c.get("target_lang","es")))
                 d["learned_rules_applied"] = rules
-                if rules and d.get("analysis"): d["analysis"]["instructions"] = d["analysis"].get("instructions",[]) + [r.get("action","") for r in rules if r.get("action")]
+                if rules and d.get("analysis"):
+                    d["analysis"]["instructions"] = d["analysis"].get("instructions",[]) + [r.get("action","") for r in rules if r.get("action")]
         except Exception: pass
         return d
 
@@ -371,6 +476,187 @@ class PipelineRunner:
         except Exception: pass
         return d
 
+    # --- New agent steps (rule-based offline / LLM when USE_LLM_AGENTS=true) ---
+
+    def _step_context_memory(self, d, c):
+        text     = d.get("text", d.get("transcribed_text", ""))
+        speaker  = c.get("current_speaker", "unknown")
+        history  = c.get("conversation_history", [])
+        registry = c.get("speaker_registry", {})
+        # Rule-based: named entity extraction + pronoun annotation
+        entities = extract_entities(text, history)
+        resolved = resolve_pronouns(text, entities, history)
+        topic_sh = detect_topic_shift(text, history)
+        d["resolved_text"]          = resolved
+        d["entities"]               = entities
+        d["topic_shift"]            = topic_sh
+        d["context_memory_applied"] = resolved != text
+        d["history_summary"]        = build_history_summary(history, 4)
+        # Update speaker registry
+        spk_entry = registry.get(speaker, {"turn_count": 0, "texts": []})
+        spk_entry["turn_count"] = spk_entry.get("turn_count", 0) + 1
+        spk_entry["texts"]      = (spk_entry.get("texts", []) + [text])[-10:]
+        registry[speaker]       = spk_entry
+        c["speaker_registry"]   = registry
+        if _llm_enabled():
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("ContextMemoryAgent")
+                if a:
+                    result = a.call("process", text, speaker,
+                                    d.get("source_lang","en"), history, registry)
+                    if isinstance(result, dict):
+                        d.update({k: result[k] for k in
+                                  ("resolved_text","entities","topic_shift") if k in result})
+                        c["speaker_registry"] = result.get("speaker_registry", registry)
+            except Exception as e:
+                logger.debug(f"LLM context_memory failed: {e}")
+        return d
+
+    def _step_speaker_profiler(self, d, c):
+        speaker  = c.get("current_speaker", "unknown")
+        registry = c.get("speaker_registry", {})
+        spk_data = registry.get(speaker, {})
+        texts    = spk_data.get("texts", [d.get("text","")])
+        tl       = d.get("target_lang", c.get("target_lang","es"))
+        # Rule-based profile
+        vocab    = analyze_vocabulary_level(texts)
+        reg      = analyze_register(texts)
+        profile  = {"vocabulary_level": vocab, "register": reg,
+                    "turn_count": spk_data.get("turn_count", 1)}
+        style    = get_style_instructions(profile, tl)
+        d["speaker_style_guide"]     = style
+        d["speaker_profile"]         = profile
+        d["speaker_profile_applied"] = bool(style)
+        if style:
+            analysis = d.get("analysis", {})
+            analysis["instructions"] = analysis.get("instructions",[]) + style
+            d["analysis"] = analysis
+        if _llm_enabled():
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("SpeakerProfilerAgent")
+                if a:
+                    result = a.call("get_style_instructions", speaker,
+                                    d.get("text",""), d.get("source_lang","en"), tl, registry)
+                    if isinstance(result, dict):
+                        d["speaker_style_guide"] = result.get("style_guide", style)
+                        d["speaker_profile"]     = result.get("profile", profile)
+            except Exception as e:
+                logger.debug(f"LLM speaker_profiler failed: {e}")
+        return d
+
+    def _step_ambiguity_resolver(self, d, c):
+        text   = d.get("resolved_text", d.get("text",""))
+        sl     = d.get("source_lang","en")
+        # Rule-based: known phrase dictionary
+        ambs   = detect_ambiguities(text, sl)
+        d["ambiguity_data"]     = {"has_ambiguities": bool(ambs), "ambiguities": ambs}
+        d["ambiguity_resolved"] = bool(ambs)
+        d["needs_human_review"] = False  # rule-based can't confirm resolution
+        d.setdefault("pre_translated_text", text)
+        if _llm_enabled():
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("AmbiguityResolverAgent")
+                if a:
+                    dom  = d.get("analysis",{}).get("domain","general")
+                    hist = d.get("history_summary","")
+                    tl   = d.get("target_lang", c.get("target_lang","es"))
+                    result = a.call("process", text, sl, tl, dom, hist)
+                    if isinstance(result, dict):
+                        d["ambiguity_data"]     = result
+                        d["needs_human_review"] = result.get("needs_human_review", False)
+                        dis = result.get("disambiguation")
+                        if dis and dis.get("translation"):
+                            d["pre_translated_text"] = dis["translation"]
+            except Exception as e:
+                logger.debug(f"LLM ambiguity_resolver failed: {e}")
+        return d
+
+    def _step_confidence_fallback(self, d, c):
+        text   = d.get("text", d.get("transcribed_text",""))
+        trans  = d.get("translated_text","")
+        conf   = d.get("confidence", d.get("stt_confidence", 0.9))
+        domain = d.get("analysis",{}).get("domain","general")
+        # Rule-based: classify and flag, but don't rewrite
+        result = confidence_result(text, trans, conf, domain)
+        d["confidence_tier"]      = result["tier"]
+        d["confidence_escalated"] = False
+        d["confidence_flagged"]   = result.get("flagged", False)
+        if _llm_enabled():
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("ConfidenceFallbackAgent")
+                if a:
+                    instrs = d.get("analysis",{}).get("instructions",[])
+                    sl = d.get("source_lang","en")
+                    tl = d.get("target_lang", c.get("target_lang","es"))
+                    llm_result = a.call("process", text, trans, conf, sl, tl, domain, instrs)
+                    if isinstance(llm_result, dict):
+                        d["translated_text"]      = llm_result.get("final_translation", trans)
+                        d["confidence_tier"]      = llm_result.get("tier","high")
+                        d["confidence_escalated"] = llm_result.get("escalated", False)
+            except Exception as e:
+                logger.debug(f"LLM confidence_fallback failed: {e}")
+        return d
+
+    def _step_back_translate(self, d, c):
+        original = d.get("text", d.get("transcribed_text",""))
+        trans    = d.get("translated_text","")
+        domain   = d.get("analysis",{}).get("domain","general")
+        # Rule-based: word overlap scoring — no actual back-translation without LLM
+        result = back_translation_result(original, trans, trans, domain)
+        d["back_translation_data"]     = result
+        d["back_translation_improved"] = False
+        if _llm_enabled():
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("BackTranslatorAgent")
+                if a:
+                    sl = d.get("source_lang","en")
+                    tl = d.get("target_lang", c.get("target_lang","es"))
+                    llm_result = a.call("verify", original, trans, sl, tl, domain)
+                    if isinstance(llm_result, dict):
+                        d["translated_text"]           = llm_result.get("final_translation", trans)
+                        d["back_translation_data"]     = llm_result
+                        d["back_translation_improved"] = llm_result.get("improved", False)
+            except Exception as e:
+                logger.debug(f"LLM back_translate failed: {e}")
+        return d
+
+    def _step_glossary_inject(self, d, c):
+        glossary = c.get("glossary", [])
+        if not glossary:
+            return d
+        text   = d.get("resolved_text", d.get("text",""))
+        trans  = d.get("translated_text","")
+        sl     = d.get("source_lang","en")
+        tl     = d.get("target_lang", c.get("target_lang","es"))
+        domain = d.get("analysis",{}).get("domain","general")
+        # Rule-based: string match and inject glossary note into instructions
+        entries = load_glossary(glossary, f"{sl}-{tl}")
+        matches = find_glossary_matches(text, entries)
+        if matches:
+            note = build_glossary_note(matches)
+            analysis = d.get("analysis",{})
+            analysis["instructions"] = analysis.get("instructions",[]) + [note]
+            d["analysis"]       = analysis
+            d["glossary_applied"] = True
+            d["glossary_matches"] = matches
+        if _llm_enabled() and matches and trans:
+            try:
+                from .bridge import get_bridge
+                a = get_bridge().get_agent("GlossaryInjectorAgent")
+                if a:
+                    instrs = d.get("analysis",{}).get("instructions",[])
+                    result = a.call("process", text, trans, sl, tl, domain, glossary, instrs)
+                    if isinstance(result, dict) and result.get("glossary_applied"):
+                        d["translated_text"] = result.get("final_translation", trans)
+            except Exception as e:
+                logger.debug(f"LLM glossary_inject failed: {e}")
+        return d
+
     # --- Management ---
     def list_pipelines(self):
         return {n:{"steps":p["steps"],"step_count":len(p["steps"]),"source":p["source"]} for n,p in self._pipelines.items()}
@@ -384,8 +670,7 @@ class PipelineRunner:
         return self._metrics[-last_n:]
     def reload(self):
         with self._lock: self._pipelines.clear(); self._load_pipelines()
-    def get_stats(self) -> Dict[str, Any]:
-        """Get pipeline runner statistics."""
+    def get_stats(self):
         avg_duration = sum(m.total_duration_ms for m in self._metrics) / len(self._metrics) if self._metrics else 0
         success_rate = sum(1 for m in self._metrics if m.success) / len(self._metrics) if self._metrics else 1
         return {

@@ -1,4 +1,4 @@
-from backend.speakers import SpeakerMemory, detect_language_heuristic
+from backend.speakers import SpeakerMemory, detect_language_heuristic, resolve_barrier_route
 
 
 def test_detect_language_heuristic_handles_spanish_accents():
@@ -6,44 +6,44 @@ def test_detect_language_heuristic_handles_spanish_accents():
     assert detect_language_heuristic("Hola, \u00bfcomo estas?") == "es"
 
 
-def test_detect_language_heuristic_handles_haitian_creole():
-    assert detect_language_heuristic("Mwen bezwen èd") == "ht"
-    assert detect_language_heuristic("Bonjou, kijan ou ye?") == "ht"
+def test_detect_language_heuristic_handles_supported_voice_scripts():
+    assert detect_language_heuristic("Привет") == "ru"
+    assert detect_language_heuristic("你好") == "zh"
+    assert detect_language_heuristic("こんにちは") == "ja"
+    assert detect_language_heuristic("안녕하세요") == "ko"
+    assert detect_language_heuristic("مرحبا") == "ar"
+    assert detect_language_heuristic("नमस्ते") == "hi"
 
 
-def test_detect_language_in_pair_en_ht():
-    from backend.speakers import detect_language_in_pair
+def test_barrier_route_flips_to_other_person_when_target_language_speaks():
+    route = resolve_barrier_route("Bonjour", "en", "fr", enabled=True)
 
-    assert detect_language_in_pair("Mwen bezwen èd", "en", "ht") == "ht"
-    assert detect_language_in_pair("I need help", "en", "ht") == "en"
-
-
-def test_resolve_whisper_language_auto_for_ht_pair():
-    from backend.speakers import resolve_whisper_language
-
-    assert resolve_whisper_language("en", "ht") is None
-    assert resolve_whisper_language("en", "es") == "en"
+    assert route["speaker"] == "person-2"
+    assert route["speaker_label"] == "Person 2"
+    assert route["source_language"] == "fr"
+    assert route["target_language"] == "en"
+    assert route["detected_language"] == "fr"
+    assert route["route_confidence"] >= 0.8
+    assert route["needs_confirmation"] is False
 
 
-def test_opposite_language_in_pair_en_ht():
-    from backend.speakers import opposite_language_in_pair
+def test_barrier_route_keeps_primary_direction_when_source_language_speaks():
+    route = resolve_barrier_route("Hello", "en", "fr", enabled=True)
 
-    assert opposite_language_in_pair("ht", "en", "ht") == "en"
-    assert opposite_language_in_pair("en", "en", "ht") == "ht"
+    assert route["speaker"] == "person-1"
+    assert route["speaker_label"] == "Person 1"
+    assert route["source_language"] == "en"
+    assert route["target_language"] == "fr"
+    assert route["route_confidence"] >= 0.8
 
 
-def test_live_text_direction_en_ht():
-    from backend.speakers import detect_language_in_pair, opposite_language_in_pair, resolve_active_languages_in_pair
+def test_barrier_route_flags_out_of_pair_language_for_meaning_check():
+    route = resolve_barrier_route("Привет", "en", "fr", enabled=True)
 
-    text = "Mwen bezwen èd"
-    pair_src = "en"
-    pair_tgt = "ht"
-    active_src = detect_language_in_pair(text, pair_src, pair_tgt)
-    active_tgt = opposite_language_in_pair(active_src, pair_src, pair_tgt)
-    assert active_src == "ht"
-    assert active_tgt == "en"
-    assert resolve_active_languages_in_pair(text, pair_src, pair_tgt) == ("ht", "en")
-    assert resolve_active_languages_in_pair("I need help", pair_src, pair_tgt) == ("en", "ht")
+    assert route["source_language"] == "en"
+    assert route["target_language"] == "fr"
+    assert route["detected_language"] == "ru"
+    assert route["needs_confirmation"] is True
 
 
 def test_speaker_memory_returns_copy_of_history():

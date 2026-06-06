@@ -1,13 +1,20 @@
+/* eslint-disable import/namespace */
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system";
 
 let recording = null;
 let onChunkCallback = null;
 let streamingInterval = null;
-const CHUNK_INTERVAL = 450;
+let streamingActive = false;
+let streamGeneration = 0;
+const CHUNK_INTERVAL = 140;
 
 export const startAudioStream = async (onChunk, onError) => {
   try {
+    if (streamingActive) {
+      await stopAudioStream();
+    }
+
     const permission = await Audio.requestPermissionsAsync();
     if (!permission.granted) {
       onError?.("Microphone permission denied");
@@ -21,53 +28,67 @@ export const startAudioStream = async (onChunk, onError) => {
     });
 
     onChunkCallback = onChunk;
-    
-    // Start the chunk recording loop
-    await recordAndSendChunk();
+    streamingActive = true;
+    streamGeneration += 1;
+    recordAndSendChunk(streamGeneration);
     
     return true;
   } catch (error) {
+    streamingActive = false;
     onError?.(error.message);
     return false;
   }
 };
 
-const recordAndSendChunk = async () => {
+const recordAndSendChunk = async (generation) => {
+  if (!streamingActive || generation !== streamGeneration) return;
+
+  let chunkRecording = null;
   try {
-    // Record a short chunk
-    const { recording: chunkRecording } = await Audio.Recording.createAsync(
+    const created = await Audio.Recording.createAsync(
       Audio.RecordingOptionsPresets.HIGH_QUALITY
     );
+    chunkRecording = created.recording;
     
     recording = chunkRecording;
     
-    // Wait for the chunk interval
     await new Promise(resolve => {
-      streamingInterval = setTimeout(async () => {
-        try {
-          await chunkRecording.stopAndUnloadAsync();
-          const uri = chunkRecording.getURI();
-          
-          if (uri && onChunkCallback) {
-            const base64 = await FileSystem.readAsStringAsync(uri, {
-              encoding: FileSystem.EncodingType.Base64,
-            });
-            onChunkCallback(base64ToArrayBuffer(base64));
-          }
-        } catch (e) {
-          console.error("Chunk send error:", e);
-        }
-        
-        // Start next chunk if still streaming
-        if (streamingInterval) {
-          recordAndSendChunk();
-        }
-        
-        resolve();
-      }, CHUNK_INTERVAL);
+      streamingInterval = setTimeout(resolve, CHUNK_INTERVAL);
     });
+
+    streamingInterval = null;
+
+    if (!streamingActive || generation !== streamGeneration) {
+      await stopChunkRecording(chunkRecording);
+      return;
+    }
+
+    await chunkRecording.stopAndUnloadAsync();
+    if (recording === chunkRecording) recording = null;
+    const uri = chunkRecording.getURI();
+    
+    if (uri && onChunkCallback && streamingActive && generation === streamGeneration) {
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      onChunkCallback(base64ToArrayBuffer(base64));
+    }
   } catch (error) {
     console.error("Record chunk error:", error);
+  } finally {
+    if (recording === chunkRecording) recording = null;
+    if (streamingActive && generation === streamGeneration) {
+      recordAndSendChunk(generation);
+    }
+  }
+};
+
+const stopChunkRecording = async (chunkRecording) => {
+  if (!chunkRecording) return;
+  try {
+    await chunkRecording.stopAndUnloadAsync();
+  } catch {
+    // The recording may already be unloaded by a concurrent stop.
   }
 };
 
@@ -81,6 +102,9 @@ const base64ToArrayBuffer = (base64) => {
 };
 
 export const stopAudioStream = async () => {
+  streamingActive = false;
+  streamGeneration += 1;
+
   if (streamingInterval) {
     clearTimeout(streamingInterval);
     streamingInterval = null;

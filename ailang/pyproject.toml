@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ailang"
+version = "0.1.0"
+description = "AILang DSL runtime for Universal Translator"
+requires-python = ">=3.8"
+dependencies = ["anthropic>=0.39.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ailang*"]

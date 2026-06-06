@@ -136,42 +136,34 @@ class SileroVoiceActivityDetector:
 
             transcoded_path = transcode_to_wav(str(path))
             if not transcoded_path:
-                logger.warning("ffmpeg could not transcode %s; assuming speech present", audio_path)
                 return {"speech_detected": True, "segments": [], "speech_seconds": 0.0, "fallback": "transcode_failed"}
             return _energy_vad(transcoded_path, threshold=_ENERGY_THRESHOLD, min_speech_duration_ms=self.min_speech_duration_ms)
         except Exception as exc:
-            logger.warning("VAD failed for %s (%s); assuming speech present", audio_path, exc)
             return {"speech_detected": True, "segments": [], "speech_seconds": 0.0, "fallback": "vad_error", "error": str(exc)}
         finally:
             if transcoded_path:
                 try:
                     Path(transcoded_path).unlink(missing_ok=True)
-                except Exception as exc:
-                    logger.warning(f"Failed to cleanup temp file {transcoded_path}: {exc}")
+                except Exception:
+                    pass
 
-    def detect_bytes(self, audio_bytes: bytes, suffix: str = ".webm") -> dict:
+    def detect_bytes(self, audio_bytes, suffix=".webm"):
         if not audio_bytes:
-            logger.warning("Empty audio bytes provided")
             return {"speech_detected": False, "segments": [], "speech_seconds": 0.0, "error": "empty_bytes"}
-        
         if len(audio_bytes) > _MAX_FILE_SIZE_MB * 1024 * 1024:
-            logger.warning(f"Audio bytes too large ({len(audio_bytes) / 1024 / 1024:.1f}MB)")
             return {"speech_detected": False, "segments": [], "speech_seconds": 0.0, "error": "data_too_large"}
-
         temp_file = None
         try:
             temp_file = NamedTemporaryFile(delete=False, suffix=suffix)
             temp_file.write(audio_bytes)
             temp_file.flush()
-            temp_path = temp_file.name
-            return self.detect_file(temp_path)
+            return self.detect_file(temp_file.name)
         except Exception as exc:
-            logger.warning(f"VAD failed for bytes: {exc}")
             return {"speech_detected": True, "segments": [], "speech_seconds": 0.0, "fallback": "bytes_error", "error": str(exc)}
         finally:
             if temp_file:
                 try:
                     temp_file.close()
                     Path(temp_file.name).unlink(missing_ok=True)
-                except Exception as exc:
-                    logger.warning(f"Failed to cleanup temp file: {exc}")
+                except Exception:
+                    pass

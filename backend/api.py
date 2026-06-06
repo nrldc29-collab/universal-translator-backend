@@ -1,6 +1,5 @@
 import base64
 import asyncio
-import hashlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -28,15 +27,7 @@ from slowapi.errors import RateLimitExceeded
 from backend.conversation import ConversationBrain
 from backend.memory import ConversationMemory
 from backend.refine import refine_translation
-from backend.speakers import (
-    SpeakerMemory,
-    detect_language_heuristic,
-    detect_language_in_pair,
-    language_pair_has_ht,
-    opposite_language_in_pair,
-    resolve_active_languages_in_pair,
-    resolve_whisper_language,
-)
+from backend.speakers import SpeakerMemory, detect_language_heuristic
 from backend.config import (
     LANGUAGES,
     get_allowed_origin_regex,
@@ -54,7 +45,6 @@ from backend.config import (
     get_stt_provider_ws_url,
     get_translation_backend,
     get_translation_device,
-    get_hybrid_enable_remote,
     get_vad_force_final_seconds,
     get_vad_silent_checks,
     get_whisper_compute_type,
@@ -62,25 +52,20 @@ from backend.config import (
     get_whisper_model_size,
     get_google_tts_api_key,
     validate_production_config,
-    apply_railway_production_defaults,
-    railway_bootstrap_status,
-    get_users,
-    is_production,
 )
 from backend.service_health import get_service_health_manager
 from translation import HybridTranslator, LightweightTranslator, MarianTranslator
 from backend.pipeline import AnaiTranslatorPipeline
+from tts import PiperTextToSpeech
 from backend.observability import observability
 from backend.security import WEBSOCKET_AUTH_RELEASE, authenticate_http, authenticate_user, authenticate_websocket, usage_limiter
 from backend.sessions import session_registry
 from backend.streaming import websocket_audio_translation, websocket_text_translation
+from backend.streaming_helpers import audio_suffix_for_bytes
 from speech import SileroVoiceActivityDetector
-from backend.confidence import ConfidenceEngine, assess_translation_confidence, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
-from backend.communication_brain import detect_domains
-from backend.glossary import get_session_glossary, glossary_coverage_score, glossary_blocks_clarification
+from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
 from backend.cip_client import call_cip_brain, cip_health_snapshot, cip_settings
-from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, is_cip_clarification, resolve_translation_text
-from backend.model_readiness import evaluate_preload_result
+from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, should_block_translation_for_cip
 from backend import assistant as naia_assistant
 try:
     import pytesseract  # type: ignore
@@ -122,6 +107,11 @@ from backend.api_health import (
     runtime_state,
     stt_provider_health_snapshot as _stt_provider_health_snapshot,
 )
+from backend.tts_cache import (
+    cached_tts_payload as _cached_tts_payload_impl,
+    is_tts_cache_key as _is_shared_tts_cache_key,
+    tts_cache_path as _shared_tts_cache_path,
+)
 
 
 def _translator_for_request(mode: str | None, provider: str | None):
@@ -137,16 +127,35 @@ def _translator_for_request(mode: str | None, provider: str | None):
         return LightweightTranslator()
     if p in ("hybrid",) or m == "balanced":
         return HybridTranslator()
-    if p == "remote":
-        logger.warning("Remote translation provider is disabled; using Marian NMT")
-        return MarianTranslator()
     return None
 
 
 VOICE_WARMUP_TEXTS = {
     "es": ["Hola, ¿cómo estás?"],
     "ht": ["Bonjou, kijan ou ye?"],
+    "ru": ["Привет, как дела?"],
 }
+VOICE_WARMUP_TEXTS = {
+    "en": ["Hello", "Hello."],
+    "es": ["Hola", "Hola.", "Hola, como estas?"],
+    "ht": ["Bonjou."],
+    "fr": ["Bonjour."],
+    "de": ["Hallo."],
+    "it": ["Ciao."],
+    "pt": ["Ola.", "Ol\u00e1."],
+    "nl": ["Hallo."],
+    "ru": ["\u041f\u0440\u0438\u0432\u0435\u0442.", "\u0411\u043e\u043b\u044c\u0448\u043e\u0435 \u0441\u043f\u0430\u0441\u0438\u0431\u043e."],
+    "zh": ["\u4f60\u597d\u3002"],
+    "ja": ["\u3053\u3093\u306b\u3061\u306f\u3002"],
+    "ko": ["\uc548\ub155\ud558\uc138\uc694."],
+    "ar": ["\u0645\u0631\u062d\u0628\u0627."],
+    "hi": ["\u0928\u092e\u0938\u094d\u0924\u0947."],
+}
+TRANSLATION_WARMUP_TEXTS = [
+    ("en", "es", "hello"),
+    ("en", "ru", "hello how are you today"),
+    ("ht", "ru", "Bonjou kijan ou ye"),
+]
 logger = logging.getLogger("anai_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -154,21 +163,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
     # Abort immediately if production config is insecure
-    bootstrap_fields = apply_railway_production_defaults()
-    if bootstrap_fields:
-        users = get_users()
-        username = next(iter(users), "demo")
-        password = users.get(username, "")
-        logger.warning(
-            "Railway bootstrap applied (%s). Temporary login username=%s password=%s — "
-            "set JWT_SECRET and USERS via Get-Railway-Variables.sh in Railway Variables.",
-            ", ".join(bootstrap_fields),
-            username,
-            password,
-        )
-    bootstrap = railway_bootstrap_status()
-    if bootstrap.get("public_access_ready") is False and bootstrap.get("next_step"):
-        logger.warning("Railway public access not enabled: %s", bootstrap["next_step"])
     config_errors = validate_production_config()
     if config_errors:
         for err in config_errors:
@@ -191,7 +185,6 @@ async def lifespan(app_instance: FastAPI):
         logger.info("CIP brain disabled (CIP_DEFAULT_MODE=off). Translations will not go through ambiguity resolution.")
 
     voice_warmup_task = None
-    preload_task = None
     runtime_state["models"] = {
         "whisper_device": get_whisper_device(),
         "whisper_compute_type": get_whisper_compute_type(),
@@ -204,63 +197,24 @@ async def lifespan(app_instance: FastAPI):
     }
     runtime_state["warming"] = get_preload_models()
     if get_preload_models():
-        if is_production():
-            runtime_state["readiness"] = {
-                "ready": False,
-                "blockers": ["warming"],
-                "warnings": [],
-            }
-            runtime_state["ready"] = False
+        runtime_state["models"]["preloaded"] = await run_in_threadpool(pipeline.preload)
+    runtime_state["warming"] = False
+    runtime_state["ready"] = True
 
-            async def _background_preload() -> None:
-                try:
-                    preload_result = await run_in_threadpool(pipeline.preload)
-                    runtime_state["models"]["preloaded"] = preload_result
-                    readiness = evaluate_preload_result(preload_result)
-                    runtime_state["readiness"] = readiness
-                    runtime_state["ready"] = readiness["ready"]
-                    if not readiness["ready"]:
-                        logger.warning(
-                            "Startup readiness incomplete — blockers: %s",
-                            ", ".join(readiness.get("blockers") or ["unknown"]),
-                        )
-                except Exception:
-                    logger.exception("Background model preload failed")
-                    runtime_state["readiness"] = {
-                        "ready": False,
-                        "blockers": ["preload_failed"],
-                        "warnings": [],
-                    }
-                    runtime_state["ready"] = False
-                finally:
-                    runtime_state["warming"] = False
+    # --- Ollama + AILang warm-up ---
+    # Pre-load the model into memory so the first real request is fast.
+    # Logs whether AILang intelligence is active or degraded.
+    ollama_warmup_result = await _warm_ollama()
+    runtime_state["ollama_warmup"] = ollama_warmup_result
 
-            preload_task = asyncio.create_task(_background_preload())
-        else:
-            preload_result = await run_in_threadpool(pipeline.preload)
-            runtime_state["models"]["preloaded"] = preload_result
-            readiness = evaluate_preload_result(preload_result)
-            runtime_state["readiness"] = readiness
-            runtime_state["ready"] = readiness["ready"]
-            runtime_state["warming"] = False
-            if not readiness["ready"]:
-                logger.warning(
-                    "Startup readiness incomplete — blockers: %s",
-                    ", ".join(readiness.get("blockers") or ["unknown"]),
-                )
-    else:
-        runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": ["preload_skipped"]}
-        runtime_state["ready"] = True
-        runtime_state["warming"] = False
+    translation_warmup_result = await _warm_translation_cache("startup")
+    runtime_state["translation_warmup"] = translation_warmup_result
+
     runtime_state["voice_warmup"] = {"status": "queued", "started_at": time()}
     voice_warmup_task = asyncio.create_task(_warm_voice_cache("startup"))
     try:
         yield
     finally:
-        if preload_task:
-            preload_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await preload_task
         if voice_warmup_task:
             voice_warmup_task.cancel()
         runtime_state["ready"] = False
@@ -298,6 +252,10 @@ vad = SileroVoiceActivityDetector()
 conversation_brain = ConversationBrain()
 memory = ConversationMemory()
 speaker_memory = SpeakerMemory()
+
+# Global latency engine — shared across streaming and HTTP paths
+from backend.latency import LatencyEngine as _LatencyEngineClass
+latency_engine = _LatencyEngineClass()
 from backend.profile_memory import ProfileMemory
 profiles = ProfileMemory()
 confidence_engine = ConfidenceEngine()
@@ -325,7 +283,6 @@ async def debug_version():
         "api_keys_configured": bool(os.getenv("API_KEYS", "")),
         "anonymous_websocket": True,
         "websocket_auth_release": WEBSOCKET_AUTH_RELEASE,
-        "railway_bootstrap": railway_bootstrap_status(),
     }
 
 
@@ -337,6 +294,94 @@ async def api_debug_version():
 @app.get("/ready")
 def ready():
     return _runtime_payload(include_details=True)
+
+
+@app.get("/health/ollama")
+def health_ollama():
+    """Lightweight Ollama health check — startup warm-up status + live ping."""
+    warmup = runtime_state.get("ollama_warmup") or {}
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    ollama_enabled = os.getenv("OLLAMA_ENABLED", "").lower() in ("true", "1", "yes")
+
+    result = {
+        "enabled": ollama_enabled,
+        "url": ollama_url,
+        "model": os.getenv("OLLAMA_MODEL", "mistral"),
+        "warmup": warmup,
+    }
+
+    # Live ping — is Ollama reachable right now?
+    if ollama_enabled:
+        try:
+            import json as _json
+            from urllib.request import Request as _Req, urlopen as _urlopen
+            req = _Req(f"{ollama_url}/api/tags", headers={"User-Agent": "AnaiTranslator/1.0"})
+            with _urlopen(req, timeout=3.0) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+                models = [m.get("name", "") for m in data.get("models", [])]
+                result["reachable"] = True
+                result["models"] = models
+                model_base = os.getenv("OLLAMA_MODEL", "mistral").split(":")[0]
+                result["model_loaded"] = any(model_base in m for m in models)
+        except Exception as exc:
+            result["reachable"] = False
+            result["error"] = str(exc)
+    else:
+        result["reachable"] = False
+        result["note"] = "Ollama not enabled"
+
+    return result
+
+
+@app.post("/health/ollama/model")
+async def set_ollama_model(request: Request):
+    """Switch the active Ollama model at runtime — no restart needed."""
+    body = await request.json()
+    new_model = (body.get("model") or "").strip()
+    if not new_model:
+        raise HTTPException(status_code=400, detail="model field is required")
+
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    old_model = os.getenv("OLLAMA_MODEL", "mistral")
+
+    # Validate model exists in Ollama
+    import json as _json
+    try:
+        from urllib.request import Request as _Req, urlopen as _urlopen
+        req = _Req(f"{ollama_url}/api/tags", headers={"User-Agent": "AnaiTranslator/1.0"})
+        with _urlopen(req, timeout=5.0) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+            available = [m.get("name", "") for m in data.get("models", [])]
+            model_base = new_model.split(":")[0]
+            if not any(model_base in m for m in available):
+                raise HTTPException(
+                    status_code=404,
+                    detail={"error": f"Model '{new_model}' not found", "available_models": available},
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Cannot reach Ollama: {exc}")
+
+    # Update at runtime — takes effect on the next AILang call
+    os.environ["OLLAMA_MODEL"] = new_model
+
+    # Update warmup state to reflect the switch
+    warmup = runtime_state.get("ollama_warmup") or {}
+    warmup["status"] = "switched"
+    warmup["ollama_model"] = new_model
+    warmup["previous_model"] = old_model
+    warmup["message"] = f"Switched from {old_model} to {new_model}"
+    runtime_state["ollama_warmup"] = warmup
+
+    logger.info("Ollama model switched: %s -> %s", old_model, new_model)
+
+    return {
+        "previous_model": old_model,
+        "active_model": new_model,
+        "available_models": available,
+        "message": f"Switched from {old_model} to {new_model}",
+    }
 
 
 @app.get("/diagnostics")
@@ -368,10 +413,10 @@ def diagnostics(request: Request):
     stt_provider = _stt_provider_health_snapshot(timeout_seconds=3)
 
     service_health_manager = get_service_health_manager()
-    
+
     # Get AILang pipeline statistics
     ailang_stats = pipeline.get_ailang_statistics() if hasattr(pipeline, 'get_ailang_statistics') else {"enabled": False, "active_sessions": 0, "bridge_stats": None}
-    
+
     # Get AILang configuration from config
     from backend.config import ailang_diagnostics
     ailang_config = ailang_diagnostics()
@@ -381,34 +426,44 @@ def diagnostics(request: Request):
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
         ailang_health = pipeline.ailang_pipeline.get_health_status()
     
-    # Translation health: show fallback chain and optional remote probe
-    import os as _os
-    _backend = get_translation_backend()
-    _hybrid_marian_fallback = _os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "1") != "0"
-    _remote_enabled = get_hybrid_enable_remote()
-    if _backend == "marian":
-        _fallback_chain = ["marian"]
-    elif _backend == "lightweight":
-        _fallback_chain = ["lightweight"]
-    elif _backend == "hybrid":
-        _fallback_chain = ["lightweight"]
-        if _hybrid_marian_fallback:
-            _fallback_chain.append("marian")
-        if _remote_enabled:
-            _fallback_chain.append("remote_google")
+    # Get predictive cache statistics
+    predictive_cache_stats = None
+    if hasattr(pipeline, 'predictive_cache') and pipeline.predictive_cache:
+        predictive_cache_stats = pipeline.predictive_cache.get_statistics()
+        predictive_cache_stats["enabled"] = True
+        # Add hit/miss tracking
+        if hasattr(pipeline, 'get_cache_statistics'):
+            cache_stats = pipeline.get_cache_statistics()
+            predictive_cache_stats.update({
+                "hits": cache_stats.get("hits", 0),
+                "misses": cache_stats.get("misses", 0),
+                "hit_rate": cache_stats.get("hit_rate", 0.0),
+            })
     else:
-        _fallback_chain = [_backend]
+        predictive_cache_stats = {"enabled": False}
+
+    # Get optimization feedback status
+    optimization_feedback = None
+    try:
+        from backend.optimization_feedback import OptimizationFeedbackLoop
+        # Check if feedback loop is initialized (would be in app.py)
+        optimization_feedback = {"enabled": False, "status": "not_initialized"}
+    except ImportError:
+        optimization_feedback = {"enabled": False, "status": "not_available"}
+
+    # Translation health: show fallback chain and remote translator reachability
+    import os as _os
+    _hybrid_marian_fallback = _os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "0") == "1"
     _remote_ok: bool | None = None
     _remote_error: str | None = None
-    if _remote_enabled:
-        try:
-            from translation.remote_translator import RemoteTranslator as _RT
-            _r = _RT(timeout_seconds=2.0)
-            _probe = _r.translate("hello", "en", "es")
-            _remote_ok = bool(_probe and not _probe.startswith("[en->es]"))
-        except Exception as _exc:
-            _remote_ok = False
-            _remote_error = type(_exc).__name__
+    try:
+        from translation.remote_translator import RemoteTranslator as _RT
+        _r = _RT(timeout_seconds=2.0)
+        _probe = _r.translate("hello", "en", "es")
+        _remote_ok = bool(_probe and not _probe.startswith("[en->es]"))
+    except Exception as _exc:
+        _remote_ok = False
+        _remote_error = type(_exc).__name__
 
     from backend.store import get_quota_store as _gqs, get_user_store as _gus
     _qs = _gqs()
@@ -432,9 +487,8 @@ def diagnostics(request: Request):
             "runtime": runtime_state["models"].get("translation_runtime"),
             "backend": runtime_state["models"].get("translation_backend"),
             "device": runtime_state["models"].get("translation_device"),
-            "fallback_chain": _fallback_chain,
+            "fallback_chain": ["lightweight", "remote_google", "marian" if _hybrid_marian_fallback else None],
             "marian_fallback_enabled": _hybrid_marian_fallback,
-            "remote_fallback_enabled": _remote_enabled,
             "remote_translator_reachable": _remote_ok,
             "remote_translator_error": _remote_error,
             "tts_google_configured": bool(get_google_tts_api_key()),
@@ -442,7 +496,9 @@ def diagnostics(request: Request):
         "persistence": _persistence,
         "cip": cip_health_snapshot(),
         "stt_provider": stt_provider,
-        "ailang": {**ailang_stats, "config": ailang_config, "health": ailang_health},
+        "ailang": {**ailang_stats, "config": ailang_config, "health": ailang_health, "ollama_warmup": runtime_state.get("ollama_warmup")},
+        "predictive_cache": predictive_cache_stats,
+        "optimization_feedback": optimization_feedback,
         "service_health": service_health_manager.get_all_health_summaries(),
         "streaming": {
             "websocket_path": "/ws/audio",
@@ -460,6 +516,17 @@ def diagnostics(request: Request):
             "stt": pipeline.stt.queue_snapshot(),
         },
         "sessions": session_registry.snapshot(),
+        "latency": latency_engine.snapshot(),
+    }
+
+
+@app.get("/latency")
+def latency_report():
+    """Real-time pipeline latency metrics: per-stage timing, percentiles, health."""
+    return {
+        **latency_engine.snapshot(),
+        "health": latency_engine.health_assessment(),
+        "translation_tier_metrics": pipeline.translator.get_metrics() if hasattr(pipeline.translator, "get_metrics") else {},
     }
 
 
@@ -504,7 +571,7 @@ async def tts_sample():
     output_path = Path("models/tts/debug-sample.wav")
     try:
         if not output_path.is_file():
-            await run_in_threadpool(pipeline.tts.synthesize, "This is a voice test.", str(output_path))
+            await run_in_threadpool(_synthesize_tts_resilient, "This is a voice test.", output_path, "en")
     except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
         logger.exception("tts_sample_failed")
         raise HTTPException(status_code=503, detail=f"TTS sample unavailable: {exc}") from exc
@@ -512,11 +579,11 @@ async def tts_sample():
 
 
 def _tts_cache_path(cache_key: str) -> Path:
-    return Path("models/tts/cache") / f"{cache_key}.wav"
+    return _shared_tts_cache_path(cache_key)
 
 
 def _is_tts_cache_key(cache_key: str) -> bool:
-    return len(cache_key) == 64 and all(character in "0123456789abcdef" for character in cache_key)
+    return _is_shared_tts_cache_key(cache_key)
 
 
 def _normalize_audio_response_format(response_format: str | None) -> str:
@@ -526,44 +593,251 @@ def _normalize_audio_response_format(response_format: str | None) -> str:
     return normalized
 
 
+def _tts_file_ready(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size >= 100
+    except OSError:
+        return False
+
+
+def _synthesize_tts_resilient(
+    text: str,
+    output_path: Path | str,
+    language: str,
+    google_api_key: str | None = None,
+    emotion_config: dict | None = None,
+) -> str:
+    output_path = Path(output_path)
+    first_error: Exception | None = None
+
+    try:
+        rendered = pipeline.tts.synthesize(
+            text,
+            str(output_path),
+            language=language,
+            google_api_key=google_api_key,
+            emotion_config=emotion_config,
+        )
+        rendered_path = Path(rendered or output_path)
+        if _tts_file_ready(rendered_path):
+            return str(rendered_path)
+        first_error = RuntimeError(f"TTS returned empty audio at {rendered_path}.")
+    except Exception as exc:
+        first_error = exc
+
+    logger.warning("tts_primary_failed_retrying_fresh language=%s error=%s", language, first_error)
+    try:
+        rendered = PiperTextToSpeech().synthesize(
+            text,
+            str(output_path),
+            language=language,
+            google_api_key=google_api_key,
+            emotion_config=emotion_config,
+        )
+        rendered_path = Path(rendered or output_path)
+        if _tts_file_ready(rendered_path):
+            return str(rendered_path)
+    except Exception as exc:
+        raise RuntimeError(f"TTS failed after fresh retry: {exc}") from first_error
+
+    raise RuntimeError("TTS returned empty audio after fresh retry.") from first_error
+
+
 def _cached_tts_payload(text: str, language: str, response_format: str, google_api_key: str | None = None) -> dict:
-    cache_dir = Path("models/tts/cache")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_key = hashlib.sha256(f"{language}\0{text}".encode("utf-8")).hexdigest()
-    output_path = _tts_cache_path(cache_key)
-    cache_hit = output_path.is_file() and output_path.stat().st_size >= 100
-    audio_bytes = None
-    audio_size = output_path.stat().st_size if cache_hit else 0
+    return _cached_tts_payload_impl(
+        text,
+        language,
+        response_format,
+        lambda temp_path: _synthesize_tts_resilient(text, temp_path, language=language, google_api_key=google_api_key),
+    )
 
-    if not cache_hit:
-        temp_path = Path("models/tts") / f"{uuid4()}.wav"
-        temp_path.parent.mkdir(parents=True, exist_ok=True)
-        rendered_path = Path(pipeline.tts.synthesize(text, str(temp_path), language=language, google_api_key=google_api_key) or temp_path)
-        audio_bytes = rendered_path.read_bytes()
-        if len(audio_bytes) < 100:
-            raise RuntimeError("TTS returned empty audio.")
-        output_path.write_bytes(audio_bytes)
-        audio_size = len(audio_bytes)
-        if rendered_path != output_path:
-            try:
-                rendered_path.unlink(missing_ok=True)
-            except (OSError, PermissionError):
-                pass
 
-    response_dict = {
-        "text": text,
-        "language": language,
-        "mime_type": "audio/wav",
-        "audio_output_path": str(output_path),
-        "audio_url": f"/tts/audio/{cache_key}.wav",
-        "audio_bytes": audio_size,
-        "cache_hit": cache_hit,
+async def _warm_ollama() -> dict:
+    """Warm up Ollama + AILang on startup.
+
+    Sends a tiny prompt to Ollama to force model loading into memory.
+    This prevents a 10-30s cold-start timeout on the first real request.
+    Logs clearly whether AILang intelligence is active or degraded.
+    Never raises — always returns a status dict.
+    """
+    started_at = time()
+    ollama_enabled = os.getenv("OLLAMA_ENABLED", "").lower() in ("true", "1", "yes")
+    use_llm = os.getenv("USE_LLM_AGENTS", "").lower() in ("true", "1", "yes")
+    ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    ollama_model = os.getenv("OLLAMA_MODEL", "mistral")
+
+    result = {
+        "ollama_enabled": ollama_enabled,
+        "use_llm_agents": use_llm,
+        "ollama_url": ollama_url,
+        "ollama_model": ollama_model,
     }
-    if response_format in {"base64", "both"}:
-        if audio_bytes is None:
-            audio_bytes = output_path.read_bytes()
-        response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
-    return response_dict
+
+    # Check if any LLM provider is configured
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    openai_available = bool(openai_key and not openai_key.startswith("your_api"))
+    has_any_llm = ollama_enabled or use_llm or openai_available
+
+    if not has_any_llm:
+        logger.info(
+            "AILang: RUNNING IN OFFLINE MODE — no LLM provider configured. "
+            "AILang agents use rule-based fallbacks only. "
+            "Set OLLAMA_ENABLED=true or OPENAI_API_KEY to activate intelligence layer."
+        )
+        result["status"] = "offline_mode"
+        result["message"] = "No LLM provider configured — AILang using offline rule-based agents only"
+        return result
+
+    if not ollama_enabled:
+        # OpenAI-only mode — no local warm-up needed, cloud handles cold start
+        logger.info(
+            "AILang: CLOUD LLM MODE — OpenAI configured, Ollama not enabled. "
+            "AILang agents will call OpenAI for intelligence."
+        )
+        result["status"] = "cloud_mode"
+        result["message"] = "OpenAI configured, Ollama not enabled"
+        return result
+
+    # Ollama is enabled — try to warm it up
+    try:
+        import json
+        from urllib.request import Request, urlopen
+        from urllib.error import URLError, HTTPError
+
+        # Step 1: Check if Ollama is reachable
+        try:
+            req = Request(
+                f"{ollama_url}/api/tags",
+                headers={"User-Agent": "AnaiTranslator/1.0"},
+            )
+            with urlopen(req, timeout=5.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                models = [m.get("name", "") for m in data.get("models", [])]
+                model_base = ollama_model.split(":")[0]
+                model_found = any(model_base in m for m in models)
+                result["models_available"] = models
+                result["target_model_found"] = model_found
+        except (URLError, HTTPError, TimeoutError, OSError) as exc:
+            logger.warning(
+                "AILang: OLLAMA UNREACHABLE at %s — %s. "
+                "AILang agents will degrade to offline rule-based fallbacks. "
+                "Start Ollama or set OLLAMA_ENABLED=false to suppress this warning.",
+                ollama_url, exc,
+            )
+            result["status"] = "unreachable"
+            result["error"] = str(exc)
+            result["message"] = f"Ollama unreachable at {ollama_url} — AILang using offline fallbacks"
+            return result
+
+        if not model_found:
+            logger.warning(
+                "AILang: OLLAMA MODEL '%s' NOT FOUND. Available: %s. "
+                "Run: ollama pull %s  — AILang will attempt to use it anyway.",
+                ollama_model, models, ollama_model,
+            )
+            result["status"] = "model_not_found"
+            result["message"] = f"Model '{ollama_model}' not found in Ollama — pull it first"
+            return result
+
+        # Step 2: Send a tiny warm-up prompt to force model into memory
+        logger.info(
+            "AILang: WARMING UP Ollama model '%s' at %s — loading into memory...",
+            ollama_model, ollama_url,
+        )
+        warmup_prompt = "Translate to Spanish: hello"
+
+        payload = json.dumps({
+            "model": ollama_model,
+            "prompt": warmup_prompt,
+            "stream": False,
+            "options": {"temperature": 0.1, "num_predict": 8},
+        }).encode("utf-8")
+
+        ollama_timeout = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
+        req = Request(
+            f"{ollama_url}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "AnaiTranslator/1.0"},
+            method="POST",
+        )
+        with urlopen(req, timeout=ollama_timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        warmup_ms = round((time() - started_at) * 1000)
+        warmup_response = data.get("response", "")[:80]
+
+        logger.info(
+            "AILang: OLLAMA READY — model '%s' loaded in %dms. "
+            "AILang intelligence layer is ACTIVE (Ollama -> OpenAI -> CIP -> stubs).",
+            ollama_model, warmup_ms,
+        )
+        result["status"] = "active"
+        result["warmup_ms"] = warmup_ms
+        result["warmup_response_preview"] = warmup_response
+        result["message"] = f"Ollama model '{ollama_model}' loaded and ready ({warmup_ms}ms)"
+        return result
+
+    except Exception as exc:
+        logger.warning(
+            "AILang: OLLAMA WARM-UP FAILED — %s. "
+            "AILang agents will degrade to offline rule-based fallbacks. "
+            "First real request may be slow while model loads.",
+            exc,
+        )
+        result["status"] = "warmup_failed"
+        result["error"] = str(exc)
+        result["message"] = f"Ollama warm-up failed: {exc} — AILang using offline fallbacks"
+        return result
+
+
+async def _warm_translation_cache(reason: str) -> dict:
+    started_at = time()
+    warmed = []
+    runtime_state["translation_warmup"] = {"status": "running", "started_at": started_at, "reason": reason}
+    for source_language, target_language, text in TRANSLATION_WARMUP_TEXTS:
+        try:
+            translated = await run_in_threadpool(
+                pipeline.translator.translate,
+                text,
+                source_language,
+                target_language,
+            )
+            warmed.append({
+                "source_language": source_language,
+                "target_language": target_language,
+                "text": text,
+                "translated": translated,
+                "ok": bool(translated) and "None" not in translated and not translated.startswith(f"[{source_language}->"),
+            })
+            observability.record_event(
+                "translation_warmup",
+                source_language=source_language,
+                target_language=target_language,
+                reason=reason,
+            )
+        except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
+            logger.warning(
+                "translation_warmup_failed source=%s target=%s reason=%s error=%s",
+                source_language,
+                target_language,
+                reason,
+                exc,
+            )
+            warmed.append({
+                "source_language": source_language,
+                "target_language": target_language,
+                "text": text,
+                "ok": False,
+                "error": exc.__class__.__name__,
+            })
+    result = {
+        "status": "complete",
+        "reason": reason,
+        "latency_seconds": round(time() - started_at, 3),
+        "items": warmed,
+    }
+    runtime_state["translation_warmup"] = result
+    return result
 
 
 async def _warm_voice_cache(reason: str) -> None:
@@ -642,14 +916,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
     usage_limiter.track(identity, "http_requests")
     usage_limiter.track(identity, "text_translations")
     request.source_language = _normalize_language(request.source_language, "en")
-    request.target_language = _normalize_language(request.target_language, "ht")
-    active_source, active_target = resolve_active_languages_in_pair(
-        request.text,
-        request.source_language,
-        request.target_language,
-    )
-    request.source_language = active_source
-    request.target_language = active_target
+    request.target_language = _normalize_language(request.target_language, "es")
     logger.info(
         "text_translation identity=%s source=%s target=%s mode=%s provider=%s",
         identity, request.source_language, request.target_language,
@@ -727,50 +994,23 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
             speaker_context=speaker_context,
             semantic_context=semantic_context,
         )
-        cip_clarify = is_cip_clarification(cip)
-        session_key = request.session_id or identity
-        session_glossary = get_session_glossary(session_key)
-        if cip_clarify and glossary_blocks_clarification(
-            request.text,
-            interim.translated_text or refined_text,
-            session_glossary,
-            request.source_language,
-            request.target_language,
-        ):
-            cip_clarify = False
-        final_text = resolve_translation_text(cip_clarify, cip, refined_text)
+        cip_clarify = should_block_translation_for_cip(cip, refined_text, tr_conf)
+        final_text = "" if cip_clarify else choose_translation(cip, refined_text)
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
             semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"
         # Confidence/clarify for text path
         tr_conf = estimate_translation_confidence(request.text, final_text)
         cip_conf = get_cip_confidence(cip)
-        domains = detect_domains(request.text)
-        glossary_cov = glossary_coverage_score(
-            request.text,
-            final_text,
-            session_glossary,
-            request.source_language,
-            request.target_language,
-        )
-        assessment = assess_translation_confidence(
-            request.text,
-            final_text,
-            stt_confidence=stt_conf,
-            domains=domains,
-            glossary_coverage=glossary_cov,
-        )
-        conf_score = cip_conf if cip_conf is not None else assessment["confidence"]
+        conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
         audio_path = None
         audio_payload = None
         if request.synthesize_audio and final_text and not cip_clarify:
             try:
                 audio_payload = _cached_tts_payload(final_text, request.target_language, audio_response_format, google_api_key=_google_key)
                 audio_path = audio_payload["audio_output_path"]
-            except (RuntimeError, OSError, ValueError) as exc:
-                logger.warning("text_translation_tts_failed identity=%s error=%s", identity, exc)
-                audio_payload = None
-                audio_path = None
+            except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
+                logger.warning("text_translation_tts_unavailable identity=%s target=%s error=%s", identity, request.target_language, exc)
         result = type(interim)(
             source_text=request.text,
             improved_text=interim.improved_text,
@@ -788,19 +1028,12 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         profiles.save(identity, user_profile)
         speaker_memory.add_message(speaker_id, request.text)
         response_dict = dict(result.__dict__)
-        apply_cip_decision(response_dict, cip)
+        apply_cip_decision(response_dict, cip, blocking=cip_clarify)
         
         # Include AILang metadata in response
         if interim.ailang_metadata:
             response_dict["ailang_metadata"] = interim.ailang_metadata
         
-        if assessment["low_confidence"] and not response_dict.get("clarify"):
-            response_dict["low_confidence"] = True
-            response_dict["confidence"] = assessment["confidence"]
-            response_dict["confidence_threshold"] = assessment["confidence_threshold"]
-            response_dict["needs_confirmation"] = assessment["needs_confirmation"]
-            response_dict["confidence_message"] = assessment["confidence_message"]
-            response_dict["high_stakes_domains"] = assessment["high_stakes"]
         if conf_score < 0.4 and not response_dict.get("clarify"):
             response_dict["clarify"] = True
             response_dict["clarify_message"] = clarification_for(request.text, detect_ambiguities(request.text))
@@ -808,6 +1041,9 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
             response_dict.update(audio_payload)
             response_dict["translated_text"] = final_text
             observability.record_event("text_translation_tts", identity=identity, cache_hit=audio_payload["cache_hit"], response_format=audio_response_format)
+        elif request.synthesize_audio and final_text and not response_dict.get("clarify"):
+            response_dict["audio_unavailable"] = True
+            response_dict["audio_fallback"] = "browser_tts"
         elif result.audio_output_path and not response_dict.get("clarify"):
             try:
                 audio_bytes = Path(result.audio_output_path).read_bytes()
@@ -833,7 +1069,6 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 request.source_language,
                 request.target_language,
                 request.speaker_name,
-                connected=False,
             )
             shared_session = session_registry.record_turn(
                 request.session_id,
@@ -870,7 +1105,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
 async def translate_audio(
     audio: UploadFile = File(...),
     source_language: str = Form("en"),
-    target_language: str = Form("ht"),
+    target_language: str = Form("es"),
     synthesize_audio: bool = Form(True),
     identity: str = Depends(authenticate_http),
 ):
@@ -878,7 +1113,7 @@ async def translate_audio(
     metrics["http_requests"] += 1
     usage_limiter.track(identity, "http_requests")
     source_language = _normalize_language(source_language, "en")
-    target_language = _normalize_language(target_language, "ht")
+    target_language = _normalize_language(target_language, "es")
     logger.info("audio_translation identity=%s source=%s target=%s", identity, source_language, target_language)
     max_bytes = get_max_audio_mb() * 1024 * 1024
     audio_bytes = await _read_limited_upload(audio, max_bytes)
@@ -893,33 +1128,24 @@ async def translate_audio(
 
     upload_dir = Path("models/uploads")
     upload_dir.mkdir(parents=True, exist_ok=True)
-    suffix = _safe_upload_suffix(audio.filename, "audio.webm", {".webm", ".wav", ".m4a", ".mp3", ".ogg", ".aac"})
+    filename_suffix = _safe_upload_suffix(audio.filename, "audio.webm", {".webm", ".wav", ".m4a", ".mp3", ".ogg", ".aac"})
+    suffix = audio_suffix_for_bytes(audio_bytes, audio.content_type) or filename_suffix
     audio_path = upload_dir / f"{uuid4()}{suffix}"
     audio_path.write_bytes(audio_bytes)
 
     try:
-        stt_language = resolve_whisper_language(source_language, target_language)
-        source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), stt_language)
-        active_source_language = source_language
-        active_target_language = target_language
-        if language_pair_has_ht(source_language, target_language) and source_text.strip():
-            active_source_language = detect_language_in_pair(source_text, source_language, target_language)
-            active_target_language = opposite_language_in_pair(
-                active_source_language,
-                source_language,
-                target_language,
-            )
+        source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), source_language)
         # Default single-speaker flow: lock language for 'A'
         speaker_id = "A"
         if not speaker_memory.get_language(speaker_id):
             auto_lang = detect_language_heuristic(source_text)
-            speaker_memory.register(speaker_id, language=active_source_language or auto_lang)
+            speaker_memory.register(speaker_id, language=source_language or auto_lang)
         # Translate (no synth), then refine, then synthesize if requested
         interim = await run_in_threadpool(
             pipeline.translate_text,
             source_text,
-            active_source_language,
-            active_target_language,
+            source_language,
+            target_language,
             None,
             False,
             f"models/tts/{uuid4()}.wav",
@@ -937,28 +1163,18 @@ async def translate_audio(
         }
         cip = call_cip_brain(
             source_text,
-            active_target_language,
+            target_language,
             identity,
             fallback_translation=refined_text,
-            source_language=active_source_language,
+            source_language=source_language,
             stt_confidence=stt_conf,
             translation_confidence=tr_conf,
             context=memory_context,
             speaker_context=speaker_context,
             semantic_context=semantic_context,
         )
-        cip_clarify = is_cip_clarification(cip)
-        audio_session_key = session_id or identity
-        audio_glossary = get_session_glossary(audio_session_key)
-        if cip_clarify and glossary_blocks_clarification(
-            source_text,
-            interim.translated_text or refined_text,
-            audio_glossary,
-            active_source_language,
-            active_target_language,
-        ):
-            cip_clarify = False
-        final_text = resolve_translation_text(cip_clarify, cip, refined_text)
+        cip_clarify = should_block_translation_for_cip(cip, refined_text, tr_conf)
+        final_text = "" if cip_clarify else choose_translation(cip, refined_text)
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
             semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"
@@ -967,51 +1183,41 @@ async def translate_audio(
         cip_conf = get_cip_confidence(cip)
         conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
         audio_path = None
+        audio_unavailable = False
         if synthesize_audio and final_text and conf_score >= 0.4 and not cip_clarify:
             try:
-                audio_path = await run_in_threadpool(pipeline.tts.synthesize, final_text, f"models/tts/{uuid4()}.wav", active_target_language)
-            except (RuntimeError, OSError, ValueError) as exc:
-                logger.warning("audio_translation_tts_failed identity=%s error=%s", identity, exc)
-                audio_path = None
+                audio_path = await run_in_threadpool(
+                    _synthesize_tts_resilient,
+                    final_text,
+                    f"models/tts/{uuid4()}.wav",
+                    target_language,
+                )
+            except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
+                audio_unavailable = True
+                logger.warning("audio_translation_tts_unavailable identity=%s target=%s error=%s", identity, target_language, exc)
         result = type(interim)(
-            source_text=source_text,
-            improved_text=interim.improved_text,
-            translated_text=final_text,
-            audio_output_path=audio_path,
+            source_text=source_text, improved_text=interim.improved_text,
+            translated_text=final_text, audio_output_path=audio_path,
         )
         observability.observe_latency("audio_translation", time() - started_at)
-        observability.record_event("audio_translation", identity=identity, latency_seconds=time() - started_at)
         usage_limiter.track_audio(identity, estimated_seconds, "audio_translations")
         response_dict = dict(result.__dict__)
-        apply_cip_decision(response_dict, cip)
-        if conf_score < 0.4 and not response_dict.get("clarify"):
-            response_dict["clarify"] = True
-            response_dict["clarify_message"] = clarification_for(source_text, detect_ambiguities(source_text))
-        try:
-            memory.add(speaker_id, source_text, result.translated_text, {"cip": cip})
-            speaker_memory.add_message(speaker_id, source_text)
-            # Update profile: languages, history
-            langs = set(user_profile.get("preferred_languages") or [])
-            langs.update([active_source_language, active_target_language])
-            user_profile["preferred_languages"] = [l for l in langs if l]
-            user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "audio", "source": source_text, "translated": result.translated_text}]
-            profiles.save(identity, user_profile)
-        except (OSError, PermissionError, KeyError) as exc:
-            logger.warning("profile_save_failed identity=%s error=%s", identity, exc)
-        # Include audio as base64 so mobile clients can play without fetching a separate file
+        apply_cip_decision(response_dict, cip, blocking=cip_clarify)
+        if audio_unavailable and not response_dict.get("clarify"):
+            response_dict["audio_unavailable"] = True
+            response_dict["audio_fallback"] = "browser_tts"
         if result.audio_output_path and not response_dict.get("clarify"):
             try:
-                audio_bytes = Path(result.audio_output_path).read_bytes()
-                if len(audio_bytes) >= 100:
-                    response_dict["audio_base64"] = base64.b64encode(audio_bytes).decode("ascii")
+                ab = Path(result.audio_output_path).read_bytes()
+                if len(ab) >= 100:
+                    response_dict["audio_base64"] = base64.b64encode(ab).decode("ascii")
                     response_dict["mime_type"] = "audio/wav"
-            except (OSError, IOError) as exc:
-                logger.warning("failed_to_embed_audio identity=%s error=%s", identity, exc)
+            except (OSError, IOError):
+                pass
         return response_dict
     except (RuntimeError, ValueError, ConnectionError, TimeoutError, OSError):
         usage_limiter.track(identity, "errors")
         observability.increment("translation_failures_total")
-        observability.record_event("translation_failure", identity=identity, mode="audio")
         raise
     finally:
         with suppress(Exception):
@@ -1019,336 +1225,55 @@ async def translate_audio(
 
 
 @app.post("/translate/image")
-async def translate_image(
-    image: UploadFile = File(...),
-    source_language: str = Form("auto"),
-    target_language: str = Form("ht"),
-    synthesize_audio: bool = Form(False),
-    identity: str = Depends(authenticate_http),
-):
-    metrics["http_requests"] += 1
-    usage_limiter.track(identity, "http_requests")
-    source_language = _normalize_language(source_language, "auto", allow_auto=True)
-    target_language = _normalize_language(target_language, "ht")
-    logger.info("image_translation identity=%s target=%s", identity, target_language)
-    if not _HAS_PYTESSERACT:
-        raise HTTPException(status_code=503, detail="OCR unavailable on server. Install Tesseract to enable.")
-    # Save upload to a temp path
-    upload_dir = Path("models/uploads")
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    suffix = _safe_upload_suffix(image.filename, "image.png", {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"})
-    image_path = upload_dir / f"{uuid4()}{suffix}"
-    image_bytes = await _read_limited_upload(image, get_max_audio_mb() * 1024 * 1024)
-    image_path.write_bytes(image_bytes)
-    try:
-        # OCR
-        ocr_text = pytesseract.image_to_string(Image.open(image_path)) or ""
-        if source_language == "auto":
-            source_language = detect_language_heuristic(ocr_text)
-        active_source, active_target = resolve_active_languages_in_pair(
-            ocr_text,
-            source_language,
-            target_language,
-        )
-        # Translate (no synth), then optional TTS synth
-        interim = pipeline.translate_text(
-            text=ocr_text,
-            source_language=active_source,
-            target_language=active_target,
-            tone=None,
-            synthesize_audio=False,
-        )
-        user_profile = profiles.get(identity)
-        final_text = refine_translation(ocr_text, interim.translated_text, memory.get_context(), speaker_memory.get_context("CAM"))
-        audio_path = None
-        audio_b64 = None
-        if synthesize_audio and final_text:
-            audio_path = pipeline.tts.synthesize(final_text, f"models/tts/{uuid4()}.wav", language=active_target)
-            try:
-                audio_bytes = Path(audio_path).read_bytes()
-                if len(audio_bytes) >= 100:
-                    audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
-            except (OSError, IOError) as exc:
-                logger.warning("tts_audio_read_failed identity=%s error=%s", identity, exc)
-        # Store in memory under virtual speaker CAM
-        memory.add("CAM", ocr_text, final_text)
-        speaker_memory.register("CAM", language=active_source)
-        speaker_memory.add_message("CAM", ocr_text)
-        # Update profile history
-        user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "image", "source": ocr_text, "translated": final_text}]
-        profiles.save(identity, user_profile)
-        return {
-            "ocr_text": ocr_text.strip(),
-            "translated_text": final_text,
-            "mime_type": "audio/wav" if audio_b64 else None,
-            "audio_base64": audio_b64,
-        }
-    finally:
-        with suppress(Exception):
-            image_path.unlink(missing_ok=True)
+async def translate_image(image: UploadFile = File(...), source_language: str = Form("auto"), target_language: str = Form("es"), synthesize_audio: bool = Form(False), identity: str = Depends(authenticate_http)):
+    raise HTTPException(status_code=503, detail="Image translation requires Tesseract OCR.")
 
 
 @app.post("/vad")
 async def detect_voice_activity(audio: UploadFile = File(...), identity: str = Depends(authenticate_http)):
     metrics["http_requests"] += 1
-    usage_limiter.track(identity, "http_requests")
     audio_bytes = await _read_limited_upload(audio, get_max_audio_mb() * 1024 * 1024)
-    suffix = _safe_upload_suffix(audio.filename, "audio.webm", {".webm", ".wav", ".m4a", ".mp3", ".ogg", ".aac"})
+    filename_suffix = _safe_upload_suffix(audio.filename, "audio.webm", {".webm", ".wav", ".m4a", ".mp3", ".ogg", ".aac"})
+    suffix = audio_suffix_for_bytes(audio_bytes, audio.content_type) or filename_suffix
     return await run_in_threadpool(vad.detect_bytes, audio_bytes, suffix)
 
 
-# AILang Configuration Endpoints
+@app.websocket("/ws/assistant")
+async def websocket_assistant(websocket: WebSocket):
+    await websocket.accept()
+    if not naia_assistant.is_available():
+        detail = "Assistant unavailable"
+        err = naia_assistant.import_error()
+        if err:
+            detail = f"{detail}: {err}"
+        await websocket.send_json({"event": "error", "detail": detail})
+        await websocket.close()
+        return
 
-@app.post("/ailang/glossary")
-@limiter.limit("10/minute")
-def set_ailang_glossary(
-    request: Request,
-    glossary: list,
-    session_id: str = "default",
-    identity: str = Depends(authenticate_http),
-):
-    """Set custom glossary for AILang terminology injection."""
-    metrics["http_requests"] += 1
-    pipeline.set_glossary(glossary)
-    logger.info("ailang_glossary_set identity=%s session_id=%s terms=%d", identity, session_id, len(glossary))
-    return {"status": "ok", "session_id": session_id, "glossary_terms": len(glossary)}
-
-
-@app.post("/ailang/dialect")
-@limiter.limit("10/minute")
-def set_ailang_dialect(
-    request: Request,
-    dialect: str,
-    session_id: str = "default",
-    identity: str = Depends(authenticate_http),
-):
-    """Set dialect preference for AILang regional adaptation."""
-    metrics["http_requests"] += 1
-    pipeline.set_dialect_preference(dialect)
-    logger.info("ailang_dialect_set identity=%s session_id=%s dialect=%s", identity, session_id, dialect)
-    return {"status": "ok", "session_id": session_id, "dialect": dialect}
-
-
-@app.post("/ailang/speaker")
-@limiter.limit("10/minute")
-def set_ailang_speaker(
-    request: Request,
-    speaker: str,
-    session_id: str = "default",
-    identity: str = Depends(authenticate_http),
-):
-    """Set current speaker for AILang context tracking."""
-    metrics["http_requests"] += 1
-    pipeline.set_speaker(speaker)
-    logger.info("ailang_speaker_set identity=%s session_id=%s speaker=%s", identity, session_id, speaker)
-    return {"status": "ok", "session_id": session_id, "speaker": speaker}
-
-
-@app.delete("/ailang/context")
-def clear_ailang_context(
-    session_id: str = "default",
-    identity: str = Depends(authenticate_http),
-):
-    """Clear AILang context for a session."""
-    metrics["http_requests"] += 1
-    pipeline.clear_session_context()
-    logger.info("ailang_context_cleared identity=%s session_id=%s", identity, session_id)
-    return {"status": "ok", "session_id": session_id}
-
-
-@app.get("/ailang/stats")
-def get_ailang_stats(identity: str = Depends(authenticate_http)):
-    """Get AILang pipeline statistics."""
-    metrics["http_requests"] += 1
-    stats = pipeline.get_ailang_statistics()
-    return stats
-
-
-@app.get("/ailang/health")
-def get_ailang_health(identity: str = Depends(authenticate_http)):
-    """Get AILang bridge health status."""
-    metrics["http_requests"] += 1
-    try:
-        from ailang_integration.runtime.bridge import get_bridge
-        bridge = get_bridge()
-        bridge_stats = bridge.get_stats() if bridge else None
-        return {
-            "status": "healthy" if bridge else "unavailable",
-            "bridge_loaded": bridge is not None,
-            "bridge_stats": bridge_stats,
-            "pipeline_enabled": pipeline.ailang_pipeline._enabled if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline else False,
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "bridge_loaded": False,
-            "error": str(e),
-        }
-
-
-@app.get("/ailang/health-status")
-def get_ailang_health_status(identity: str = Depends(authenticate_http)):
-    """Get AILang pipeline health status with alerts."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        return pipeline.ailang_pipeline.get_health_status()
-    return {
-        "overall_status": "unavailable",
-        "agent_health": {},
-        "alerts": [],
-        "total_alerts": 0,
-        "critical_alerts": 0,
-        "warning_alerts": 0,
-    }
-
-
-@app.post("/ailang/agent/{agent_name}/enable")
-@limiter.limit("20/minute")
-def enable_ailang_agent(request: Request, agent_name: str, identity: str = Depends(authenticate_http)):
-    """Enable a specific AILang agent."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        pipeline.ailang_pipeline.set_agent_enabled(agent_name, True)
-        return {"status": "ok", "agent": agent_name, "enabled": True}
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.post("/ailang/agent/{agent_name}/disable")
-@limiter.limit("20/minute")
-def disable_ailang_agent(request: Request, agent_name: str, identity: str = Depends(authenticate_http)):
-    """Disable a specific AILang agent."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        pipeline.ailang_pipeline.set_agent_enabled(agent_name, False)
-        return {"status": "ok", "agent": agent_name, "enabled": False}
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.post("/ailang/agent/{agent_name}/config")
-@limiter.limit("10/minute")
-def set_ailang_agent_config(request: Request, agent_name: str, config: dict, identity: str = Depends(authenticate_http)):
-    """Set custom configuration for a specific AILang agent."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        success = pipeline.ailang_pipeline.set_agent_config(agent_name, config)
-        if success:
-            return {"status": "ok", "agent": agent_name, "config": config}
-        return {"status": "error", "message": f"Agent {agent_name} not found"}
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.get("/ailang/agent/{agent_name}/config")
-def get_ailang_agent_config(agent_name: str, identity: str = Depends(authenticate_http)):
-    """Get custom configuration for a specific AILang agent."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        config = pipeline.ailang_pipeline.get_agent_config(agent_name)
-        return {"status": "ok", "agent": agent_name, "config": config}
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.delete("/ailang/agent/{agent_name}/config")
-@limiter.limit("10/minute")
-def delete_ailang_agent_config(request: Request, agent_name: str, identity: str = Depends(authenticate_http)):
-    """Delete custom configuration for a specific AILang agent."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        success = pipeline.ailang_pipeline.delete_agent_config(agent_name)
-        if success:
-            return {"status": "ok", "agent": agent_name, "message": "Config deleted"}
-        return {"status": "error", "message": f"Agent {agent_name} not found or no config"}
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.get("/ailang/agents")
-def get_ailang_agents(identity: str = Depends(authenticate_http)):
-    """Get all AILang agents and their enable/disable status."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        return pipeline.ailang_pipeline.get_enabled_agents()
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.post("/ailang/cache/clear")
-@limiter.limit("10/minute")
-def clear_ailang_cache(request: Request, identity: str = Depends(authenticate_http)):
-    """Clear the AILang response cache."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        pipeline.ailang_pipeline.clear_cache()
-        return {"status": "ok", "message": "Cache cleared"}
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.post("/ailang/circuit-breaker/{agent_name}/reset")
-@limiter.limit("20/minute")
-def reset_ailang_circuit_breaker(request: Request, agent_name: str, identity: str = Depends(authenticate_http)):
-    """Manually reset a specific agent's circuit breaker."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        success = pipeline.ailang_pipeline.reset_circuit_breaker(agent_name)
-        if success:
-            return {"status": "ok", "agent": agent_name, "message": "Circuit breaker reset"}
-        return {"status": "error", "message": f"Agent {agent_name} not found"}
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.post("/ailang/circuit-breaker/reset-all")
-@limiter.limit("5/minute")
-def reset_all_ailang_circuit_breakers(request: Request, identity: str = Depends(authenticate_http)):
-    """Reset all circuit breakers."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        count = pipeline.ailang_pipeline.reset_all_circuit_breakers()
-        return {"status": "ok", "count": count, "message": f"Reset {count} circuit breakers"}
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.post("/ailang/sessions/cleanup")
-@limiter.limit("5/minute")
-def cleanup_ailang_sessions(request: Request, max_age_seconds: float = 3600.0, identity: str = Depends(authenticate_http)):
-    """Clean up inactive AILang sessions older than max_age_seconds."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        count = pipeline.ailang_pipeline.cleanup_inactive_sessions(max_age_seconds)
-        return {"status": "ok", "cleaned": count, "message": f"Cleaned {count} inactive sessions"}
-    return {"status": "error", "message": "AILang pipeline not available"}
-
-
-@app.get("/ailang/metrics")
-def get_ailang_metrics(identity: str = Depends(authenticate_http)):
-    """Get AILang metrics in Prometheus-compatible format."""
-    metrics["http_requests"] += 1
-    if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
-        stats = pipeline.ailang_pipeline.get_statistics()
-        lines = []
-        
-        # Circuit breaker metrics
-        for agent_name, cb_stats in stats.get("circuit_breakers", {}).items():
-            lines.append(f'ailang_circuit_state{{agent="{agent_name}"}} {1 if cb_stats["state"] == "closed" else 0}')
-            lines.append(f'ailang_circuit_total_calls{{agent="{agent_name}"}} {cb_stats["total_calls"]}')
-            lines.append(f'ailang_circuit_successful_calls{{agent="{agent_name}"}} {cb_stats["successful_calls"]}')
-            lines.append(f'ailang_circuit_failed_calls{{agent="{agent_name}"}} {cb_stats["failed_calls"]}')
-            lines.append(f'ailang_circuit_success_rate{{agent="{agent_name}"}} {cb_stats["success_rate"]:.4f}')
-            lines.append(f'ailang_circuit_avg_latency_ms{{agent="{agent_name}"}} {cb_stats["avg_latency_ms"]:.2f}')
-            lines.append(f'ailang_circuit_p50_latency_ms{{agent="{agent_name}"}} {cb_stats.get("p50_latency_ms", 0):.2f}')
-            lines.append(f'ailang_circuit_p95_latency_ms{{agent="{agent_name}"}} {cb_stats.get("p95_latency_ms", 0):.2f}')
-            lines.append(f'ailang_circuit_p99_latency_ms{{agent="{agent_name}"}} {cb_stats.get("p99_latency_ms", 0):.2f}')
-        
-        # Cache metrics
-        cache_info = stats.get("cache", {})
-        lines.append(f'ailang_cache_size {cache_info.get("size", 0)}')
-        lines.append(f'ailang_cache_max_size {cache_info.get("max_size", 1000)}')
-        lines.append(f'ailang_cache_hit_rate {cache_info.get("hit_rate", 0):.4f}')
-        lines.append(f'ailang_cache_hits {cache_info.get("hits", 0)}')
-        lines.append(f'ailang_cache_misses {cache_info.get("misses", 0)}')
-        
-        # Session metrics
-        lines.append(f'ailang_active_sessions {stats.get("active_sessions", 0)}')
-        lines.append(f'ailang_enabled {1 if stats.get("enabled") else 0}')
-        
-        return Response(content="\n".join(lines), media_type="text/plain")
-    return Response(content="", media_type="text/plain")
+    while True:
+        try:
+            payload = await websocket.receive_json()
+        except WebSocketDisconnect:
+            break
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            await websocket.send_json({"event": "error", "detail": "message is required"})
+            continue
+        await websocket.send_json({"event": "started"})
+        try:
+            response = await naia_assistant.chat(
+                message,
+                source="websocket",
+                translation_context=payload.get("translation_context"),
+                metadata=payload.get("metadata"),
+            )
+        except ValueError as exc:
+            await websocket.send_json({"event": "error", "detail": str(exc)})
+            continue
+        except (RuntimeError, TimeoutError) as exc:
+            await websocket.send_json({"event": "error", "detail": str(exc)})
+            continue
+        await websocket.send_json({"event": "completed", "response": response})
 
 
 @app.websocket("/ws/translate")
@@ -1357,106 +1282,45 @@ async def websocket_translate(websocket: WebSocket):
     if not ok:
         return
     metrics["websocket_connections"] += 1
-    logger.info("text_websocket_connected identity=%s", identity)
     try:
         await websocket_text_translation(websocket, pipeline)
     except WebSocketDisconnect:
-        observability.increment("websocket_disconnects_total")
-        observability.record_event("websocket_disconnect", identity=identity, mode="text")
-        logger.info("text_websocket_disconnected identity=%s", identity)
-    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
-        metrics["websocket_errors"] += 1
-        observability.increment("websocket_errors_total")
-        observability.record_event("websocket_error", identity=identity, mode="text")
-        logger.exception("text_websocket_error identity=%s", identity)
-        await websocket.close(code=1011, reason="Internal WebSocket error")
+        pass
 
 
 @app.websocket("/ws/audio")
 async def websocket_audio(websocket: WebSocket):
-    logger.info("audio_websocket_auth_start release=%s", WEBSOCKET_AUTH_RELEASE)
     ok, identity = await authenticate_websocket(websocket)
     if not ok:
-        logger.warning("audio_websocket_auth_rejected identity=%s", identity)
-        return
-    if not runtime_state.get("ready"):
-        await websocket.accept()
-        await websocket.send_json({
-            "type": "error",
-            "message": "Models still loading. Wait for LIVE.",
-            "recoverable": True,
-            "warming": True,
-        })
-        await websocket.close(code=1008, reason="Backend warming")
-        logger.info("audio_websocket_warming_rejected identity=%s", identity)
         return
     metrics["websocket_connections"] += 1
-    logger.info("audio_websocket_connected identity=%s", identity)
     try:
         if get_stt_provider() == "streaming":
             from backend.streaming import websocket_streaming_stt_translation
-
-            await websocket_streaming_stt_translation(
-                websocket, pipeline, conversation_brain, memory, speaker_memory, identity
-            )
+            await websocket_streaming_stt_translation(websocket, pipeline, conversation_brain, memory, speaker_memory, identity)
         else:
-            await websocket_audio_translation(websocket, pipeline, vad, conversation_brain, memory, speaker_memory, identity)
+            await websocket_audio_translation(websocket, pipeline, vad, conversation_brain, memory, speaker_memory, identity, global_latency_engine=latency_engine)
     except WebSocketDisconnect:
-        observability.increment("websocket_disconnects_total")
-        observability.record_event("websocket_disconnect", identity=identity, mode="audio")
-        logger.info("audio_websocket_disconnected identity=%s", identity)
+        pass
     except (RuntimeError, ValueError, ConnectionError, TimeoutError):
         metrics["websocket_errors"] += 1
-        observability.increment("websocket_errors_total")
-        observability.record_event("websocket_error", identity=identity, mode="audio")
-        logger.exception("audio_websocket_error identity=%s", identity)
         await websocket.close(code=1011, reason="Internal WebSocket error")
 
 
 @app.websocket("/ws/audio/streaming")
 async def websocket_audio_streaming(websocket: WebSocket):
-    """Streaming STT audio WebSocket — proxies audio to the STT provider service."""
     from backend.streaming import websocket_streaming_stt_translation
-    from backend.config import get_stt_provider
-
-    logger.info("streaming_stt_websocket_auth_start release=%s", WEBSOCKET_AUTH_RELEASE)
     ok, identity = await authenticate_websocket(websocket)
     if not ok:
-        logger.warning("streaming_stt_websocket_auth_rejected identity=%s", identity)
         return
-
     if get_stt_provider() != "streaming":
         await websocket.close(code=1008, reason="STT provider is not in streaming mode")
         return
-
-    if not runtime_state.get("ready"):
-        await websocket.accept()
-        await websocket.send_json({
-            "type": "error",
-            "message": "Models still loading. Wait for LIVE.",
-            "recoverable": True,
-            "warming": True,
-        })
-        await websocket.close(code=1008, reason="Backend warming")
-        logger.info("streaming_stt_websocket_warming_rejected identity=%s", identity)
-        return
-
     metrics["websocket_connections"] += 1
-    logger.info("streaming_stt_websocket_connected identity=%s", identity)
     try:
-        await websocket_streaming_stt_translation(
-            websocket, pipeline, conversation_brain, memory, speaker_memory, identity
-        )
+        await websocket_streaming_stt_translation(websocket, pipeline, conversation_brain, memory, speaker_memory, identity)
     except WebSocketDisconnect:
-        observability.increment("websocket_disconnects_total")
-        observability.record_event("websocket_disconnect", identity=identity, mode="streaming_stt")
-        logger.info("streaming_stt_websocket_disconnected identity=%s", identity)
-    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
-        metrics["websocket_errors"] += 1
-        observability.increment("websocket_errors_total")
-        observability.record_event("websocket_error", identity=identity, mode="streaming_stt")
-        logger.exception("streaming_stt_websocket_error identity=%s", identity)
-        await websocket.close(code=1011, reason="Internal WebSocket error")
+        pass
 
 
 @app.websocket("/ws/ping")
@@ -1464,201 +1328,6 @@ async def websocket_ping(websocket: WebSocket):
     await websocket.accept()
     await websocket.send_json({"type": "ready", "release": RELEASE_ID, "websocket_auth_release": WEBSOCKET_AUTH_RELEASE})
     await websocket.close()
-
-
-# ---------------------------------------------------------------------------
-# NAIA assistant — conversational helper alongside translations
-# ---------------------------------------------------------------------------
-
-
-class AssistantChatRequest(BaseModel):
-    message: str
-    session_id: str | None = None
-    translation_context: dict | None = None
-    metadata: dict | None = None
-
-    @field_validator("message")
-    @classmethod
-    def message_must_be_bounded(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("message is required")
-        if len(v) > 4000:
-            raise ValueError("message too long (max 4000 characters)")
-        return v
-
-
-@app.get("/api/assistant/health")
-async def assistant_health():
-    """Report whether the bundled naia kernel is available."""
-    return {
-        "available": naia_assistant.is_available(),
-        "error": naia_assistant.import_error(),
-        "kernel_timeout_seconds": naia_assistant.KERNEL_TIMEOUT_SECONDS,
-    }
-
-
-@app.post("/api/assistant/chat")
-async def assistant_chat(payload: AssistantChatRequest, identity: str = Depends(authenticate_http)):
-    """Send a chat message to the naia assistant.
-
-    Accepts an optional ``translation_context`` so the assistant can answer
-    follow-up questions about the user's most recent translation
-    (e.g. "rephrase that more formally" or "what does this idiom mean?").
-    """
-    metrics["http_requests"] += 1
-    usage_limiter.track(identity, "http_requests")
-    if not payload.message or not payload.message.strip():
-        raise HTTPException(status_code=400, detail="message is required")
-    if not naia_assistant.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail=f"Assistant unavailable: {naia_assistant.import_error()}",
-        )
-    meta = dict(payload.metadata or {})
-    if payload.session_id:
-        meta["client_session_id"] = payload.session_id
-    meta["identity"] = identity
-    try:
-        result = await naia_assistant.chat(
-            payload.message,
-            source="http",
-            translation_context=payload.translation_context,
-            metadata=meta,
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
-        logger.exception("assistant_chat_failed identity=%s", identity)
-        raise HTTPException(status_code=500, detail="Assistant error")
-    return result
-
-
-@app.websocket("/ws/assistant")
-async def websocket_assistant(websocket: WebSocket):
-    """Streaming chat with the naia assistant over a WebSocket."""
-    ok, identity = await authenticate_websocket(websocket)
-    if not ok:
-        return
-    await websocket.accept()
-    metrics["websocket_connections"] += 1
-    logger.info("assistant_websocket_connected identity=%s", identity)
-    if not naia_assistant.is_available():
-        await websocket.send_json({
-            "event": "error",
-            "detail": f"Assistant unavailable: {naia_assistant.import_error()}",
-        })
-        await websocket.close(code=1011, reason="Assistant unavailable")
-        return
-    try:
-        while True:
-            raw = await websocket.receive_json()
-            try:
-                req = AssistantChatRequest.model_validate(raw)
-            except (ValueError, TypeError, KeyError) as exc:
-                await websocket.send_json({"event": "error", "detail": f"Bad payload: {exc}"})
-                continue
-            if not req.message or not req.message.strip():
-                await websocket.send_json({"event": "error", "detail": "message is required"})
-                continue
-            await websocket.send_json({"event": "started"})
-            meta = dict(req.metadata or {})
-            if req.session_id:
-                meta["client_session_id"] = req.session_id
-            meta["identity"] = identity
-            try:
-                result = await naia_assistant.chat(
-                    req.message,
-                    source="websocket",
-                    translation_context=req.translation_context,
-                    metadata=meta,
-                )
-                await websocket.send_json({"event": "completed", "response": result})
-            except (RuntimeError, ValueError, ConnectionError, TimeoutError) as exc:
-                logger.exception("assistant_ws_error identity=%s", identity)
-                await websocket.send_json({"event": "error", "detail": "Assistant error"})
-    except WebSocketDisconnect:
-        observability.increment("websocket_disconnects_total")
-        observability.record_event("websocket_disconnect", identity=identity, mode="assistant")
-        logger.info("assistant_websocket_disconnected identity=%s", identity)
-    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
-        metrics["websocket_errors"] += 1
-        logger.exception("assistant_websocket_error identity=%s", identity)
-        with suppress(Exception):
-            await websocket.close(code=1011, reason="Internal WebSocket error")
-
-
-# ---------------------------------------------------------------------------
-# Admin: User management (requires DATA_DIR to be set)
-# All admin routes require a valid JWT + the identity must be listed in
-# ADMIN_IDENTITIES env var (comma-separated list of admin usernames).
-# ---------------------------------------------------------------------------
-
-def _require_admin(identity: str = Depends(authenticate_http)) -> str:
-    admin_ids = {
-        s.strip()
-        for s in os.getenv("ADMIN_IDENTITIES", "").split(",")
-        if s.strip()
-    }
-    if not admin_ids:
-        raise HTTPException(status_code=403, detail="No ADMIN_IDENTITIES configured.")
-    if identity not in admin_ids:
-        raise HTTPException(status_code=403, detail="Admin access required.")
-    return identity
-
-
-@app.get("/admin/users")
-def admin_list_users(admin: str = Depends(_require_admin)):
-    from backend.store import get_user_store
-    us = get_user_store()
-    if not us.is_available():
-        raise HTTPException(status_code=503, detail="DATA_DIR not set — persistent user store unavailable.")
-    return {"users": us.list_users()}
-
-
-@app.post("/admin/users")
-def admin_add_user(
-    body: dict,
-    admin: str = Depends(_require_admin),
-):
-    from backend.store import get_user_store
-    us = get_user_store()
-    if not us.is_available():
-        raise HTTPException(status_code=503, detail="DATA_DIR not set — persistent user store unavailable.")
-    username = str(body.get("username", "")).strip()
-    password = str(body.get("password", "")).strip()
-    tier = str(body.get("tier", "free")).strip()
-    if not username or not password:
-        raise HTTPException(status_code=422, detail="username and password are required.")
-    if tier not in {"free", "pro"}:
-        raise HTTPException(status_code=422, detail="tier must be 'free' or 'pro'.")
-    ok = us.add_user(username, password, tier)
-    if not ok:
-        raise HTTPException(status_code=500, detail="Failed to add user.")
-    return {"ok": True, "username": username, "tier": tier}
-
-
-@app.delete("/admin/users/{username}")
-def admin_delete_user(username: str, admin: str = Depends(_require_admin)):
-    from backend.store import get_user_store
-    us = get_user_store()
-    if not us.is_available():
-        raise HTTPException(status_code=503, detail="DATA_DIR not set — persistent user store unavailable.")
-    ok = us.delete_user(username)
-    return {"ok": ok, "username": username}
-
-
-@app.patch("/admin/users/{username}/tier")
-def admin_update_tier(username: str, body: dict, admin: str = Depends(_require_admin)):
-    from backend.store import get_user_store
-    us = get_user_store()
-    if not us.is_available():
-        raise HTTPException(status_code=503, detail="DATA_DIR not set — persistent user store unavailable.")
-    tier = str(body.get("tier", "")).strip()
-    if tier not in {"free", "pro"}:
-        raise HTTPException(status_code=422, detail="tier must be 'free' or 'pro'.")
-    ok = us.update_tier(username, tier)
-    return {"ok": ok, "username": username, "tier": tier}
 
 
 @app.get("/{full_path:path}")

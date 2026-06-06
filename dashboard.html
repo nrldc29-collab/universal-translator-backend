@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Universal Translator — Live Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0e1a; --card: #111827; --border: #1e293b; --accent: #67e8f9;
+    --green: #22c55e; --yellow: #eab308; --red: #ef4444; --text: #e2e8f0;
+    --muted: #64748b; --blue: #3b82f6;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
+  h1 { font-size: 22px; color: var(--accent); margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .card h2 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+  .metric { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .metric .label { color: var(--muted); font-size: 13px; }
+  .metric .value { font-size: 20px; font-weight: 700; }
+  .metric .unit { font-size: 12px; color: var(--muted); margin-left: 2px; }
+  .status-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+  .status-excellent { background: rgba(34,197,94,.15); color: var(--green); }
+  .status-good { background: rgba(34,197,94,.15); color: var(--green); }
+  .status-degraded { background: rgba(234,179,8,.15); color: var(--yellow); }
+  .status-poor { background: rgba(239,68,68,.15); color: var(--red); }
+  .status-unknown { background: rgba(100,116,139,.15); color: var(--muted); }
+  .bar-container { height: 6px; background: var(--border); border-radius: 3px; margin-top: 4px; overflow: hidden; }
+  .bar { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+  .bar.green { background: var(--green); }
+  .bar.yellow { background: var(--yellow); }
+  .bar.red { background: var(--red); }
+  .bar.blue { background: var(--blue); }
+  .tier-row { display: flex; gap: 8px; margin-bottom: 6px; align-items: center; }
+  .tier-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .tier-name { font-size: 13px; flex: 1; }
+  .tier-count { font-size: 13px; font-weight: 600; color: var(--accent); }
+  .stage-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .stage-name { width: 80px; font-size: 12px; color: var(--muted); text-align: right; }
+  .stage-bar-wrap { flex: 1; }
+  .stage-value { width: 60px; font-size: 12px; text-align: right; font-weight: 600; }
+  .run-row { font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; gap: 8px; }
+  .run-row:last-child { border: none; }
+  .run-id { color: var(--muted); width: 60px; overflow: hidden; text-overflow: ellipsis; }
+  .run-total { font-weight: 700; width: 70px; }
+  .run-stages { color: var(--muted); flex: 1; }
+  .controls { margin-bottom: 16px; display: flex; gap: 12px; align-items: center; }
+  .controls input { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; font-size: 13px; width: 280px; }
+  .controls button { background: var(--accent); color: var(--bg); border: none; padding: 6px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .controls button:hover { opacity: 0.85; }
+  .controls .refresh-info { color: var(--muted); font-size: 12px; }
+  .error-banner { background: rgba(239,68,68,.1); border: 1px solid var(--red); color: var(--red); padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; display: none; }
+</style>
+</head>
+<body>
+
+<h1>Universal Translator</h1>
+<p class="subtitle">Live Pipeline Dashboard</p>
+
+<div class="controls">
+  <input id="url" type="text" value="http://localhost:8000" placeholder="Backend URL" />
+  <button onclick="startPolling()">Connect</button>
+  <span class="refresh-info" id="refresh-info">Not connected</span>
+</div>
+<div class="error-banner" id="error-banner"></div>
+
+<div class="grid">
+  <!-- Health -->
+  <div class="card">
+    <h2>Pipeline Health</h2>
+    <div style="text-align:center; margin: 12px 0;">
+      <span class="status-badge status-unknown" id="health-badge">UNKNOWN</span>
+    </div>
+    <div class="metric"><span class="label">Avg end-to-end</span><span><span class="value" id="avg-total">—</span><span class="unit">ms</span></span></div>
+    <div class="metric"><span class="label">P95 end-to-end</span><span><span class="value" id="p95-total">—</span><span class="unit">ms</span></span></div>
+    <div class="metric"><span class="label">Total runs</span><span class="value" id="total-runs">0</span></div>
+  </div>
+
+  <!-- Per-stage latency -->
+  <div class="card">
+    <h2>Stage Latency (avg)</h2>
+    <div id="stage-bars"></div>
+  </div>
+
+  <!-- Translation tiers -->
+  <div class="card">
+    <h2>Translation Routing</h2>
+    <div id="tier-metrics"></div>
+  </div>
+
+  <!-- System info -->
+  <div class="card">
+    <h2>System</h2>
+    <div class="metric"><span class="label">Backend</span><span class="value" id="sys-backend" style="font-size:13px">—</span></div>
+    <div class="metric"><span class="label">Translation</span><span class="value" id="sys-translation" style="font-size:13px">—</span></div>
+    <div class="metric"><span class="label">Marian fallback</span><span class="value" id="sys-marian" style="font-size:13px">—</span></div>
+    <div class="metric"><span class="label">Remote reachable</span><span class="value" id="sys-remote" style="font-size:13px">—</span></div>
+    <div class="metric"><span class="label">Uptime</span><span class="value" id="sys-uptime" style="font-size:13px">—</span></div>
+  </div>
+</div>
+
+<!-- Recent runs -->
+<div class="card" style="max-width: 900px;">
+  <h2>Recent Pipeline Runs</h2>
+  <div id="recent-runs"><span style="color:var(--muted);font-size:13px">No data yet</span></div>
+</div>
+
+<script>
+let interval = null;
+const STAGES = ['vad','stt','translation','tts'];
+const STAGE_COLORS = {vad:'#8b5cf6', stt:'#3b82f6', translation:'#22c55e', tts:'#f59e0b'};
+const TIER_COLORS = {ollama:'#8b5cf6', marian:'#3b82f6', remote:'#22c55e', lightweight:'#64748b'};
+
+function $(id) { return document.getElementById(id); }
+
+function startPolling() {
+  if (interval) clearInterval(interval);
+  $('error-banner').style.display = 'none';
+  fetchAll();
+  interval = setInterval(fetchAll, 3000);
+  $('refresh-info').textContent = 'Refreshing every 3s';
+}
+
+async function fetchAll() {
+  const base = $('url').value.replace(/\/+$/,'');
+  try {
+    const [latency, diag] = await Promise.all([
+      fetch(base+'/latency').then(r=>r.json()),
+      fetch(base+'/diagnostics').then(r=>r.json()).catch(()=>null)
+    ]);
+    $('error-banner').style.display = 'none';
+    renderLatency(latency);
+    if (diag) renderDiag(diag);
+    $('refresh-info').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  } catch(e) {
+    $('error-banner').textContent = 'Cannot reach backend: ' + e.message;
+    $('error-banner').style.display = 'block';
+    $('refresh-info').textContent = 'Connection failed';
+  }
+}
+
+function renderLatency(data) {
+  // Health badge
+  const h = data.health || {};
+  const badge = $('health-badge');
+  badge.textContent = (h.status||'unknown').toUpperCase();
+  badge.className = 'status-badge status-' + (h.status||'unknown');
+
+  // Summary
+  const s = data.summary || {};
+  $('avg-total').textContent = s.avg_total_ms || '—';
+  $('p95-total').textContent = s.p95_total_ms || '—';
+  $('total-runs').textContent = s.total_runs || '0';
+
+  // Stage bars
+  const stages = data.stages || {};
+  const maxMs = Math.max(1, ...STAGES.map(n => (stages[n]||{}).avg_ms||0));
+  let barsHtml = '';
+  for (const name of STAGES) {
+    const st = stages[name] || {};
+    const avg = st.avg_ms || 0;
+    const p95 = st.p95_ms || 0;
+    const pct = Math.min(100, (avg/maxMs)*100);
+    const color = STAGE_COLORS[name]||'#64748b';
+    barsHtml += `<div class="stage-row">
+      <span class="stage-name">${name}</span>
+      <div class="stage-bar-wrap"><div class="bar-container"><div class="bar" style="width:${pct}%;background:${color}"></div></div></div>
+      <span class="stage-value" style="color:${color}">${avg.toFixed(0)}<span class="unit">ms</span></span>
+    </div>`;
+  }
+  $('stage-bars').innerHTML = barsHtml || '<span style="color:var(--muted);font-size:13px">No stage data</span>';
+
+  // Tier metrics
+  const tiers = data.translation_tier_metrics || {};
+  let tierHtml = '';
+  for (const name of ['ollama','marian','remote','lightweight']) {
+    const hits = tiers[name+'_hits'] || 0;
+    const misses = tiers[name+'_misses'] || 0;
+    const total = hits + misses;
+    const color = TIER_COLORS[name];
+    if (name === 'lightweight') {
+      tierHtml += `<div class="tier-row"><div class="tier-dot" style="background:${color}"></div><span class="tier-name">${name}</span><span class="tier-count">${hits} hits</span></div>`;
+    } else {
+      tierHtml += `<div class="tier-row"><div class="tier-dot" style="background:${color}"></div><span class="tier-name">${name}</span><span class="tier-count">${hits}/${total}</span></div>`;
+    }
+  }
+  $('tier-metrics').innerHTML = tierHtml || '<span style="color:var(--muted);font-size:13px">No tier data</span>';
+
+  // Recent runs
+  const runs = data.recent_runs || [];
+  if (runs.length === 0) {
+    $('recent-runs').innerHTML = '<span style="color:var(--muted);font-size:13px">No runs yet — translate something first</span>';
+  } else {
+    let runsHtml = '';
+    for (const r of runs.slice().reverse()) {
+      const stagesStr = Object.entries(r.stages||{}).map(([k,v])=>`${k}: ${v.toFixed(0)}ms`).join(' · ');
+      runsHtml += `<div class="run-row">
+        <span class="run-id">${(r.run_id||'').slice(0,8)}</span>
+        <span class="run-total">${r.total_ms.toFixed(0)} ms</span>
+        <span class="run-stages">${stagesStr}</span>
+      </div>`;
+    }
+    $('recent-runs').innerHTML = runsHtml;
+  }
+}
+
+function renderDiag(d) {
+  $('sys-backend').textContent = d.translation?.backend || '—';
+  $('sys-translation').textContent = d.translation?.runtime || '—';
+  $('sys-marian').textContent = d.translation?.marian_fallback_enabled ? 'Yes' : 'No';
+  $('sys-remote').textContent = d.translation?.remote_translator_reachable ? 'Yes' : 'No';
+  const up = d.uptime_seconds;
+  if (up) {
+    const h = Math.floor(up/3600); const m = Math.floor((up%3600)/60);
+    $('sys-uptime').textContent = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+}
+
+// Auto-connect on load
+window.addEventListener('load', () => { startPolling(); });
+</script>
+</body>
+</html>

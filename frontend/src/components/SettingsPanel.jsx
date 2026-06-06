@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   X, Languages, Volume2, Mic, Zap, Monitor, Lock, Bell, Settings2, Info,
   ChevronRight, ChevronDown, Sun, Moon, Contrast, Type, Eye, EyeOff,
-  Trash2, Shield, Music, Bug, Server, Key, Check, AlertTriangle, Activity,
+  Trash2, Shield, Music, Bug, Server, Key, Check, AlertTriangle, Brain,
 } from 'lucide-react';
 import { TARGET_LANGUAGE_OPTIONS } from '../utils';
 
@@ -21,6 +21,7 @@ const SECTIONS = [
   { id: 'language',     label: 'Language',     Icon: Languages  },
   { id: 'audio',        label: 'Audio',         Icon: Volume2    },
   { id: 'translation',  label: 'Translation',   Icon: Zap        },
+  { id: 'ailang',       label: 'AILang',         Icon: Brain      },
   { id: 'display',      label: 'Display',       Icon: Monitor    },
   { id: 'privacy',      label: 'Privacy',       Icon: Shield     },
   { id: 'notifications',label: 'Notifications', Icon: Bell       },
@@ -37,10 +38,6 @@ export default function SettingsPanel({
   onClearSession,
   diagnostics,
   apiUrl,
-  selfTest,
-  runSelfTest,
-  connectionStatus,
-  onRequestMicPermission,
 }) {
   const [activeSection, setActiveSection] = useState('language');
   const [micDevices, setMicDevices] = useState([]);
@@ -75,14 +72,7 @@ export default function SettingsPanel({
     try {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
       const json = await res.json().catch(() => ({}));
-      setBackendTestResult({
-        ok: res.ok && json.ready !== false,
-        msg: res.ok
-          ? (json.ready === false
-            ? `Connected but not LIVE — ${(json.blockers || []).join(', ') || 'models still loading'}`
-            : `Connected — LIVE`)
-          : `HTTP ${res.status}`,
-      });
+      setBackendTestResult({ ok: res.ok, msg: res.ok ? `Connected — ${json.status || 'ok'}` : `HTTP ${res.status}` });
     } catch (err) {
       setBackendTestResult({ ok: false, msg: err?.message || 'Unreachable' });
     } finally {
@@ -140,15 +130,13 @@ export default function SettingsPanel({
               <SectionLanguage settings={settings} updateSetting={updateSetting} />
             )}
             {activeSection === 'audio' && (
-              <SectionAudio
-                settings={settings}
-                updateSetting={updateSetting}
-                micDevices={micDevices}
-                onRequestMicPermission={onRequestMicPermission}
-              />
+              <SectionAudio settings={settings} updateSetting={updateSetting} micDevices={micDevices} />
             )}
             {activeSection === 'translation' && (
               <SectionTranslation settings={settings} updateSetting={updateSetting} />
+            )}
+            {activeSection === 'ailang' && (
+              <SectionAILang apiUrl={apiUrl} />
             )}
             {activeSection === 'display' && (
               <SectionDisplay settings={settings} updateSetting={updateSetting} />
@@ -172,9 +160,6 @@ export default function SettingsPanel({
                 backendTestResult={backendTestResult}
                 onTestBackend={testBackendUrl}
                 apiUrl={apiUrl}
-                selfTest={selfTest}
-                runSelfTest={runSelfTest}
-                connectionStatus={connectionStatus}
               />
             )}
             {activeSection === 'about' && (
@@ -228,7 +213,7 @@ function SectionLanguage({ settings, updateSetting }) {
 }
 
 /* ─── Section: Audio ──────────────────────────────────────────────── */
-function SectionAudio({ settings, updateSetting, micDevices, onRequestMicPermission }) {
+function SectionAudio({ settings, updateSetting, micDevices }) {
   return (
     <div className="sp-section">
       <h2 className="sp-section-title">Audio Settings</h2>
@@ -291,11 +276,6 @@ function SectionAudio({ settings, updateSetting, micDevices, onRequestMicPermiss
         <div className="sp-info-box warning">
           <AlertTriangle size={13} />
           <span>Grant microphone permission to list available devices.</span>
-          {onRequestMicPermission && (
-            <button type="button" className="sp-test-btn" onClick={() => onRequestMicPermission()}>
-              Grant Microphone Access
-            </button>
-          )}
         </div>
       )}
     </div>
@@ -341,15 +321,153 @@ function SectionTranslation({ settings, updateSetting }) {
           value={settings.translationProvider}
           onChange={(e) => updateSetting('translationProvider', e.target.value)}
         >
-          <option value="marian">Marian NMT (Local)</option>
-          <option value="lightweight">Lightweight (Fast)</option>
-          <option value="hybrid">Hybrid (Marian fallback)</option>
+          <option value="hybrid">Hybrid (Auto)</option>
+          <option value="lightweight">Lightweight (Offline)</option>
+          <option value="remote">Remote (Online)</option>
+          <option value="marian">Marian NMT</option>
         </select>
       </SettingRow>
 
       <div className="sp-info-box">
         <Info size={13} />
-        <span><strong>Marian NMT</strong> is the default local engine for EN↔HT. Hybrid uses lightweight first, then Marian — no cloud translation fallback.</span>
+        <span><strong>Hybrid</strong> uses lightweight translation first, then falls back to remote APIs for complex phrases. Best for most use cases.</span>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Section: AILang ─────────────────────────────────────────────── */
+function SectionAILang({ apiUrl }) {
+  const [ollamaStatus, setOllamaStatus] = useState(null);
+  const [switching, setSwitching] = useState(false);
+  const [switchResult, setSwitchResult] = useState(null);
+
+  useEffect(() => {
+    loadStatus();
+  }, [apiUrl]);
+
+  const loadStatus = async () => {
+    if (!apiUrl) return;
+    try {
+      const res = await fetch(`${apiUrl}/health/ollama`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return;
+      const data = await res.json();
+      setOllamaStatus(data);
+    } catch {
+      // Silently fail
+    }
+  };
+
+  const switchModel = async (modelName) => {
+    if (!apiUrl || modelName === ollamaStatus?.model) return;
+    setSwitching(true);
+    setSwitchResult(null);
+    try {
+      const res = await fetch(`${apiUrl}/health/ollama/model`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelName }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSwitchResult({ ok: true, msg: data.message });
+        await loadStatus();
+      } else {
+        setSwitchResult({ ok: false, msg: data.detail?.error || data.detail || 'Switch failed' });
+      }
+    } catch (err) {
+      setSwitchResult({ ok: false, msg: err?.message || 'Network error' });
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const isActive = ollamaStatus?.warmup?.status === 'active' || ollamaStatus?.warmup?.status === 'switched';
+  const isDegraded = ollamaStatus?.enabled && !ollamaStatus?.reachable;
+  const models = ollamaStatus?.models || [];
+
+  return (
+    <div className="sp-section">
+      <h2 className="sp-section-title">AILang Intelligence</h2>
+
+      <SettingRow
+        label="Status"
+        hint={ollamaStatus?.warmup?.message || (ollamaStatus ? 'Checking...' : 'Loading...')}
+        icon={<Brain size={15} />}
+      >
+        <span className={`ailang-status-badge ${isActive ? 'active' : isDegraded ? 'degraded' : 'offline'}`} style={{ fontSize: '0.72rem' }}>
+          {isActive ? 'Active' : isDegraded ? 'Degraded' : ollamaStatus?.enabled ? 'Checking' : 'Offline'}
+        </span>
+      </SettingRow>
+
+      <div className="sp-divider-label">Ollama Model</div>
+
+      {ollamaStatus?.enabled && ollamaStatus?.reachable ? (
+        <SettingRow
+          label="Active Model"
+          hint={models.length > 0 ? `${models.length} model${models.length !== 1 ? 's' : ''} available` : 'No models found'}
+          icon={<Zap size={15} />}
+        >
+          <select
+            className="sp-select"
+            value={ollamaStatus?.model || 'mistral'}
+            onChange={(e) => switchModel(e.target.value)}
+            disabled={switching}
+          >
+            {models.map((m) => (
+              <option key={m} value={m.split(':')[0]}>{m}</option>
+            ))}
+            {models.length === 0 && (
+              <option value="">No models available</option>
+            )}
+          </select>
+        </SettingRow>
+      ) : ollamaStatus?.enabled && !ollamaStatus?.reachable ? (
+        <div className="sp-info-box warning">
+          <AlertTriangle size={13} />
+          <span>Ollama is enabled but not reachable at {ollamaStatus?.url}. Start Ollama or check OLLAMA_URL.</span>
+        </div>
+      ) : (
+        <div className="sp-info-box">
+          <Info size={13} />
+          <span>Ollama is not enabled. Set OLLAMA_ENABLED=true and restart the backend to activate local LLM intelligence.</span>
+        </div>
+      )}
+
+      {switchResult && (
+        <div className={`sp-info-box ${switchResult.ok ? '' : 'warning'}`}>
+          {switchResult.ok ? <Check size={13} /> : <AlertTriangle size={13} />}
+          <span>{switchResult.msg}</span>
+        </div>
+      )}
+
+      {switching && (
+        <div className="sp-info-box">
+          <Brain size={13} className="sp-spin-icon" />
+          <span>Switching model...</span>
+        </div>
+      )}
+
+      <div className="sp-divider-label">How It Works</div>
+
+      <div className="sp-info-box">
+        <Brain size={13} />
+        <span>
+          <strong>AILang</strong> enhances translations with context memory, domain detection,
+          ambiguity resolution, glossary enforcement, and emotion-aware TTS.
+          It tries providers in order: <strong>Ollama</strong> (local, free) →{' '}
+          <strong>OpenAI</strong> (cloud) → <strong>offline rules</strong> (stub).
+        </span>
+      </div>
+
+      <div className="sp-info-box">
+        <Info size={13} />
+        <span>
+          Switch models instantly without restart. Use <strong>phi3</strong> or <strong>tinyllama</strong> for
+          speed, <strong>mistral</strong> or <strong>llama3</strong> for accuracy. Run{' '}
+          <code style={{ fontFamily: 'monospace', fontSize: '0.85em' }}>ollama pull &lt;model&gt;</code> to add models.
+        </span>
       </div>
     </div>
   );
@@ -508,17 +626,7 @@ function SectionAdvanced({
   apiKeyVisible, setApiKeyVisible,
   testingBackend, backendTestResult, onTestBackend,
   apiUrl,
-  selfTest,
-  runSelfTest,
-  connectionStatus,
 }) {
-  const selfTestReady = connectionStatus === 'online';
-  const selfTestHint = connectionStatus === 'warming'
-    ? 'Wait for LIVE in the header before running checks'
-    : connectionStatus === 'offline'
-      ? 'Start the backend before running checks'
-      : 'Quick translation + audio WebSocket check';
-
   return (
     <div className="sp-section">
       <h2 className="sp-section-title">Advanced Settings</h2>
@@ -558,35 +666,6 @@ function SectionAdvanced({
         <div className={`sp-info-box ${backendTestResult.ok ? '' : 'warning'}`}>
           {backendTestResult.ok ? <Check size={13} /> : <AlertTriangle size={13} />}
           <span>{backendTestResult.msg}</span>
-        </div>
-      )}
-
-      <div className="sp-divider-label">Self Test</div>
-
-      <SettingRow label="Run Self Test" hint={selfTestHint} icon={<Activity size={15} />}>
-        <button
-          type="button"
-          className="sp-test-btn"
-          onClick={() => runSelfTest?.()}
-          disabled={!runSelfTest || !selfTestReady || selfTest?.status === 'running'}
-        >
-          {selfTest?.status === 'running' ? 'Running…' : 'Run Self Test'}
-        </button>
-      </SettingRow>
-
-      {selfTest && selfTest.status !== 'idle' && (
-        <div className={`sp-info-box ${selfTest.status === 'online' ? '' : 'warning'}`}>
-          {selfTest.status === 'online' ? <Check size={13} /> : <AlertTriangle size={13} />}
-          <span>
-            {selfTest.message}
-            {selfTest.translation !== '-' ? ` · ES: ${selfTest.translation}` : ''}
-            {selfTest.htTranslation !== '-' ? ` · HT: ${selfTest.htTranslation}` : ''}
-            {selfTest.htReverseTranslation !== '-' ? ` · HT→EN: ${selfTest.htReverseTranslation}` : ''}
-            {selfTest.htTts !== '-' ? ` · HT TTS: ${selfTest.htTts}` : ''}
-            {selfTest.liveText !== '-' ? ` · Live text: ${selfTest.liveText}` : ''}
-            {selfTest.sttOnly !== '-' ? ` · STT-only: ${selfTest.sttOnly}` : ''}
-            {selfTest.websocket !== '-' ? ` · WebSocket: ${selfTest.websocket}` : ''}
-          </span>
         </div>
       )}
 

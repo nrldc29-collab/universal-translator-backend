@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 from typing import Optional
+import json
+import re
+import os
 
 from llm import PassthroughContextLayer
 from translation import HybridTranslator, LightweightTranslator, MarianTranslator
@@ -7,12 +10,34 @@ from tts import PiperTextToSpeech
 from backend.config import get_translation_backend
 from backend.stt_bridge import STTBridge
 from backend.ailang_pipeline import get_ailang_pipeline, AILangContext
-from backend.communication_brain import detect_domains
-from backend.glossary import (
-    finalize_translation,
-    prepare_for_translation,
-    set_session_glossary,
-)
+
+# Advanced optimization modules
+try:
+    from backend.predictive_cache import PredictiveCache
+    PREDICTIVE_CACHE_AVAILABLE = True
+except ImportError:
+    PREDICTIVE_CACHE_AVAILABLE = False
+
+
+def _is_structured_fallback(text: str) -> bool:
+    """Check if text is a JSON/structured fallback from the AI stub rather than natural language."""
+    stripped = text.strip()
+    if not stripped:
+        return True
+    # Starts with JSON object or array markers
+    if stripped.startswith(("{", "[")):
+        try:
+            json.loads(stripped)
+            return True
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Starts with AI stub markers like [AI: or [AI_ERROR:
+    if stripped.startswith("[AI:") or stripped.startswith("[AI_ERROR:"):
+        return True
+    # Very long text that's mostly structured data (prompts echoing back)
+    if len(stripped) > 500 and stripped.count(":") > 10:
+        return True
+    return False
 
 
 @dataclass
@@ -33,6 +58,7 @@ class AnaiTranslatorPipeline:
         context_layer: PassthroughContextLayer | None = None,
         session_id: str = "default",
         enable_ailang: bool = True,
+        enable_predictive_cache: bool = True,
     ):
         if stt is not None:
             self.stt = stt
@@ -52,64 +78,45 @@ class AnaiTranslatorPipeline:
         self.session_id = session_id
         self.enable_ailang = enable_ailang
         self.ailang_pipeline = get_ailang_pipeline() if enable_ailang else None
+        
+        # Initialize predictive cache if available and enabled
+        self.enable_predictive_cache = enable_predictive_cache and PREDICTIVE_CACHE_AVAILABLE
+        self.predictive_cache = None
+        if self.enable_predictive_cache:
+            self.predictive_cache = PredictiveCache(
+                max_size=int(os.getenv("PREDICTIVE_CACHE_SIZE", "1000")),
+                ttl_seconds=int(os.getenv("PREDICTIVE_CACHE_TTL", "3600")),
+            )
 
     def preload(self) -> dict:
-        result: dict = {}
-        try:
-            stt_ok = bool(self.stt.preload())
-            result["stt"] = {"ok": stt_ok}
-        except (RuntimeError, OSError, ValueError) as exc:
-            result["stt"] = {"ok": False, "error": exc.__class__.__name__}
-        try:
-            tts_ok = bool(self.tts.preload())
-            result["tts"] = {"ok": tts_ok}
-        except (RuntimeError, OSError, ValueError, ImportError) as exc:
-            result["tts"] = {"ok": False, "error": exc.__class__.__name__}
-        try:
-            self.translate_local("hello", "en", "es")
-            self.translate_local("I need help", "en", "ht")
-            self.translate_local("mwen bezwen èd", "ht", "en")
-            result["translation"] = {"ok": True}
-        except (RuntimeError, OSError, ValueError) as exc:
-            result["translation"] = {"ok": False, "error": exc.__class__.__name__}
+        result = {
+            "stt": self.stt.preload(),
+            "tts": self.tts.preload(),
+        }
+        
+        # Warm predictive cache with common phrases
+        if self.enable_predictive_cache and self.predictive_cache:
+            cache_stats = self.predictive_cache.get_statistics()
+            result["predictive_cache"] = cache_stats
+        
         return result
-
-    def translate_local(
-        self,
-        text: str,
-        source_language: str,
-        target_language: str,
-        *,
-        session_id: str | None = None,
-        original_source_text: str | None = None,
-        translator: object | None = None,
-    ) -> str:
-        """Translate through glossary protection and the configured local translator."""
-        if not text.strip():
-            return ""
-        sid = session_id or self.session_id
-        original = (original_source_text or text).strip()
-        active_translator = translator or self.translator
-        domains = detect_domains(original)
-        strict_medical = "medical" in (domains.get("high_stakes") or [])
-        prepared_text, glossary_meta = prepare_for_translation(text, strict_medical=strict_medical)
-        raw = active_translator.translate(prepared_text, source_language, target_language)
-        translated, _meta = finalize_translation(
-            original,
-            raw,
-            session_id=sid,
-            source_lang=source_language,
-            target_lang=target_language,
-            strict_medical=strict_medical,
-            metadata={**glossary_meta, "domains": domains},
-        )
-        return translated
+    
+    def get_cache_statistics(self) -> dict:
+        """Get cache hit/miss statistics."""
+        if self.enable_predictive_cache and self.predictive_cache:
+            stats = self.predictive_cache.get_statistics()
+            stats["hits"] = getattr(self, '_cache_hits', 0)
+            stats["misses"] = getattr(self, '_cache_misses', 0)
+            total = stats["hits"] + stats["misses"]
+            stats["hit_rate"] = stats["hits"] / total if total > 0 else 0.0
+            return stats
+        return {"enabled": False, "hits": 0, "misses": 0, "hit_rate": 0.0}
 
     def translate_text(
         self,
         text: str,
         source_language: str = "en",
-        target_language: str = "ht",
+        target_language: str = "es",
         tone: str | None = None,
         synthesize_audio: bool = False,
         output_audio_path: str = "models/output.wav",
@@ -141,7 +148,11 @@ class AnaiTranslatorPipeline:
             # 2. Context memory for pronoun resolution
             context_result = self.ailang_pipeline.process_context_memory(working_text, source_language, context)
             if context_result.get("resolution_applied"):
-                working_text = context_result["resolved_text"]
+                resolved = context_result.get("resolved_text", "")
+                # Only accept the resolved text if it looks like natural language,
+                # not a JSON/structured fallback from the AI stub.
+                if resolved and not _is_structured_fallback(resolved):
+                    working_text = resolved
                 ailang_metadata["context_memory"] = context_result
             
             # 3. Speaker profiling for style adaptation
@@ -157,149 +168,50 @@ class AnaiTranslatorPipeline:
             improved_text = self.context_layer.improve(working_text, source_language, target_language, tone)
         else:
             improved_text = self.context_layer.improve(text, source_language, target_language, tone)
-
-        domains = detect_domains(text)
-        translated_text = self.translate_local(
-            improved_text,
-            source_language,
-            target_language,
-            session_id=self.session_id,
-            original_source_text=text,
-        )
-        if domains.get("high_stakes") or domains.get("matches"):
-            ailang_metadata = ailang_metadata or {}
-            ailang_metadata["domains"] = domains
-            ailang_metadata["glossary"] = {"applied_via": "translate_local"}
-        if self.ailang_pipeline:
-            context = self.ailang_pipeline.get_or_create_context(self.session_id)
-
-            # 5. Confidence-based fallback
-            if confidence > 0:
-                confidence_result = self.ailang_pipeline.process_confidence_fallback(
-                    improved_text, translated_text, confidence, source_language, target_language,
-                    context, analysis.get("instructions", [])
+        
+        # Base translation with predictive cache
+        translated_text = None
+        cache_hit = False
+        
+        if self.enable_predictive_cache and self.predictive_cache:
+            # Check cache first
+            cached = self.predictive_cache.get_translation(
+                improved_text,
+                source_language,
+                target_language,
+                context={"session_id": self.session_id, "speaker": speaker},
+            )
+            if cached:
+                translated_text = cached
+                cache_hit = True
+                ailang_metadata["cache_hit"] = True
+                # Track cache hit
+                if hasattr(self, '_cache_hits'):
+                    self._cache_hits += 1
+                else:
+                    self._cache_hits = 1
+            else:
+                # Track cache miss
+                if hasattr(self, '_cache_misses'):
+                    self._cache_misses += 1
+                else:
+                    self._cache_misses = 1
+        
+        if not translated_text:
+            # Perform translation if not cached
+            translated_text = self.translator.translate(improved_text, source_language, target_language)
+            
+            # Cache the result
+            if self.enable_predictive_cache and self.predictive_cache:
+                self.predictive_cache.set_translation(
+                    improved_text,
+                    translated_text,
+                    source_language,
+                    target_language,
+                    context={"session_id": self.session_id, "speaker": speaker},
+                    priority=2 if len(improved_text.split()) <= 5 else 1,  # Higher priority for short common phrases
                 )
-                if confidence_result.get("escalated"):
-                    translated_text = confidence_result["final_translation"]
-                    ailang_metadata["confidence_fallback"] = confidence_result
-
-            # 6. Dialect adaptation
-            dialect_result = self.ailang_pipeline.process_dialect_adaptation(
-                improved_text, translated_text, source_language, target_language, context
-            )
-            if dialect_result.get("adaptation_applied"):
-                translated_text = dialect_result["final_translation"]
-                ailang_metadata["dialect_adaptation"] = dialect_result
-
-            # 7. Glossary injection (AILang layer — local glossary already applied above)
-            glossary_result = self.ailang_pipeline.process_glossary_injection(
-                improved_text, translated_text, source_language, target_language,
-                context, analysis.get("instructions", [])
-            )
-            if glossary_result.get("glossary_applied"):
-                translated_text = glossary_result["final_translation"]
-                ailang_metadata["glossary_injection"] = glossary_result
-
-            # 8. Back-translation verification
-            back_translation_result = self.ailang_pipeline.process_back_translation(
-                improved_text, translated_text, source_language, target_language, context
-            )
-            if back_translation_result.get("improved"):
-                translated_text = back_translation_result["final_translation"]
-                ailang_metadata["back_translation"] = back_translation_result
-
-            self.ailang_pipeline.add_conversation_turn(
-                self.session_id, speaker or "unknown", text, translated_text
-            )
-
-        audio_output_path = None
-        if synthesize_audio:
-            emotion_config = None
-            if self.ailang_pipeline:
-                context = self.ailang_pipeline.get_or_create_context(self.session_id)
-                emotion_result = self.ailang_pipeline.process_emotion_tts(translated_text, target_language, context)
-                emotion_config = emotion_result.get("tts_config")
-                ailang_metadata["emotion_tts"] = emotion_result
-
-            audio_output_path = self.tts.synthesize(
-                translated_text, output_audio_path, language=target_language, emotion_config=emotion_config
-            )
-
-        return TranslationResult(
-            source_text=text,
-            improved_text=improved_text,
-            translated_text=translated_text,
-            audio_output_path=audio_output_path,
-            ailang_metadata=ailang_metadata if ailang_metadata else None,
-        )
-
-    def translate_text_with(
-        self,
-        translator,
-        text: str,
-        source_language: str = "en",
-        target_language: str = "ht",
-        tone: str | None = None,
-        synthesize_audio: bool = False,
-        output_audio_path: str = "models/output.wav",
-        speaker: str | None = None,
-        confidence: float = 0.0,
-    ) -> TranslationResult:
-        """Run translate_text using a caller-supplied translator instead of self.translator."""
-        if not text.strip():
-            return TranslationResult(
-                source_text=text,
-                improved_text="",
-                translated_text="",
-                audio_output_path=None,
-                ailang_metadata=None,
-            )
         
-        ailang_metadata = {}
-        working_text = text
-        
-        # AILang agent pipeline
-        if self.ailang_pipeline:
-            context = self.ailang_pipeline.get_or_create_context(self.session_id)
-            if speaker:
-                context.current_speaker = speaker
-            
-            # 1. Domain/Formality/Urgency analysis
-            analysis = self.ailang_pipeline.analyze_text(working_text, source_language, target_language, context)
-            ailang_metadata["analysis"] = analysis
-            
-            # 2. Context memory for pronoun resolution
-            context_result = self.ailang_pipeline.process_context_memory(working_text, source_language, context)
-            if context_result.get("resolution_applied"):
-                working_text = context_result["resolved_text"]
-                ailang_metadata["context_memory"] = context_result
-            
-            # 3. Speaker profiling for style adaptation
-            profile_result = self.ailang_pipeline.process_speaker_profile(working_text, source_language, target_language, context)
-            if profile_result.get("style_guide"):
-                ailang_metadata["speaker_profile"] = profile_result
-            
-            # 4. Ambiguity detection
-            ambiguity_result = self.ailang_pipeline.process_ambiguity_resolution(working_text, source_language, target_language, context)
-            ailang_metadata["ambiguity"] = ambiguity_result
-            
-            improved_text = self.context_layer.improve(working_text, source_language, target_language, tone)
-        else:
-            improved_text = self.context_layer.improve(text, source_language, target_language, tone)
-
-        domains = detect_domains(text)
-        translated_text = self.translate_local(
-            improved_text,
-            source_language,
-            target_language,
-            session_id=self.session_id,
-            original_source_text=text,
-            translator=translator,
-        )
-        if domains.get("high_stakes") or domains.get("matches"):
-            ailang_metadata["domains"] = domains
-            ailang_metadata["glossary"] = {"applied_via": "translate_local"}
-
         # AILang post-translation pipeline
         if self.ailang_pipeline:
             context = self.ailang_pipeline.get_or_create_context(self.session_id)
@@ -358,6 +270,7 @@ class AnaiTranslatorPipeline:
             audio_output_path = self.tts.synthesize(
                 translated_text, output_audio_path, language=target_language, emotion_config=emotion_config
             )
+
         return TranslationResult(
             source_text=text,
             improved_text=improved_text,
@@ -366,52 +279,148 @@ class AnaiTranslatorPipeline:
             ailang_metadata=ailang_metadata if ailang_metadata else None,
         )
 
-    def translate_audio(
+    def translate_text_with(
         self,
-        audio_path: str,
+        translator,
+        text: str,
         source_language: str = "en",
-        target_language: str = "ht",
+        target_language: str = "es",
         tone: str | None = None,
-        synthesize_audio: bool = True,
+        synthesize_audio: bool = False,
         output_audio_path: str = "models/output.wav",
         speaker: str | None = None,
         confidence: float = 0.0,
     ) -> TranslationResult:
-        source_text = self.stt.transcribe(audio_path, source_language)
-        return self.translate_text(
-            source_text,
-            source_language=source_language,
-            target_language=target_language,
-            tone=tone,
-            synthesize_audio=synthesize_audio,
-            output_audio_path=output_audio_path,
-            speaker=speaker,
-            confidence=confidence,
+        """Run translate_text using a caller-supplied translator instead of self.translator."""
+        if not text.strip():
+            return TranslationResult(
+                source_text=text,
+                improved_text="",
+                translated_text="",
+                audio_output_path=None,
+                ailang_metadata=None,
+            )
+        
+        ailang_metadata = {}
+        working_text = text
+        
+        # AILang agent pipeline
+        if self.ailang_pipeline:
+            context = self.ailang_pipeline.get_or_create_context(self.session_id)
+            if speaker:
+                context.current_speaker = speaker
+            
+            # 1. Domain/Formality/Urgency analysis
+            analysis = self.ailang_pipeline.analyze_text(working_text, source_language, target_language, context)
+            ailang_metadata["analysis"] = analysis
+            
+            # 2. Context memory for pronoun resolution
+            context_result = self.ailang_pipeline.process_context_memory(working_text, source_language, context)
+            if context_result.get("resolution_applied"):
+                resolved = context_result.get("resolved_text", "")
+                # Only accept the resolved text if it looks like natural language,
+                # not a JSON/structured fallback from the AI stub.
+                if resolved and not _is_structured_fallback(resolved):
+                    working_text = resolved
+                ailang_metadata["context_memory"] = context_result
+            
+            # 3. Speaker profiling for style adaptation
+            profile_result = self.ailang_pipeline.process_speaker_profile(working_text, source_language, target_language, context)
+            if profile_result.get("style_guide"):
+                ailang_metadata["speaker_profile"] = profile_result
+            
+            # 4. Ambiguity detection
+            ambiguity_result = self.ailang_pipeline.process_ambiguity_resolution(working_text, source_language, target_language, context)
+            ailang_metadata["ambiguity"] = ambiguity_result
+            
+            improved_text = self.context_layer.improve(working_text, source_language, target_language, tone)
+        else:
+            improved_text = self.context_layer.improve(text, source_language, target_language, tone)
+        
+        translated_text = translator.translate(improved_text, source_language, target_language)
+        
+        # AILang post-translation pipeline
+        if self.ailang_pipeline:
+            context = self.ailang_pipeline.get_or_create_context(self.session_id)
+            
+            # 5. Confidence-based fallback
+            if confidence > 0:
+                confidence_result = self.ailang_pipeline.process_confidence_fallback(
+                    improved_text, translated_text, confidence, source_language, target_language, 
+                    context, analysis.get("instructions", [])
+                )
+                if confidence_result.get("escalated"):
+                    translated_text = confidence_result["final_translation"]
+                    ailang_metadata["confidence_fallback"] = confidence_result
+            
+            # 6. Dialect adaptation
+            dialect_result = self.ailang_pipeline.process_dialect_adaptation(
+                improved_text, translated_text, source_language, target_language, context
+            )
+            if dialect_result.get("adaptation_applied"):
+                translated_text = dialect_result["final_translation"]
+                ailang_metadata["dialect_adaptation"] = dialect_result
+            
+            # 7. Glossary injection
+            glossary_result = self.ailang_pipeline.process_glossary_injection(
+                improved_text, translated_text, source_language, target_language, 
+                context, analysis.get("instructions", [])
+            )
+            if glossary_result.get("glossary_applied"):
+                translated_text = glossary_result["final_translation"]
+                ailang_metadata["glossary_injection"] = glossary_result
+            
+            back_translation_result = self.ailang_pipeline.process_back_translation(
+                improved_text, translated_text, source_language, target_language, context
+            )
+            if back_translation_result.get("improved"):
+                translated_text = back_translation_result["final_translation"]
+                ailang_metadata["back_translation"] = back_translation_result
+            
+            self.ailang_pipeline.add_conversation_turn(
+                self.session_id, speaker or "unknown", text, translated_text
+            )
+        
+        audio_output_path = None
+        if synthesize_audio:
+            emotion_config = None
+            if self.ailang_pipeline:
+                context = self.ailang_pipeline.get_or_create_context(self.session_id)
+                emotion_result = self.ailang_pipeline.process_emotion_tts(translated_text, target_language, context)
+                emotion_config = emotion_result.get("tts_config")
+                ailang_metadata["emotion_tts"] = emotion_result
+            audio_output_path = self.tts.synthesize(
+                translated_text, output_audio_path, language=target_language, emotion_config=emotion_config
+            )
+        return TranslationResult(
+            source_text=text,
+            improved_text=improved_text,
+            translated_text=translated_text,
+            audio_output_path=audio_output_path,
+            ailang_metadata=ailang_metadata if ailang_metadata else None,
         )
+
+    def translate_audio(self, audio_path, source_language="en", target_language="es", tone=None, synthesize_audio=True, output_audio_path="models/output.wav", speaker=None, confidence=0.0):
+        source_text = self.stt.transcribe(audio_path, source_language)
+        return self.translate_text(source_text, source_language=source_language, target_language=target_language, tone=tone, synthesize_audio=synthesize_audio, output_audio_path=output_audio_path, speaker=speaker, confidence=confidence)
     
-    def set_glossary(self, glossary: list) -> None:
-        """Set custom glossary for the current session."""
-        set_session_glossary(self.session_id, glossary)
+    def set_glossary(self, glossary):
         if self.ailang_pipeline:
             self.ailang_pipeline.set_glossary(self.session_id, glossary)
     
-    def set_dialect_preference(self, dialect: str) -> None:
-        """Set dialect preference for the current session."""
+    def set_dialect_preference(self, dialect):
         if self.ailang_pipeline:
             self.ailang_pipeline.set_dialect_preference(self.session_id, dialect)
     
-    def set_speaker(self, speaker: str) -> None:
-        """Set current speaker for the current session."""
+    def set_speaker(self, speaker):
         if self.ailang_pipeline:
             self.ailang_pipeline.set_speaker(self.session_id, speaker)
     
-    def clear_session_context(self) -> None:
-        """Clear context for the current session."""
+    def clear_session_context(self):
         if self.ailang_pipeline:
             self.ailang_pipeline.clear_context(self.session_id)
     
-    def get_ailang_statistics(self) -> dict:
-        """Get AILang pipeline statistics."""
+    def get_ailang_statistics(self):
         if self.ailang_pipeline:
             return self.ailang_pipeline.get_statistics()
         return {"enabled": False, "active_sessions": 0, "bridge_stats": None}

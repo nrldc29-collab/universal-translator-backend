@@ -11,10 +11,10 @@ from typing import Any, Callable, Dict, List, Optional
 
 __all__ = [
     # String utilities
-    "split", "join", "lower", "upper", "strip", "replace", "contains",
+    "split", "join", "lower", "upper", "strip", "trim", "replace", "contains",
     "starts_with", "ends_with", "length",
     # List utilities
-    "first", "last", "rest", "take", "drop", "reverse", "sort", "unique", "flatten",
+    "first", "last", "rest", "take", "drop", "slice", "reverse", "sort", "unique", "flatten",
     # Number utilities
     "add", "subtract", "multiply", "divide", "floor", "ceil", "round_number",
     "min_value", "max_value", "sum_items", "average",
@@ -105,6 +105,11 @@ def strip(text: str) -> str:
     return text.strip() if text else ""
 
 
+def trim(text: str) -> str:
+    """Remove leading and trailing whitespace. Alias for strip()."""
+    return text.strip() if text else ""
+
+
 def replace(text: str, old: str, new: str) -> str:
     """Replace occurrences of old with new in text."""
     if not text or not old:
@@ -165,6 +170,16 @@ def take(items: List[Any], n: int) -> List[Any]:
 def drop(items: List[Any], n: int) -> List[Any]:
     """Drop the first n items from a list."""
     return items[n:]
+
+
+def slice(obj, start, end=None) -> Any:
+    """Slice a list or string. AILang slice(obj, start, end) — NOT Python's built-in slice."""
+    try:
+        if end is None:
+            return obj[int(start):]
+        return obj[int(start):int(end)]
+    except Exception:
+        return obj
 
 
 def reverse(items: List[Any]) -> List[Any]:

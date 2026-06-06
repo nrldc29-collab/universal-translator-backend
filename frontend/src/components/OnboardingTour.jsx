@@ -44,9 +44,11 @@ export default function OnboardingTour({ onComplete }) {
   const [dontShowAgain, setDontShowAgain] = useState(false);
 
   useEffect(() => {
-    // Check if user has seen the tour
+    // Keep first launch focused on the translator; the tour can be enabled
+    // deliberately for QA with localStorage.anai_onboarding_enabled = "true".
+    const tourEnabled = localStorage.getItem('anai_onboarding_enabled') === 'true';
     const hasSeenTour = localStorage.getItem('anai_onboarding_seen');
-    if (!hasSeenTour) {
+    if (tourEnabled && !hasSeenTour) {
       setIsOpen(true);
     }
   }, []);

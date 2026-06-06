@@ -19,6 +19,7 @@ import {
   buildTranslatePayload,
   readPersistedTargetLanguage,
   TARGET_LANGUAGE_OPTIONS,
+  isSameOriginBackendHost,
 } from '../utils';
 
 // ---------- normalizeSessionId ----------
@@ -41,6 +42,21 @@ describe('normalizeSessionId', () => {
     expect(normalizeSessionId(null)).toBe('');
     expect(normalizeSessionId(undefined)).toBe('');
     expect(normalizeSessionId('')).toBe('');
+  });
+});
+
+// ---------- host detection ----------
+
+describe('isSameOriginBackendHost', () => {
+  it('treats stable custom domains as same-origin backend hosts', () => {
+    expect(isSameOriginBackendHost('translate.example.com')).toBe(true);
+    expect(isSameOriginBackendHost('anai.example.org')).toBe(true);
+  });
+
+  it('does not classify local development hosts as deployed same-origin hosts', () => {
+    expect(isSameOriginBackendHost('localhost')).toBe(false);
+    expect(isSameOriginBackendHost('127.0.0.1')).toBe(false);
+    expect(isSameOriginBackendHost('192.168.12.243')).toBe(false);
   });
 });
 
@@ -412,10 +428,10 @@ describe('readPersistedTargetLanguage', () => {
 // ---------- TARGET_LANGUAGE_OPTIONS sanity ----------
 
 describe('TARGET_LANGUAGE_OPTIONS', () => {
-  it('contains en, es, ht entries', () => {
+  it('contains the configured product language entries', () => {
     const codes = TARGET_LANGUAGE_OPTIONS.map((o) => o.code);
-    expect(codes).toContain('en');
-    expect(codes).toContain('es');
-    expect(codes).toContain('ht');
+    for (const code of ['en', 'es', 'ht', 'fr', 'de', 'it', 'pt', 'nl', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi']) {
+      expect(codes).toContain(code);
+    }
   });
 });

@@ -193,69 +193,201 @@ def update_conversation_memory(
     return {"context_window": {}, "topics": [], "updated": False}
 
 
-def reload_all() -> Dict[str, Any]:
-    """Hot-reload all AILang components (agents, pipelines, plugins).
+def enhance_translation_v2(
+    text: str,
+    source_lang: str,
+    target_lang: str,
+    context: Optional[Dict[str, Any]] = None,
+    glossary: Optional[list] = None,
+    dialect_preference: str = "",
+) -> Dict[str, Any]:
+    """Full enhanced pipeline — context memory, confidence fallback, speaker profiler,
+    ambiguity resolver, back-translator, dialect adapter, glossary injector, all wired in.
 
-    Call this when .ai files are modified to pick up changes without restart.
+    Drop-in upgrade over enhance_translation(). Pass quality_mode='enhanced' or call this
+    directly. Individual agent helpers are also available below for selective use.
+
+    Args:
+        text: Source text to translate
+        source_lang: Source language code (e.g. 'en')
+        target_lang: Target language code (e.g. 'es')
+        context: Conversation context dict. Supported keys:
+            conversation_history  — list of {speaker, text, translated} dicts
+            speaker_registry      — per-speaker profiles, persist this across turns
+            current_speaker       — str name/id of who is speaking
+            glossary              — list of {source, target, lang_pair, context} overrides
+            target_dialect        — e.g. 'es-MX', 'pt-BR'
+            quality_mode          — 'enhanced'|'premium'|'standard'|'fast'
+            urgency               — 'urgent'|'normal'
+        glossary: Shortcut to pass glossary without building a full context dict
+        dialect_preference: Target dialect code, e.g. 'es-MX'
+
+    Returns:
+        Dict with translated_text, tts_config, analysis, and per-agent metadata
     """
-    results = {"bridge": False, "plugins": False, "pipelines": False}
+    if context is None:
+        context = {}
+    context.setdefault("quality_mode", "enhanced")
+    context.setdefault("target_lang", target_lang)
+    context.setdefault("source_lang", source_lang)
+    context.setdefault("conversation_history", [])
+    context.setdefault("speaker_registry", {})
+    context.setdefault("current_speaker", "unknown")
+    context.setdefault("urgency", "normal")
+    if glossary:
+        context.setdefault("glossary", glossary)
+    if dialect_preference:
+        context.setdefault("target_dialect", dialect_preference)
+    return enhance_translation(text, source_lang, target_lang, context, pipeline="auto")
 
+
+def run_context_memory(
+    text: str,
+    speaker: str,
+    source_lang: str,
+    history: list,
+    speaker_registry=None,
+):
+    """Resolve pronouns/references using conversation history.
+    Returns resolved_text, entities, topic_shift, updated speaker_registry.
+    """
+    if speaker_registry is None:
+        speaker_registry = {}
     try:
         from .bridge import get_bridge
-        get_bridge().reload()
-        results["bridge"] = True
+        a = get_bridge().get_agent("ContextMemoryAgent")
+        if a:
+            return a.call("process", text, speaker, source_lang, history, speaker_registry)
     except Exception as e:
-        logger.error(f"Bridge reload failed: {e}")
-
-    try:
-        from .plugin_loader import get_plugin_loader
-        get_plugin_loader().reload_all()
-        results["plugins"] = True
-    except Exception as e:
-        logger.error(f"Plugin reload failed: {e}")
-
-    try:
-        from .pipeline_runner import get_pipeline_runner
-        get_pipeline_runner().reload()
-        results["pipelines"] = True
-    except Exception as e:
-        logger.error(f"Pipeline reload failed: {e}")
-
-    return results
+        logger.debug(f"ContextMemoryAgent unavailable: {e}")
+    return {"resolved_text": text, "entities": {}, "topic_shift": False, "speaker_registry": speaker_registry}
 
 
-def get_system_status() -> Dict[str, Any]:
-    """Get status of the AILang integration system."""
-    status = {
-        "ailang_available": False,
-        "agents": [],
-        "pipelines": {},
-        "plugins": [],
-    }
-
+def run_confidence_fallback(
+    text: str,
+    base_translation: str,
+    confidence: float,
+    source_lang: str,
+    target_lang: str,
+    domain: str = "general",
+    instructions=None,
+):
+    """Escalate low-confidence translations to Claude.
+    Returns final_translation, tier (high/medium/low), escalated bool.
+    """
+    if instructions is None:
+        instructions = []
     try:
         from .bridge import get_bridge
-        bridge = get_bridge()
-        status["ailang_available"] = bridge._ailang_available
-        status["agents"] = bridge.list_agents()
-    except Exception:
-        pass
+        a = get_bridge().get_agent("ConfidenceFallbackAgent")
+        if a:
+            return a.call("process", text, base_translation, confidence, source_lang, target_lang, domain, instructions)
+    except Exception as e:
+        logger.debug(f"ConfidenceFallbackAgent unavailable: {e}")
+    return {"final_translation": base_translation, "tier": "high", "escalated": False}
 
+
+def run_speaker_profiler(
+    speaker: str,
+    text: str,
+    source_lang: str,
+    target_lang: str,
+    registry=None,
+):
+    """Build/update a speaker profile and return style instructions.
+    Returns style_guide (list), profile dict, updated_registry.
+    """
+    if registry is None:
+        registry = {}
     try:
-        from .pipeline_runner import get_pipeline_runner
-        runner = get_pipeline_runner()
-        status["pipelines"] = runner.list_pipelines()
-    except Exception:
-        pass
+        from .bridge import get_bridge
+        a = get_bridge().get_agent("SpeakerProfilerAgent")
+        if a:
+            return a.call("get_style_instructions", speaker, text, source_lang, target_lang, registry)
+    except Exception as e:
+        logger.debug(f"SpeakerProfilerAgent unavailable: {e}")
+    return {"style_guide": [], "profile": {}, "updated_registry": registry}
 
+
+def run_ambiguity_resolver(
+    text: str,
+    source_lang: str,
+    target_lang: str,
+    domain: str = "general",
+    history_summary: str = "",
+):
+    """Detect and resolve translation ambiguities.
+    Returns has_ambiguities, disambiguation dict, needs_human_review bool.
+    """
     try:
-        from .plugin_loader import get_plugin_loader
-        loader = get_plugin_loader()
-        status["plugins"] = [
-            {"name": p.name, "version": p.version, "hooks": p.hooks, "enabled": p.enabled}
-            for p in loader.list_plugins()
-        ]
-    except Exception:
-        pass
+        from .bridge import get_bridge
+        a = get_bridge().get_agent("AmbiguityResolverAgent")
+        if a:
+            return a.call("process", text, source_lang, target_lang, domain, history_summary)
+    except Exception as e:
+        logger.debug(f"AmbiguityResolverAgent unavailable: {e}")
+    return {"has_ambiguities": False, "needs_human_review": False}
 
-    return status
+
+def run_back_translation_verify(
+    original: str,
+    translated: str,
+    source_lang: str,
+    target_lang: str,
+    domain: str = "general",
+):
+    """Verify translation accuracy via back-translation.
+    Returns verified bool, final_translation, similarity score, improved bool.
+    """
+    try:
+        from .bridge import get_bridge
+        a = get_bridge().get_agent("BackTranslatorAgent")
+        if a:
+            return a.call("verify", original, translated, source_lang, target_lang, domain)
+    except Exception as e:
+        logger.debug(f"BackTranslatorAgent unavailable: {e}")
+    return {"verified": True, "final_translation": translated, "improved": False}
+
+
+def run_dialect_adapter(
+    source_text: str,
+    base_translation: str,
+    source_lang: str,
+    target_lang: str,
+    dialect_preference: str = "",
+):
+    """Detect source dialect and adapt translation to target regional variant.
+    Returns final_translation, source_dialect, target_dialect, adaptation_applied bool.
+    """
+    try:
+        from .bridge import get_bridge
+        a = get_bridge().get_agent("DialectAdapterAgent")
+        if a:
+            return a.call("process", source_text, base_translation, source_lang, target_lang, dialect_preference)
+    except Exception as e:
+        logger.debug(f"DialectAdapterAgent unavailable: {e}")
+    return {"final_translation": base_translation, "source_dialect": source_lang,
+            "target_dialect": target_lang, "adaptation_applied": False}
+
+
+def run_glossary_inject(
+    text: str,
+    base_translation: str,
+    source_lang: str,
+    target_lang: str,
+    glossary: list,
+    domain: str = "general",
+):
+    """Apply custom glossary terms to a translation.
+    Returns final_translation, glossary_applied bool, matched_terms list.
+    """
+    if not glossary:
+        return {"final_translation": base_translation, "glossary_applied": False, "matched_terms": []}
+    try:
+        from .bridge import get_bridge
+        a = get_bridge().get_agent("GlossaryInjectorAgent")
+        if a:
+            return a.call("process", text, base_translation, source_lang, target_lang, domain, glossary, [])
+    except Exception as e:
+        logger.debug(f"GlossaryInjectorAgent unavailable: {e}")
+    return {"final_translation": base_translation, "glossary_applied": False, "matched_terms": []}

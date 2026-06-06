@@ -816,11 +816,23 @@ def validate_production_config() -> list[str]:
         )
 
     origins = get_allowed_origins()
-    placeholder_origins = [o for o in origins if "example.com" in o or "your-frontend" in o]
+    _placeholder_markers = (
+        "example.com",
+        "your-frontend",
+        "your-railway-app",
+        "your-app-name",
+        "your-app",
+        "<your-",
+        "your-backend",
+    )
+    placeholder_origins = [
+        o for o in origins
+        if any(marker in o.lower() for marker in _placeholder_markers)
+    ]
     if placeholder_origins:
         errors.append(
             f"ALLOWED_ORIGINS contains placeholder domain(s): {placeholder_origins}. "
-            "Set your actual deployed frontend origin(s)."
+            "Set your actual deployed frontend origin(s), e.g. https://<service>.up.railway.app"
         )
 
     if get_hybrid_enable_remote():

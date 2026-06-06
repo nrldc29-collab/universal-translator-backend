@@ -1577,3 +1577,97 @@
   .sp-input { min-width: 100px; }
 }
 
+/* ============================================
+   AILANG STATUS BADGE
+   ============================================ */
+
+.ailang-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  transition: all 0.3s ease;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.ailang-status-badge .ailang-status-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.ailang-status-badge .ailang-status-text {
+  color: inherit;
+}
+
+.ailang-status-badge .ailang-status-detail {
+  font-size: 0.62rem;
+  font-weight: 500;
+  opacity: 0.7;
+  margin-left: 1px;
+}
+
+/* Loading / checking */
+.ailang-status-badge.loading {
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  color: #64748b;
+}
+
+.ailang-status-badge.loading .ailang-status-icon {
+  animation: ailangPulse 1.5s ease-in-out infinite;
+}
+
+/* Active: green glow */
+.ailang-status-badge.active {
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  color: #34d399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.08);
+}
+
+/* Degraded: amber warning */
+.ailang-status-badge.degraded {
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: #fbbf24;
+}
+
+/* Offline: muted gray */
+.ailang-status-badge.offline {
+  background: rgba(148, 163, 184, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  color: #64748b;
+}
+
+@keyframes ailangPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+/* High contrast */
+@media (prefers-contrast: high) {
+  .ailang-status-badge.active {
+    border-width: 2px;
+    box-shadow: 0 0 0 1px #34d399;
+  }
+  .ailang-status-badge.degraded {
+    border-width: 2px;
+  }
+}
+
+/* Spinning icon for model switch */
+.sp-spin-icon {
+  animation: spIconSpin 1s linear infinite;
+}
+
+@keyframes spIconSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+

@@ -378,17 +378,11 @@ def build_tts_pacing(text: str, intent: str | None = None, urgency: str | None =
     }
 
 
-def emotion_config_from_style(style: Optional[dict]) -> Optional[dict]:
-    """Convert a TTS pacing ``style`` into the ``emotion_config`` consumed by
-    ``PiperTextToSpeech.synthesize`` (``{speed, pitch_shift, volume}``).
-
-    Pacing ``pitch``/``energy`` are multipliers relative to neutral; ``pitch`` is
-    converted to semitones for the renderer. Returns ``None`` when the style is
-    neutral so synthesis behaviour is unchanged.
-    """
+def emotion_config_from_style(style=None):
     if not style:
         return None
-    config: dict = {}
+    import math
+    config = {}
     speed = style.get("speed")
     if isinstance(speed, (int, float)) and speed > 0 and float(speed) != 1.0:
         config["speed"] = float(speed)

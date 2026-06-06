@@ -66,7 +66,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
             const timeSincePong = Date.now() - lastPongTime;
             if (timeSincePong > PING_TIMEOUT) {
               debugLog('Ping timeout - no pong received');
-              ws.close(1000, 'Ping timeout');
+              ws.close(4000, 'Ping timeout');
             }
           }, PING_TIMEOUT);
         } catch (e) {
@@ -102,7 +102,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     connectionTimeout = setTimeout(() => {
       if (ws && ws.readyState !== WebSocket.OPEN) {
         debugLog('Connection timeout');
-        ws.close(1000, 'Connection timeout');
+        ws.close(4001, 'Connection timeout');
         setStatus?.('Connection timeout');
         scheduleReconnect();
       }

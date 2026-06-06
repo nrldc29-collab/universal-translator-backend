@@ -15,6 +15,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     ENVIRONMENT=production \
     BACKEND_HOST=0.0.0.0 \
+    BACKEND_PORT=8000 \
     SERVE_FRONTEND_DIST=1 \
     FRONTEND_DIST_DIR=frontend/dist \
     USE_GPU=0 \
@@ -23,16 +24,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WHISPER_MODEL_SIZE=tiny \
     WHISPER_CPU_THREADS=4 \
     WHISPER_NUM_WORKERS=1 \
-    PRELOAD_MODELS=0 \
-    TRANSLATION_BACKEND=marian \
+    PRELOAD_MODELS=1 \
+    TRANSLATION_BACKEND=hybrid \
     TRANSLATION_DEVICE=cpu \
-    HYBRID_ENABLE_MARIAN_FALLBACK=1 \
-    HYBRID_ENABLE_REMOTE=0 \
     REMOTE_TRANSLATION_TIMEOUT_SECONDS=0.65 \
+    HYBRID_ENABLE_MARIAN_FALLBACK=0 \
+    OLLAMA_ENABLED=0 \
+    AILANG_ENABLED=1 \
     GPU_COST_MODE=low \
-    STT_MAX_CONCURRENCY=1 \
+    STT_MAX_CONCURRENCY=2 \
     WHISPER_BEAM_SIZE=1 \
     VAD_RECENT_CHUNKS=2 \
+    VAD_SILENT_CHECKS=1 \
     VAD_FORCE_FINAL_SECONDS=0.25 \
     SPEECH_MERGE_MS=40 \
     MIN_SPEECH_BYTES=4000 \
@@ -42,20 +45,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CLIENT_VAD_MODE=1 \
     CLIENT_VAD_THRESHOLD=0.055 \
     PARTIAL_TTS_MODE=1 \
+    NEAR_ZERO_LATENCY_MODE=1 \
+    STREAM_BUFFER_MAX_MB=12 \
+    MAX_ACTIVE_STREAMS_PER_USER=2 \
+    PREDICTIVE_CACHE_SIZE=1000 \
+    PREDICTIVE_CACHE_TTL=3600 \
     CIP_DEFAULT_MODE=ut_first \
     PIPELINE_STEP_TIMEOUT_SECONDS=10 \
     TTS_CHUNK_CHARS=14 \
     TTS_FIRST_CHUNK_CHARS=10 \
-    MAX_ACTIVE_STREAMS_PER_USER=5 \
-    REQUESTS_PER_MINUTE=120 \
-    QUOTA_REQUESTS_PER_HOUR=500 \
-    ALLOWED_ORIGIN_REGEX='https://.*\.up\.railway\.app' \
-    STT_PROVIDER=local \
-    NEAR_ZERO_LATENCY_MODE=1 \
-    STREAM_BUFFER_MAX_MB=12 \
-    HF_HOME=/app/.cache/huggingface \
-    TRANSFORMERS_CACHE=/app/.cache/huggingface \
-    HUGGINGFACE_HUB_CACHE=/app/.cache/huggingface
+    PREFER_CLOUD_TTS=1 \
+    DATA_DIR=/app/data
 
 WORKDIR /app
 
@@ -67,10 +67,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-railway.txt ./requirements.txt
-RUN python -m pip install --no-cache-dir uv && \
-    UV_HTTP_TIMEOUT=600 uv pip install --system --no-cache \
-    --index-strategy unsafe-best-match \
-    -r requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade pip && \
+    python -m pip install --no-cache-dir -r requirements.txt
 
 COPY backend backend/
 COPY llm llm/
@@ -79,13 +77,16 @@ COPY translation translation/
 COPY tts tts/
 COPY ailang ailang/
 COPY ailang_integration ailang_integration/
-COPY models/tts/ models/tts/
-COPY scripts/docker_fetch_piper.sh scripts/docker_fetch_piper.sh
-ARG HF_TOKEN=
-ENV HF_TOKEN=${HF_TOKEN}
-RUN chmod +x scripts/docker_fetch_piper.sh && ./scripts/docker_fetch_piper.sh models/tts
+RUN mkdir -p models/tts && \
+    curl -L --fail -o models/tts/en_US-lessac-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx && \
+    curl -L --fail -o models/tts/en_US-lessac-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json && \
+    curl -L --fail -o models/tts/es_MX-claude-high.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx && \
+    curl -L --fail -o models/tts/es_MX-claude-high.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx.json
 COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
 
 CMD ["python", "-m", "backend.app"]

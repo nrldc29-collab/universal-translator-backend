@@ -25,7 +25,7 @@ from backend.model_readiness import evaluate_preload_result
 from backend.security import WEBSOCKET_AUTH_RELEASE
 
 
-RELEASE_ID = "2026-05-13-active-speaker-v19"
+RELEASE_ID = "2026-06-06-railway-backend-v20"
 
 
 runtime_state: dict = {

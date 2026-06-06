@@ -4,17 +4,12 @@ from time import time
 from urllib.error import HTTPError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request as UrlRequest, urlopen
-
 from backend.config import get_cip_mode, get_cip_process_url, get_cip_retries, get_cip_timeout_seconds
-
 from backend.cip_engine import evaluate_local_cip
 from backend.observability import observability
 from backend.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerOpenError, get_circuit_breaker
 from backend.service_health import get_service_health_manager, record_service_success, record_service_failure
-
 logger = logging.getLogger("anai_translator.cip_client")
-
-
 def cip_settings() -> dict:
     url = get_cip_process_url()
     mode = get_cip_mode()
@@ -34,13 +29,9 @@ def cip_settings() -> dict:
         "timeout_seconds": get_cip_timeout_seconds(),
         "retries": get_cip_retries(),
     }
-
-
 def cip_enabled() -> bool:
     settings = cip_settings()
     return bool(settings["enabled"])
-
-
 def _cip_endpoint(path: str) -> str:
     base_url = get_cip_process_url()
     if not base_url:
@@ -49,8 +40,6 @@ def _cip_endpoint(path: str) -> str:
     if parsed.scheme and parsed.netloc:
         return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
     return f"{base_url.rstrip('/')}{path}"
-
-
 def _json_safe(value):
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -59,8 +48,6 @@ def _json_safe(value):
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     return str(value)
-
-
 def cip_health_snapshot(timeout: float | None = None) -> dict:
     settings = cip_settings()
     snapshot = {
@@ -82,7 +69,6 @@ def cip_health_snapshot(timeout: float | None = None) -> dict:
         snapshot["status"] = "local"
         snapshot["external_error"] = "not_configured"
         return snapshot
-
     request_timeout = timeout if timeout is not None else get_cip_timeout_seconds()
     started_at = time()
     try:
@@ -99,7 +85,6 @@ def cip_health_snapshot(timeout: float | None = None) -> dict:
     except (URLError, TimeoutError, ConnectionError) as exc:
         snapshot["latency_ms"] = round((time() - started_at) * 1000, 1)
         snapshot["external_error"] = exc.__class__.__name__
-
     try:
         req = UrlRequest(snapshot["openai_diagnostics_url"], headers={"User-Agent": "AnaiTranslator-CIPDiagnostics/1.0"})
         with urlopen(req, timeout=request_timeout) as resp:
@@ -108,8 +93,6 @@ def cip_health_snapshot(timeout: float | None = None) -> dict:
     except (URLError, TimeoutError, ConnectionError, json.JSONDecodeError) as exc:
         snapshot["openai"] = {"error": exc.__class__.__name__}
     return snapshot
-
-
 def _call_external_cip(
     text: str,
     target_language: str,
@@ -120,7 +103,6 @@ def _call_external_cip(
     process_url = get_cip_process_url()
     if not process_url:
         return None
-
     # Get or create circuit breaker for CIP external calls
     cb_config = CircuitBreakerConfig(
         failure_threshold=3,
@@ -129,7 +111,6 @@ def _call_external_cip(
         timeout=timeout if timeout is not None else get_cip_timeout_seconds(),
     )
     circuit_breaker = get_circuit_breaker("cip_external", cb_config)
-
     request_timeout = timeout if timeout is not None else get_cip_timeout_seconds()
     span_start = time()
     payload = json.dumps(_json_safe({
@@ -138,7 +119,6 @@ def _call_external_cip(
         "sessionId": session_id or "default",
         **payload_context,
     })).encode("utf-8")
-
     async def make_request():
         for attempt in range(get_cip_retries() + 1):
             try:
@@ -169,7 +149,6 @@ def _call_external_cip(
                     import asyncio
                     await asyncio.sleep(0.1 * (attempt + 1))  # Exponential backoff
         return None
-
     # Try circuit breaker protected call
     try:
         import asyncio
@@ -182,8 +161,6 @@ def _call_external_cip(
         logger.warning("CIP circuit breaker OPEN, skipping external CIP call")
         record_service_failure("cip_external", {"reason": "circuit_breaker_open"})
         return None
-
-
 def call_cip_brain(
     text: str,
     target_language: str,
@@ -200,7 +177,6 @@ def call_cip_brain(
 ) -> dict | None:
     if not cip_enabled() or not text or not target_language:
         return None
-
     settings = cip_settings()
     payload_context = {
         "fallbackTranslation": fallback_translation,
@@ -211,12 +187,10 @@ def call_cip_brain(
         "speakerContext": speaker_context or {},
         "semanticContext": semantic_context or {},
     }
-
     if settings["external_enabled"]:
         external = _call_external_cip(text, target_language, session_id, timeout, payload_context)
         if external:
             return external
-
     return evaluate_local_cip(
         text,
         target_language,

@@ -1,7 +1,7 @@
 param(
-    [string]$Username = "demo",
+    [string]$Username = "admin",
     [string]$Password = "",
-    [string]$FrontendOrigin = ""
+    [string]$RailwayOrigin = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,39 +34,46 @@ $variables = [ordered]@{
     WHISPER_MODEL_SIZE = "tiny"
     WHISPER_CPU_THREADS = "4"
     WHISPER_NUM_WORKERS = "1"
-    PRELOAD_MODELS = "0"
+    PRELOAD_MODELS = "1"
+    TRANSLATION_BACKEND = "hybrid"
     TRANSLATION_DEVICE = "cpu"
+    HYBRID_ENABLE_MARIAN_FALLBACK = "0"
+    OLLAMA_ENABLED = "0"
+    AILANG_ENABLED = "1"
     GPU_COST_MODE = "low"
-    STT_MAX_CONCURRENCY = "1"
+    STT_MAX_CONCURRENCY = "2"
     WHISPER_BEAM_SIZE = "1"
     VAD_RECENT_CHUNKS = "2"
     VAD_SILENT_CHECKS = "1"
-    VAD_FORCE_FINAL_SECONDS = "0.35"
-    SPEECH_MERGE_MS = "80"
+    VAD_FORCE_FINAL_SECONDS = "0.25"
+    SPEECH_MERGE_MS = "40"
     MIN_SPEECH_BYTES = "4000"
     NEAR_ZERO_LATENCY_MODE = "1"
-    PARTIAL_STT_MIN_BYTES = "4000"
-    PARTIAL_STT_INTERVAL_MS = "250"
+    PARTIAL_STT_MIN_BYTES = "1200"
+    PARTIAL_STT_INTERVAL_MS = "100"
+    PARTIAL_TTS_MODE = "1"
     PIPELINE_STEP_TIMEOUT_SECONDS = "10"
-    TTS_CHUNK_CHARS = "26"
-    TRANSLATION_BACKEND = "marian"
-    HYBRID_ENABLE_MARIAN_FALLBACK = "1"
-    HYBRID_ENABLE_REMOTE = "0"
-    PREFER_CLOUD_TTS = "0"
-    STT_PROVIDER = "local"
-    REQUESTS_PER_MINUTE = "120"
-    QUOTA_REQUESTS_PER_HOUR = "500"
-    MAX_ACTIVE_STREAMS_PER_USER = "5"
-    ALLOWED_ORIGIN_REGEX = "https://.*\.up\.railway\.app"
+    PREDICTIVE_CACHE_SIZE = "1000"
+    PREDICTIVE_CACHE_TTL = "3600"
+    TTS_CHUNK_CHARS = "14"
+    TTS_FIRST_CHUNK_CHARS = "10"
+    PREFER_CLOUD_TTS = "1"
+    DATA_DIR = "/app/data"
+    REQUESTS_PER_MINUTE = "30"
+    MAX_ACTIVE_STREAMS_PER_USER = "2"
     JWT_SECRET = $jwtSecret
     USERS = "$Username`:$Password"
-    USER_TIERS = "$Username`:free"
+    USER_TIERS = "$Username`:standard"
+    ADMIN_IDENTITIES = $Username
 }
 
-if ($FrontendOrigin) {
-    $variables.ALLOWED_ORIGINS = $FrontendOrigin
-} else {
-    $variables.ALLOWED_ORIGINS = 'https://${{RAILWAY_PUBLIC_DOMAIN}}'
+if ($RailwayOrigin) {
+    $variables.ALLOWED_ORIGINS = $RailwayOrigin
+    if ($RailwayOrigin -match "https?://([^/]+)") {
+        $host = $Matches[1]
+        $escaped = [regex]::Escape($host)
+        $variables.ALLOWED_ORIGIN_REGEX = "https?://$escaped"
+    }
 }
 
 Write-Output ""
@@ -80,13 +87,5 @@ Write-Output "Login for the app:"
 Write-Output "  username: $Username"
 Write-Output "  password: $Password"
 Write-Output ""
-Write-Output "Finish public access (required once):"
-Write-Output "  1. Open https://railway.com/project/0d581567-e2fa-4405-a041-1b9aaeeafceb"
-Write-Output "  2. Project Settings -> Tokens -> create a project token"
-Write-Output "  3. Add Railway variable: RAILWAY_TOKEN=<project-token>"
-Write-Output "  4. Redeploy - the service auto-generates https://....up.railway.app on startup"
-Write-Output ""
-Write-Output "Or manually: Service -> Settings -> Networking -> Generate Domain,"
-Write-Output "then rerun: .\Get-Railway-Variables.ps1 -Username $Username -FrontendOrigin https://YOUR-SERVICE.up.railway.app"
-Write-Output ""
-Write-Output "Keep the password, JWT_SECRET, and RAILWAY_TOKEN private."
+Write-Output "Also mount a Railway volume at /app/data for persistent storage."
+Write-Output "Keep the password and JWT_SECRET private."

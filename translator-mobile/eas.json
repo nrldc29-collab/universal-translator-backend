@@ -15,6 +15,7 @@
         "simulator": true
       },
       "env": {
+        "EXPO_PUBLIC_API_URL": "http://192.168.12.243:8000",
         "EXPO_PUBLIC_DEBUG_LOGS": "1"
       }
     },
@@ -27,6 +28,7 @@
         "simulator": false
       },
       "env": {
+        "EXPO_PUBLIC_API_URL": "http://192.168.12.243:8000",
         "EXPO_PUBLIC_DEBUG_LOGS": "0"
       }
     },

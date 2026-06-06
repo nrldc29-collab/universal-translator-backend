@@ -59,19 +59,6 @@ class UsageLimiter:
                 qs.seed_audio(identity, self.audio_usage)
             self._audio_seeded.add(identity)
 
-    def check_connection(self, identity: str) -> tuple[bool, int]:
-        """Rate-limit WebSocket connects without consuming hourly HTTP quota."""
-        with self._lock:
-            now = time()
-            minute_start = now - 60
-            minute_requests = [ts for ts in self.minute_usage[identity] if ts >= minute_start]
-            limit = get_requests_per_minute()
-            if len(minute_requests) >= limit:
-                return False, 0
-            minute_requests.append(now)
-            self.minute_usage[identity] = minute_requests
-            return True, limit - len(minute_requests)
-
     def check(self, identity: str) -> tuple[bool, int]:
         with self._lock:
             now = time()
@@ -167,16 +154,6 @@ class UsageLimiter:
                 for identity, record in self.billing_usage.items()
             }
 
-    def reset(self) -> None:
-        """Clear in-memory counters (used by tests)."""
-        with self._lock:
-            self.usage.clear()
-            self.minute_usage.clear()
-            self.audio_usage.clear()
-            self.billing_usage.clear()
-            self._quota_seeded.clear()
-            self._audio_seeded.clear()
-
 
 usage_limiter = UsageLimiter()
 WEBSOCKET_AUTH_RELEASE = "anonymous-ws-v3"
@@ -243,7 +220,7 @@ def authenticate_user(username: str, password: str) -> str:
     return create_jwt(username)
 
 
-def extract_bearer_token(value: str | None) -> str | None:
+def extract_bearer_token(value):
     if not value:
         return None
     scheme, _, token = value.partition(" ")
@@ -253,9 +230,9 @@ def extract_bearer_token(value: str | None) -> str | None:
 
 
 def authenticate_http(
-    authorization: str | None = Header(default=None),
-    x_api_key: str | None = Header(default=None),
-) -> str:
+    authorization=Header(default=None),
+    x_api_key=Header(default=None),
+):
     bearer_token = extract_bearer_token(authorization)
     jwt_identity = verify_jwt(bearer_token)
     keys = get_api_keys()
@@ -266,18 +243,14 @@ def authenticate_http(
     elif x_api_key in keys:
         identity = x_api_key or "anonymous"
     else:
-        # Allow anonymous access (same as WebSocket) so mobile clients
-        # that use the HTTP audio endpoint (e.g. iOS Safari) can translate
-        # without needing a JWT token or API key.
         identity = "anonymous"
-
     allowed, remaining = usage_limiter.check(identity)
     if not allowed:
         raise HTTPException(status_code=429, detail="Quota exceeded.")
     return identity
 
 
-async def authenticate_websocket(websocket: WebSocket) -> tuple[bool, str]:
+async def authenticate_websocket(websocket):
     token = (
         websocket.query_params.get("token")
         or websocket.query_params.get("access_token")
@@ -294,13 +267,10 @@ async def authenticate_websocket(websocket: WebSocket) -> tuple[bool, str]:
         identity = token or "anonymous"
     else:
         identity = "anonymous"
-
     if identity == "anonymous":
         return True, identity
-
-    allowed, remaining = usage_limiter.check_connection(identity)
+    allowed, remaining = usage_limiter.check(identity)
     if not allowed:
-        await websocket.accept()
         await websocket.close(code=1008, reason="Quota exceeded.")
         return False, identity
     return True, identity

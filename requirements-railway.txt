@@ -17,6 +17,10 @@ requests>=2.31.0
 # Must stay in sync with requirements.txt or the Railway image crashes on startup.
 slowapi>=0.1.9
 websockets>=14.1
+# Audio enhancement (noise reduction / AGC) in streaming hot path.
+scipy>=1.11.0
+# Free cloud TTS fallback when Piper voices are unavailable.
+edge-tts>=7.2.0
 # AILang advanced-translation agents (vendored ailang/ + ailang_integration/).
 # Agents call OpenAI when OPENAI_API_KEY is set; otherwise they degrade gracefully.
 flask>=3.0
