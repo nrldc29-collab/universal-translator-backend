@@ -502,6 +502,15 @@ def _railway_public_domain() -> str:
     return os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
 
 
+def _is_railway_runtime() -> bool:
+    return bool(
+        _railway_public_domain()
+        or os.getenv("RAILWAY_PROJECT_ID", "").strip()
+        or os.getenv("RAILWAY_SERVICE_ID", "").strip()
+        or os.getenv("RAILWAY_ENVIRONMENT_ID", "").strip()
+    )
+
+
 def _railway_seed(purpose: str) -> str:
     parts = [
         os.getenv("RAILWAY_PROJECT_ID", "").strip(),
@@ -529,11 +538,11 @@ def _derive_railway_secret(purpose: str, *, byte_length: int = 48) -> str:
 def apply_railway_production_defaults() -> list[str]:
     """Fill missing production secrets/origins when running on Railway."""
     applied: list[str] = []
-    if not is_production() or not _railway_public_domain():
+    if not is_production() or not _is_railway_runtime():
         return applied
 
     domain = _railway_public_domain()
-    origin = f"https://{domain}"
+    origin = f"https://{domain}" if domain else ""
 
     host = os.getenv("BACKEND_HOST", "").strip()
     if not host or host in {"127.0.0.1", "localhost"}:
@@ -542,7 +551,11 @@ def apply_railway_production_defaults() -> list[str]:
 
     raw_origins = os.getenv("ALLOWED_ORIGINS", "").strip()
     if not raw_origins or "example.com" in raw_origins or "your-frontend" in raw_origins:
-        os.environ["ALLOWED_ORIGINS"] = origin
+        if origin:
+            os.environ["ALLOWED_ORIGINS"] = origin
+        else:
+            # Networking not enabled yet — bundled UI is same-origin; avoid placeholder block.
+            os.environ["ALLOWED_ORIGINS"] = "http://127.0.0.1:8000"
         applied.append("ALLOWED_ORIGINS")
 
     jwt = os.getenv("JWT_SECRET", "dev-only-change-me")

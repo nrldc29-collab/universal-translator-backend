@@ -59,6 +59,23 @@ def test_railway_bootstrap_fills_missing_production_defaults(monkeypatch):
     assert config.get_users()["demo"]
 
 
+def test_railway_bootstrap_without_public_domain(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    monkeypatch.setenv("USERS", "demo:demo")
+    monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("RAILWAY_PUBLIC_DOMAIN", raising=False)
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+    monkeypatch.setenv("RAILWAY_SERVICE_ID", "service-xyz")
+
+    applied = config.apply_railway_production_defaults()
+    assert "JWT_SECRET" in applied
+    assert "USERS" in applied
+    assert "ALLOWED_ORIGINS" in applied
+    assert config.validate_production_config() == []
+    assert "your-frontend" not in ",".join(config.get_allowed_origins())
+
+
 def test_railway_bootstrap_does_not_override_explicit_secrets(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("JWT_SECRET", "x" * 64)
