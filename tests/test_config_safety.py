@@ -118,6 +118,61 @@ def test_railway_bootstrap_disables_blocking_preload(monkeypatch):
     assert config.get_preload_models() is False
 
 
+def test_ensure_railway_public_domain_skips_without_token(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("RAILWAY_PUBLIC_DOMAIN", raising=False)
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_ID", "env-abc")
+    monkeypatch.setenv("RAILWAY_SERVICE_ID", "service-xyz")
+    monkeypatch.delenv("RAILWAY_TOKEN", raising=False)
+    monkeypatch.delenv("RAILWAY_API_TOKEN", raising=False)
+
+    assert config.ensure_railway_public_domain() is None
+
+
+def test_ensure_railway_public_domain_creates_via_graphql(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("RAILWAY_PUBLIC_DOMAIN", raising=False)
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_ID", "env-abc")
+    monkeypatch.setenv("RAILWAY_SERVICE_ID", "service-xyz")
+    monkeypatch.setenv("RAILWAY_TOKEN", "token-abc")
+
+    def fake_gql(query: str, variables=None):
+        if "serviceDomainCreate" in query:
+            return {"serviceDomainCreate": {"domain": "new.up.railway.app"}}
+        return {"domains": {"serviceDomains": []}}
+
+    monkeypatch.setattr(config, "_railway_graphql", fake_gql)
+
+    domain = config.ensure_railway_public_domain()
+    assert domain == "new.up.railway.app"
+    assert os.environ["RAILWAY_PUBLIC_DOMAIN"] == "new.up.railway.app"
+
+
+def test_railway_bootstrap_applies_public_domain_from_token(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET", "x" * 64)
+    monkeypatch.setenv("USERS", "operator:strong-pass-here")
+    monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("RAILWAY_PUBLIC_DOMAIN", raising=False)
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_ID", "env-abc")
+    monkeypatch.setenv("RAILWAY_SERVICE_ID", "service-xyz")
+    monkeypatch.setenv("RAILWAY_TOKEN", "token-abc")
+
+    def fake_ensure():
+        os.environ["RAILWAY_PUBLIC_DOMAIN"] = "boot.up.railway.app"
+        return "boot.up.railway.app"
+
+    monkeypatch.setattr(config, "ensure_railway_public_domain", fake_ensure)
+
+    applied = config.apply_railway_production_defaults()
+    assert "RAILWAY_PUBLIC_DOMAIN" in applied
+    assert "ALLOWED_ORIGINS" in applied
+    assert config.get_allowed_origins() == ["https://boot.up.railway.app"]
+
+
 def test_production_defaults_preload_off_when_unset(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.delenv("PRELOAD_MODELS", raising=False)
