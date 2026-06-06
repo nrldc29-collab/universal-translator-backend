@@ -56,9 +56,13 @@ def warm_whisper() -> None:
     print(f"warm  whisper ({model_size})")
 
 
+def espeak_installed() -> bool:
+    return bool(shutil.which("espeak-ng") or shutil.which("espeak"))
+
+
 def ensure_espeak_ng() -> bool:
     """Install espeak-ng on Debian/Ubuntu when missing (required for HT/fr TTS)."""
-    if shutil.which("espeak-ng"):
+    if espeak_installed():
         return True
     if sys.platform != "linux":
         return False
@@ -68,7 +72,7 @@ def ensure_espeak_ng() -> bool:
     ):
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-            if result.returncode == 0 and shutil.which("espeak-ng"):
+            if result.returncode == 0 and espeak_installed():
                 print("install espeak-ng")
                 return True
         except (OSError, subprocess.TimeoutExpired):
@@ -89,8 +93,8 @@ def warm_tts() -> None:
 
 
 def warm_tts_ht() -> None:
-    if not shutil.which("espeak-ng"):
-        raise RuntimeError("espeak-ng not found (required for Haitian Creole TTS warmup)")
+    if not espeak_installed():
+        raise RuntimeError("espeak-ng or espeak not found (required for Haitian Creole TTS warmup)")
     from tts.piper_tts import PiperTextToSpeech
 
     tts = PiperTextToSpeech()
@@ -112,12 +116,11 @@ def main() -> int:
         except (OSError, urllib.error.URLError) as exc:
             errors.append(f"failed to download {filename}: {exc}")
 
-    if not ensure_espeak_ng() and not shutil.which("espeak-ng"):
-        msg = "espeak-ng not found (required for Haitian Creole TTS)"
-        if sys.platform == "linux":
-            errors.append(msg)
-        else:
-            warnings.append(msg)
+    if not ensure_espeak_ng() and not espeak_installed():
+        errors.append(
+            "espeak-ng or espeak not found (required for Haitian Creole TTS). "
+            "Linux: apt install espeak-ng · macOS: brew install espeak · Windows: choco install espeak-ng"
+        )
 
     try:
         import faster_whisper  # noqa: F401

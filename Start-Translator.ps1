@@ -124,7 +124,17 @@ if (-not (Test-Path $python)) {
     throw "Missing venv Python at $python. Create venv and run: pip install -r requirements.txt"
 }
 
+function Test-EspeakInstalled {
+    if (Get-Command espeak-ng -ErrorAction SilentlyContinue) { return $true }
+    if (Get-Command espeak -ErrorAction SilentlyContinue) { return $true }
+    return $false
+}
+
 if (-not $SkipSetup) {
+    if (-not (Test-EspeakInstalled)) {
+        Write-Output "Warning: espeak-ng/espeak not found. Install for Haitian Creole TTS:"
+        Write-Output "  choco install espeak-ng"
+    }
     Write-Output "Running local model setup (first run downloads models)..."
     & $python (Join-Path $Root "scripts\setup_models.py")
     if ($LASTEXITCODE -ne 0) {

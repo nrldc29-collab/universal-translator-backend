@@ -141,6 +141,25 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
     status, payload = _post_json(
         f"{root}/translate/text",
         {
+            "text": "M ap byen",
+            "source_language": "ht",
+            "target_language": "en",
+            "session_id": "smoke-ht-en",
+        },
+        auth,
+    )
+    if status != 200 or not isinstance(payload, dict):
+        errors.append(f"translate ht->en failed ({status}): {payload}")
+    else:
+        translated = str(payload.get("translated_text") or "")
+        if not translated.strip():
+            errors.append(f"translate ht->en returned empty text: {payload}")
+        elif translated.startswith("[") and "->" in translated[:12]:
+            errors.append(f"translate ht->en returned placeholder output: {translated!r}")
+
+    status, payload = _post_json(
+        f"{root}/translate/text",
+        {
             "text": "hello",
             "source_language": "en",
             "target_language": "es",

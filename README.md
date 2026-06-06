@@ -91,7 +91,7 @@ After cloning, the fastest path to a working local stack:
 ```bash
 cp .env.example .env
 pip install -r requirements.txt
-make setup-models          # downloads Piper voices; requires espeak-ng on Linux for HT TTS
+make setup-models          # downloads Piper voices; requires espeak-ng or espeak for HT TTS on all platforms
 make start-local           # add --restart if port 8000 is stale
 ```
 

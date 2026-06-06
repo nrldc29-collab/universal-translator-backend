@@ -43,6 +43,10 @@ if ! command -v "$PYTHON" >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v espeak-ng >/dev/null 2>&1 && ! command -v espeak >/dev/null 2>&1; then
+  echo "Warning: espeak-ng/espeak not found — Haitian Creole TTS requires espeak (apt/brew/choco)." >&2
+fi
+
 port_open() {
   "$PYTHON" - <<PY "$1"
 import socket, sys

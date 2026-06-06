@@ -203,6 +203,7 @@ async def websocket_audio_translation(
     live_text_pending = None
     live_text_revision = 0
     live_text_active_until = 0.0
+    live_text_final_until = 0.0
     latency_engine = LatencyEngine()
     confidence_engine = ConfidenceEngine()
     pipeline_queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=1)
@@ -271,6 +272,16 @@ async def websocket_audio_translation(
 
     async def enqueue_finalize(reason: str) -> None:
         nonlocal audio_chunks, recent_chunks, speech_started, silent_checks, last_speech_at, vad_error_count
+        if live_text_active_until and time() < live_text_active_until:
+            audio_chunks.clear()
+            recent_chunks.clear()
+            reset_segment_state()
+            return
+        if live_text_final_until and time() < live_text_final_until:
+            audio_chunks.clear()
+            recent_chunks.clear()
+            reset_segment_state()
+            return
         if pipeline_queue.full():
             await websocket.send_json({"type": "stage", "stage": "queued", "message": "Already processing audio. Please wait..."})
             return
@@ -469,12 +480,20 @@ async def websocket_audio_translation(
             observability.record_event("near_zero_partial", identity=identity, speaker=partial_speaker, latency_seconds=time() - partial_started_at)
 
     async def schedule_live_text(payload: dict) -> None:
-        nonlocal live_text_pending, live_text_task, live_text_revision, live_text_active_until, speech_started, last_speech_at, silent_checks, partial_text, partial_buffer
+        nonlocal live_text_pending, live_text_task, live_text_revision, live_text_active_until, live_text_final_until, speech_started, last_speech_at, silent_checks, partial_text, partial_buffer, audio_chunks, recent_chunks
         live_text = normalize_live_text(payload.get("text", ""))
         if not live_text:
             return
         live_text_revision += 1
-        live_text_active_until = time() + 1.6
+        is_final = bool(payload.get("final"))
+        if is_final:
+            live_text_active_until = time() + 4.0
+            live_text_final_until = time() + 5.0
+            audio_chunks.clear()
+            recent_chunks.clear()
+            speech_started = False
+        else:
+            live_text_active_until = time() + 1.6
         speech_started = True
         last_speech_at = time()
         silent_checks = 0
@@ -1160,7 +1179,14 @@ async def websocket_audio_translation(
             try:
                 message = await asyncio.wait_for(websocket.receive(), timeout=0.08)
             except asyncio.TimeoutError:
-                if speech_started and audio_chunks and last_speech_at and time() - last_speech_at > get_vad_force_final_seconds():
+                if (
+                    speech_started
+                    and audio_chunks
+                    and last_speech_at
+                    and time() - last_speech_at > get_vad_force_final_seconds()
+                    and not (live_text_active_until and time() < live_text_active_until)
+                    and not (live_text_final_until and time() < live_text_final_until)
+                ):
                     stream_debug_log("FORCE FINAL")
                     await enqueue_finalize("force_timeout")
                 continue

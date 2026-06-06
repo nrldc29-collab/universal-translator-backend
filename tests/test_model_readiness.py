@@ -55,7 +55,7 @@ def test_espeak_available_is_bool():
     assert isinstance(espeak_available(), bool)
 
 
-def test_evaluate_preload_warns_when_espeak_missing_but_piper_present(monkeypatch):
+def test_evaluate_preload_blocks_when_espeak_missing_but_piper_present(monkeypatch):
     monkeypatch.setenv("STT_PROVIDER", "local")
     monkeypatch.setenv("TRANSLATION_BACKEND", "marian")
     monkeypatch.setattr(
@@ -64,5 +64,5 @@ def test_evaluate_preload_warns_when_espeak_missing_but_piper_present(monkeypatc
     )
     monkeypatch.setattr("backend.model_readiness.espeak_available", lambda: False)
     result = evaluate_preload_result({"stt": {"ok": True}, "tts": {"ok": True}, "translation": {"ok": True}})
-    assert result["ready"] is True
-    assert "espeak_missing_ht_and_fr_tts_unavailable" in result["warnings"]
+    assert result["ready"] is False
+    assert "espeak_missing_ht_tts_unavailable" in result["blockers"]

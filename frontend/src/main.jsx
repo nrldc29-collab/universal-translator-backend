@@ -316,6 +316,12 @@ function App() {
   });
   const { sessionId, setSessionId, updateSessionId, sharedSession, setSharedSession, speakerMode, setSpeakerMode } = useStreamSession();
   const [appMode, setAppMode] = React.useState('solo'); // 'solo' | 'conversation'
+  const appModeRef = useRef('solo');
+  useEffect(() => {
+    if (appModeRef.current === appMode) return;
+    appModeRef.current = appMode;
+    stopContinuousStream('Mode switched');
+  }, [appMode]);
   const [conversationTurns, setConversationTurns, appendConversationTurn] = useConversationHistory(50, { normalizeConversationTurn });
   const { analytics, setAnalytics, loadAnalytics } = useAnalytics({ apiUrl: liveApiUrl, authToken, onStatus: setStatus });
   const { diagnostics, diagnosticsStatus, loadDiagnostics } = useDiagnostics(liveApiUrl);
@@ -1007,6 +1013,7 @@ function App() {
 
 
   async function sendRecorderChunk(socket, event, recorder) {
+    if (speechFastPathActiveRef.current) return;
     if (event.data.size <= 0) return;
     if (ttsPlayingRef.current) return;
     debugLog('AUDIO CHUNK:', event.data);
@@ -1198,7 +1205,7 @@ function App() {
     }
   }
 
-  function startBrowserSpeechFastPath(socket = null) {
+  function startBrowserSpeechFastPath(socket = null, recorderFallback = null) {
     const Recognition = speechRecognitionConstructor();
     const current = appStateRef.current;
     const activeSocket = socket || socketRef.current;
@@ -1238,6 +1245,28 @@ function App() {
     setStatus('Listening live...');
     streamStartedAtRef.current = performance.now();
     requestWakeLock();
+
+    function startAudioRecorderFallback() {
+      if (!recorderFallback?.recorder || !recorderFallback?.stream) return false;
+      if (streamRecorderRef.current?.state === 'recording') return true;
+      speechFastPathActiveRef.current = false;
+      speechRecognitionRef.current = null;
+      speechAssistSocketRef.current = null;
+      setLiveAssistActive(false);
+      streamRecorderRef.current = recorderFallback.recorder;
+      try {
+        recorderFallback.recorder.start(activePacketMs());
+        startMicMeter(recorderFallback.stream);
+        streamRecordingStartedAtRef.current = performance.now();
+        setStatus('Audio fallback listening...');
+        setPipelineStage('Audio fallback');
+        return true;
+      } catch (error) {
+        console.warn('audio fallback recorder start failed:', error);
+        streamRecorderRef.current = null;
+        return false;
+      }
+    }
 
     recognition.lang = speechRecognitionLanguage(sourceLanguage);
     recognition.interimResults = true;
@@ -1280,7 +1309,12 @@ function App() {
         } else {
           setStatus('Audio fallback listening...');
           setPipelineStage('Audio fallback');
+          startAudioRecorderFallback();
         }
+        return;
+      }
+      if (socketRef.current && recorderFallback) {
+        startAudioRecorderFallback();
         return;
       }
       if (!speechFinalTextRef.current.trim() && !socketRef.current) {
@@ -1700,9 +1734,6 @@ function App() {
     const socket = new WebSocket(socketUrl);
     socketRef.current = socket;
     socket.binaryType = 'arraybuffer';
-    if (!cleanOptions.holdToTalk) {
-      startBrowserSpeechFastPath(socket);
-    }
     recorder.ondataavailable = (event) => {
       sendRecorderChunk(socket, event, recorder).catch((err) => {
         console.error('sendRecorderChunk error:', err);
@@ -1749,31 +1780,35 @@ function App() {
         speaker: selectedSpeakerMode === 'auto' ? 'auto' : 'A',
         mime_type: recorder.mimeType || preferredAudioMimeType(),
       }));
-      if (!cleanOptions.holdToTalk && !speechFastPathActiveRef.current) {
-        startBrowserSpeechFastPath(socket);
+      const recorderFallback = { recorder, stream };
+      const fastPathStarted =
+        !cleanOptions.holdToTalk && startBrowserSpeechFastPath(socket, recorderFallback);
+      if (cleanOptions.holdToTalk || !fastPathStarted) {
+        streamRecorderRef.current = recorder;
+        debugLog('STEP 9: starting recorder');
+        try {
+          recorder.start(activePacketMs());
+          if (streamSafetyTimeoutRef.current) {
+            window.clearTimeout(streamSafetyTimeoutRef.current);
+            streamSafetyTimeoutRef.current = null;
+          }
+        } catch (startErr) {
+          console.error('Recorder start failed:', startErr);
+          stopTracks(stream);
+          socket.close();
+          socketRef.current = null;
+          setStatus('Recording not supported on this device');
+          setPipelineStage('Recording unsupported');
+          return;
+        }
+        startMicMeter(stream);
+        streamRecordingStartedAtRef.current = performance.now();
+        debugLog('STEP 10: recorder started, state=', recorder.state);
+      } else {
+        streamRecorderRef.current = null;
       }
       flushAudioSendQueue(socket);
       startStreamHeartbeat(socket);
-      streamRecorderRef.current = recorder;
-      debugLog('STEP 9: starting recorder');
-      try {
-        recorder.start(activePacketMs());
-        if (streamSafetyTimeoutRef.current) {
-          window.clearTimeout(streamSafetyTimeoutRef.current);
-          streamSafetyTimeoutRef.current = null;
-        }
-      } catch (startErr) {
-        console.error('Recorder start failed:', startErr);
-        stopTracks(stream);
-        socket.close();
-        socketRef.current = null;
-        setStatus('Recording not supported on this device');
-        setPipelineStage('Recording unsupported');
-        return;
-      }
-      startMicMeter(stream);
-      streamRecordingStartedAtRef.current = performance.now();
-      debugLog('STEP 10: recorder started, state=', recorder.state);
       if (cleanOptions.holdToTalk && holdToTalkReleasePendingRef.current) {
         holdToTalkReleasePendingRef.current = false;
         finalizeCurrentStream('Processing speech...');

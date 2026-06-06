@@ -148,9 +148,11 @@ class TestWsAudio:
         monkeypatch.setitem(app_module.runtime_state, "ready", True)
         monkeypatch.setattr("backend.streaming.get_max_active_streams_per_user", lambda: 2)
         app_module.session_registry.cleanup()
+        open_sockets = []
 
         def start_device(device_id: str):
             ws = client.websocket_connect("/ws/audio").__enter__()
+            open_sockets.append(ws)
             ws.receive_json()
             ws.send_json(
                 {
@@ -163,24 +165,26 @@ class TestWsAudio:
                     "mime_type": "audio/webm;codecs=opus",
                 }
             )
-            while True:
+            for _ in range(25):
                 payload = ws.receive_json()
                 if payload.get("type") == "error":
-                    return ws, payload
+                    return payload
                 if payload.get("type") == "listening":
-                    return ws, payload
-            return ws, payload
+                    return payload
+            raise AssertionError(f"timed out waiting for listening/error for {device_id}")
 
-        ws1, first = start_device("device-1")
-        assert first["type"] == "listening"
-        ws2, second = start_device("device-2")
-        assert second["type"] == "listening"
-        ws3, third = start_device("device-3")
-        assert third["type"] == "error"
-        assert "Too many active streams" in third["message"]
-        ws1.close()
-        ws2.close()
-        ws3.close()
+        try:
+            first = start_device("device-1")
+            assert first["type"] == "listening"
+            second = start_device("device-2")
+            assert second["type"] == "listening"
+            third = start_device("device-3")
+            assert third["type"] == "error"
+            assert "Too many active streams" in third["message"]
+        finally:
+            for ws in open_sockets:
+                ws.close()
+            app_module.session_registry.cleanup()
 
 
 # ---------------------------------------------------------------------------
