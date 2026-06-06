@@ -142,11 +142,13 @@ def test_snapshot_bad_json_body_still_marks_reachable():
 def test_runtime_payload_includes_stt_key_with_details():
     with patch("backend.api_health.get_stt_provider", return_value="local"), \
          patch("backend.api_health.get_stt_provider_url", return_value="http://localhost:8000"), \
-         patch("backend.api_health.get_stt_provider_ws_url", return_value="ws://localhost:8000"):
+         patch("backend.api_health.get_stt_provider_ws_url", return_value="ws://localhost:8000"), \
+         patch("backend.api_health.evaluate_preload_result", return_value={"ready": True, "blockers": [], "warnings": []}):
         payload = runtime_payload(include_details=True)
 
     assert "stt_provider" in payload
     assert "models" in payload
+    assert "readiness" in payload
     assert "websocket_auth_release" in payload
 
 

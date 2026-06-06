@@ -67,7 +67,7 @@ from backend.confidence import ConfidenceEngine, assess_translation_confidence, 
 from backend.communication_brain import detect_domains
 from backend.glossary import get_session_glossary, glossary_coverage_score
 from backend.cip_client import call_cip_brain, cip_health_snapshot, cip_settings
-from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, is_cip_clarification
+from backend.model_readiness import evaluate_preload_result
 from backend import assistant as naia_assistant
 try:
     import pytesseract  # type: ignore
@@ -172,9 +172,20 @@ async def lifespan(app_instance: FastAPI):
     }
     runtime_state["warming"] = get_preload_models()
     if get_preload_models():
-        runtime_state["models"]["preloaded"] = await run_in_threadpool(pipeline.preload)
+        preload_result = await run_in_threadpool(pipeline.preload)
+        runtime_state["models"]["preloaded"] = preload_result
+        readiness = evaluate_preload_result(preload_result)
+        runtime_state["readiness"] = readiness
+        runtime_state["ready"] = readiness["ready"]
+        if not readiness["ready"]:
+            logger.warning(
+                "Startup readiness incomplete — blockers: %s",
+                ", ".join(readiness.get("blockers") or ["unknown"]),
+            )
+    else:
+        runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": ["preload_skipped"]}
+        runtime_state["ready"] = True
     runtime_state["warming"] = False
-    runtime_state["ready"] = True
     runtime_state["voice_warmup"] = {"status": "queued", "started_at": time()}
     voice_warmup_task = asyncio.create_task(_warm_voice_cache("startup"))
     try:

@@ -54,15 +54,22 @@ class AnaiTranslatorPipeline:
         self.ailang_pipeline = get_ailang_pipeline() if enable_ailang else None
 
     def preload(self) -> dict:
-        result = {
-            "stt": self.stt.preload(),
-            "tts": self.tts.preload(),
-        }
+        result: dict = {}
+        try:
+            stt_ok = bool(self.stt.preload())
+            result["stt"] = {"ok": stt_ok}
+        except (RuntimeError, OSError, ValueError) as exc:
+            result["stt"] = {"ok": False, "error": exc.__class__.__name__}
+        try:
+            tts_ok = bool(self.tts.preload())
+            result["tts"] = {"ok": tts_ok}
+        except (RuntimeError, OSError, ValueError, ImportError) as exc:
+            result["tts"] = {"ok": False, "error": exc.__class__.__name__}
         try:
             self.translate_local("hello", "en", "es")
-            result["translation"] = "warmed"
+            result["translation"] = {"ok": True}
         except (RuntimeError, OSError, ValueError) as exc:
-            result["translation"] = f"warmup_failed:{exc.__class__.__name__}"
+            result["translation"] = {"ok": False, "error": exc.__class__.__name__}
         return result
 
     def translate_local(
