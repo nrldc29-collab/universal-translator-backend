@@ -33,6 +33,8 @@ USERS=demo:YOUR-PASSWORD make railway-public-setup
 
 This runs `railway domain`, waits for `/health`, then runs the full EN↔HT smoke test.
 
+**Automated (recommended):** add GitHub repo secrets `RAILWAY_TOKEN` and `PRODUCTION_USERS` (e.g. `demo:your-password`). The `Railway post-deploy` workflow runs after each successful Railway deploy, generates the public domain, and runs smoke when credentials are set.
+
 If you skip steps 4–5 on first deploy, Railway auto-bootstrap derives `JWT_SECRET`, `USERS`, and `ALLOWED_ORIGINS` when `RAILWAY_PUBLIC_DOMAIN` is available (login credentials are logged once in Railway deploy logs). After you **Generate Domain**, redeploy once or paste vars from `Get-Railway-Variables.sh`.
 
 **Important:** Do not set `BACKEND_PORT` in Railway Variables — Railway injects `PORT` automatically. The app binds to `PORT`. Use `PRELOAD_MODELS=0` (default in Dockerfile) so the service passes healthchecks immediately; EN↔HT models download on the first translation request.

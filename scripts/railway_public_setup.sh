@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RAILWAY_ENVIRONMENT="${RAILWAY_ENVIRONMENT:-production}"
 RAILWAY_PORT="${RAILWAY_PORT:-8080}"
+RAILWAY_PROJECT_ID="${RAILWAY_PROJECT_ID:-0d581567-e2fa-4405-a041-1b9aaeeafceb}"
 RUN_SMOKE="${RUN_SMOKE:-1}"
 
 ensure_railway_cli() {
@@ -27,10 +28,16 @@ if not raw:
 try:
     data = json.loads(raw)
 except json.JSONDecodeError:
-    token = raw.split()[0]
-    if token.startswith("http"):
-        print(token.rstrip("/"))
-        sys.exit(0)
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("http://") or line.startswith("https://"):
+            print(line.rstrip("/"))
+            sys.exit(0)
+        if ".up.railway.app" in line:
+            print(normalize(line.split()[0]))
+            sys.exit(0)
     sys.exit(1)
 
 def normalize(value: str) -> str:
@@ -86,15 +93,67 @@ fi
 
 ensure_railway_cli
 
-domain_args=(--json -p "$RAILWAY_PORT" -e "$RAILWAY_ENVIRONMENT")
-status_args=(--json -e "$RAILWAY_ENVIRONMENT")
-if [[ -n "${RAILWAY_PROJECT_ID:-}" ]]; then
-  domain_args+=(--project "$RAILWAY_PROJECT_ID")
-  status_args+=(--project "$RAILWAY_PROJECT_ID")
-fi
+resolve_railway_service() {
+  if [[ -n "${RAILWAY_SERVICE:-}" ]]; then
+    return
+  fi
+  local list_json
+  list_json="$(railway service list --json -e "$RAILWAY_ENVIRONMENT" -p "$RAILWAY_PROJECT_ID" 2>/dev/null || true)"
+  if [[ -z "$list_json" ]]; then
+    return
+  fi
+  RAILWAY_SERVICE="$(printf '%s' "$list_json" | python3 - <<'PY'
+import json
+import os
+import sys
+
+raw = sys.stdin.read().strip()
+if not raw:
+    sys.exit(0)
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    sys.exit(0)
+
+services = data if isinstance(data, list) else data.get("services") or data.get("items") or []
+if not isinstance(services, list) or not services:
+    sys.exit(0)
+
+def service_name(item):
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        return str(item.get("name") or item.get("serviceName") or item.get("id") or "")
+    return ""
+
+names = [service_name(item) for item in services]
+names = [name for name in names if name]
+if len(names) == 1:
+    print(names[0])
+    sys.exit(0)
+
+repo_hint = os.path.basename(os.getcwd()).lower()
+for name in names:
+    if repo_hint and repo_hint in name.lower():
+        print(name)
+        sys.exit(0)
+for name in names:
+    lowered = name.lower()
+    if "translator" in lowered or "backend" in lowered or "universal" in lowered:
+        print(name)
+        sys.exit(0)
+PY
+)"
+}
+
+resolve_railway_service
+
+domain_args=(--json -p "$RAILWAY_PORT" -e "$RAILWAY_ENVIRONMENT" --project "$RAILWAY_PROJECT_ID")
+status_args=(--json -e "$RAILWAY_ENVIRONMENT" -p "$RAILWAY_PROJECT_ID")
 if [[ -n "${RAILWAY_SERVICE:-}" ]]; then
   domain_args+=(-s "$RAILWAY_SERVICE")
   status_args+=(-s "$RAILWAY_SERVICE")
+  echo "Using Railway service: $RAILWAY_SERVICE"
 fi
 
 public_url=""
