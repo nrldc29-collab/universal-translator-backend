@@ -341,16 +341,15 @@ function SectionTranslation({ settings, updateSetting }) {
           value={settings.translationProvider}
           onChange={(e) => updateSetting('translationProvider', e.target.value)}
         >
-          <option value="hybrid">Hybrid (Auto)</option>
-          <option value="lightweight">Lightweight (Offline)</option>
-          <option value="remote">Remote (Online)</option>
-          <option value="marian">Marian NMT</option>
+          <option value="marian">Marian NMT (Local)</option>
+          <option value="lightweight">Lightweight (Fast)</option>
+          <option value="hybrid">Hybrid (Marian fallback)</option>
         </select>
       </SettingRow>
 
       <div className="sp-info-box">
         <Info size={13} />
-        <span><strong>Hybrid</strong> uses lightweight translation first, then falls back to remote APIs for complex phrases. Best for most use cases.</span>
+        <span><strong>Marian NMT</strong> is the default local engine for EN↔HT. Hybrid uses lightweight first, then Marian — no cloud translation fallback.</span>
       </div>
     </div>
   );

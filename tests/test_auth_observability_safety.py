@@ -13,6 +13,19 @@ def test_verify_jwt_accepts_created_token(monkeypatch):
     assert verify_jwt(token) == "user-a"
 
 
+def test_record_event_truncates_sensitive_text_fields(tmp_path):
+    observability = Observability()
+    observability.events_path = tmp_path / "events.jsonl"
+    long_text = "patient needs emergency dialysis " * 5
+
+    observability.record_event("mobile_stream_checkpoint", source_text=long_text)
+
+    line = observability.events_path.read_text(encoding="utf-8").strip()
+    assert "patient needs emergency" in line
+    assert long_text not in line
+    assert "chars)" in line
+
+
 def test_prometheus_tolerates_invalid_gpu_env(monkeypatch, tmp_path):
     monkeypatch.setenv("GPU_MEMORY_USED_MB", "bad")
     monkeypatch.setenv("GPU_UTILIZATION_PERCENT", "bad")

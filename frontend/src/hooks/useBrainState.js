@@ -30,7 +30,22 @@ export function useBrainState() {
 
   function shouldSkipBrainTts(payload = null) {
     const hints = payload ? extractBrainPlan(payload).hints : brainHintsRef.current;
-    return Boolean(hints?.skip_tts || hints?.tts_mode === 'skip');
+    if (Boolean(hints?.skip_tts || hints?.tts_mode === 'skip')) return true;
+    if (payload?.needs_confirmation) return true;
+    return false;
+  }
+
+  function applyConfidenceSignals(payload = {}) {
+    if (!payload || typeof payload !== 'object') return;
+    const needsConfirm = Boolean(payload.needs_confirmation);
+    const lowConfidence = Boolean(payload.low_confidence);
+    if (!needsConfirm && !lowConfidence) return;
+    const message = payload.confidence_message
+      || (needsConfirm
+        ? 'High-stakes translation — verify with a human interpreter before acting on this.'
+        : 'Moderate confidence — double-check important details.');
+    setConfidenceWarningVisible(true);
+    setConfidenceWarningMessage(message);
   }
 
   function resetBrainRuntimeUi() {
@@ -65,6 +80,7 @@ export function useBrainState() {
     brainHintsRef,
     brainPlanRef,
     shouldSkipBrainTts,
+    applyConfidenceSignals,
     resetBrainRuntimeUi,
   };
 }

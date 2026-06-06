@@ -13,7 +13,7 @@ const DEFAULTS = {
   // Translation
   translationMode: 'fast',
   partialTts: true,
-  translationProvider: 'hybrid',
+  translationProvider: 'marian',
   // Display
   theme: 'dark',
   textSize: 'medium',
@@ -32,7 +32,14 @@ const DEFAULTS = {
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+    if (raw) {
+      const parsed = { ...DEFAULTS, ...JSON.parse(raw) };
+      // Local-first: legacy hybrid/remote selections mapped to Marian NMT.
+      if (parsed.translationProvider === 'hybrid' || parsed.translationProvider === 'remote') {
+        parsed.translationProvider = 'marian';
+      }
+      return parsed;
+    }
   } catch {}
   return { ...DEFAULTS };
 }

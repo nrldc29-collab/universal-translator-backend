@@ -132,6 +132,14 @@ def test_translator_for_request_lightweight_for_lightweight_provider():
     assert isinstance(result, LightweightTranslator)
 
 
+def test_translator_for_request_remote_uses_marian():
+    from backend.api import _translator_for_request
+    from translation.marian_translator import MarianTranslator
+
+    result = _translator_for_request(None, "remote")
+    assert isinstance(result, MarianTranslator)
+
+
 def test_translator_for_request_unknown_returns_none():
     from backend.api import _translator_for_request
     result = _translator_for_request("unknown_mode", "unknown_provider")
