@@ -716,6 +716,10 @@ function App() {
   }
 
   async function translateText(textOverride) {
+    if (connectionStatus !== 'online') {
+      setStatus(connectionStatus === 'warming' ? 'Models still loading — wait for LIVE' : 'Backend offline — start the server first');
+      return;
+    }
     const textToSend = textOverride ?? text;
     if (processing || !textToSend.trim()) return;
     if (textOverride) setText(textOverride);
@@ -3108,6 +3112,7 @@ function App() {
           handleMicClick={handleMicClick}
           enableTypingAnimation={true}
           isTranslationActive={processing && !streaming}
+          textTranslateReady={micReady}
           onTextTranslate={(inputText) => translateText(inputText)}
         />
         {recentConversationTurns.length > 0 && (

@@ -62,6 +62,7 @@ export default function TranslationStack({
   enableTypingAnimation = true,
   isTranslationActive = false,
   // text-input translate
+  textTranslateReady = true,
   onTextTranslate,
 }) {
   const [typingComplete, setTypingComplete] = useState(false);
@@ -72,11 +73,11 @@ export default function TranslationStack({
 
   const handleTextSubmit = useCallback(() => {
     const trimmed = textInputValue.trim();
-    if (!trimmed || !onTextTranslate) return;
+    if (!trimmed || !onTextTranslate || !textTranslateReady) return;
     onTextTranslate(trimmed);
     setTextInputValue('');
     setTextInputMode(false);
-  }, [textInputValue, onTextTranslate]);
+  }, [textInputValue, onTextTranslate, textTranslateReady]);
 
   const handleTextKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -130,7 +131,7 @@ export default function TranslationStack({
             <button
               type="button"
               className="text-input-submit"
-              disabled={!textInputValue.trim()}
+              disabled={!textTranslateReady || !textInputValue.trim()}
               onClick={handleTextSubmit}
             >
               <ArrowRight size={13} strokeWidth={2.5} />
