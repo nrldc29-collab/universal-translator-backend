@@ -435,7 +435,7 @@ export function useAutoConversation({
             onStatus?.('Stream limit — reconnecting conversation...');
             window.setTimeout(() => {
               if (activeRef.current) restartSockets();
-            }, 500);
+            }, 800);
             return;
           }
           if (err?.source === 'browser_live_text' && err?.recoverable) {
@@ -501,12 +501,23 @@ export function useAutoConversation({
   }
 
   function restartSockets() {
+    clearTimeout(ttsTimerRef.current);
+    clearTimeout(ttsTimerBARef.current);
+    utteranceIdRef.current += 1;
+    lockedRef.current = false;
+    stopBackendStt();
     sockABRef.current?.destroy(); sockABRef.current = null;
     sockBARef.current?.destroy(); sockBARef.current = null;
     setSockStat('disconnected');
     window.setTimeout(() => {
-      if (activeRef.current) openSockets();
-    }, 400);
+      if (!activeRef.current) return;
+      openSockets();
+      if (languagePairNeedsBackendStt(srcRef.current, tgtRef.current)) {
+        startBackendSttListening();
+      } else {
+        startRecognition();
+      }
+    }, 600);
   }
 
   function stopMicStream() {

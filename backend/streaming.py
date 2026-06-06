@@ -13,7 +13,13 @@ logger = logging.getLogger("anai_translator")
 
 from backend.conversation import ConversationBrain
 from backend.memory import ConversationMemory
-from backend.speakers import SpeakerMemory, detect_language_heuristic
+from backend.speakers import (
+    SpeakerMemory,
+    detect_language_heuristic,
+    detect_language_in_pair,
+    language_pair_has_ht,
+    resolve_whisper_language,
+)
 from backend.refine import refine_translation
 from backend.latency import LatencyEngine
 from backend.stream_session import StreamSessionState
@@ -378,7 +384,17 @@ async def websocket_audio_translation(
             processed_partial_path, metrics = process_wav_for_stt(stt_input_path)
             stt_input_path = processed_partial_path or stt_input_path
             try:
-                next_partial_text = await run_pipeline_step("partial STT", pipeline.stt.transcribe, stt_input_path, partial_source_language)
+                partial_stt_language = resolve_whisper_language(
+                    partial_source_language,
+                    partial_target_language,
+                    stt_only=stt_only,
+                )
+                next_partial_text = await run_pipeline_step(
+                    "partial STT",
+                    pipeline.stt.transcribe,
+                    stt_input_path,
+                    partial_stt_language,
+                )
             except PipelineStepTimeout as exc:
                 if partial_generation == segment_generation:
                     await websocket.send_json({"type": "stage", "stage": "partial_timeout", "message": str(exc)})
@@ -864,9 +880,13 @@ async def websocket_audio_translation(
                     detection=speaker_detection,
                 )
 
-            # Speaker memory: lock language per speaker, with fallback detection
-            speaker_memory.register(speaker, language=segment_source_language)
-            active_source_language = speaker_memory.get_language(speaker) or segment_source_language
+            # Speaker memory: lock language per speaker unless HT/auto STT is active
+            auto_stt = stt_only or language_pair_has_ht(segment_source_language, segment_target_language)
+            if auto_stt:
+                active_source_language = segment_source_language
+            else:
+                speaker_memory.register(speaker, language=segment_source_language)
+                active_source_language = speaker_memory.get_language(speaker) or segment_source_language
             active_target_language = segment_target_language
             await websocket.send_json({
                 "type": "speaker_detected",
@@ -924,7 +944,12 @@ async def websocket_audio_translation(
             processed_path, proc_metrics = process_wav_for_stt(str(stt_input_path))
             stt_call_input = processed_path or str(stt_input_path)
             try:
-                source_text = await run_pipeline_step("STT", pipeline.stt.transcribe, stt_call_input, active_source_language)
+                stt_language = resolve_whisper_language(
+                    segment_source_language,
+                    segment_target_language,
+                    stt_only=stt_only,
+                )
+                source_text = await run_pipeline_step("STT", pipeline.stt.transcribe, stt_call_input, stt_language)
             except (RuntimeError, ValueError, OSError) as stt_exc:
                 message = str(stt_exc)
                 if "Invalid data found" in message or "1094995529" in message:
@@ -953,6 +978,13 @@ async def websocket_audio_translation(
             if not source_text.strip():
                 await websocket.send_json({"type": "error", "message": "No clear speech recognized. Try speaking closer to the mic."})
                 return
+            if auto_stt:
+                active_source_language = detect_language_in_pair(
+                    source_text,
+                    segment_source_language,
+                    segment_target_language,
+                )
+                speaker_memory.register(speaker, language=active_source_language)
             await websocket.send_json({"type": "final_transcription", "speaker": speaker, "speaker_label": speaker_label, "text": source_text})
             if stt_only:
                 await websocket.send_json({

@@ -1,8 +1,7 @@
 version: '3.8'
 
-# Default stack uses in-process Whisper (STT_PROVIDER=local). Optional external
-# streaming STT: docker compose --profile streaming up --build
-# and set STT_PROVIDER=streaming on the backend service.
+# Default stack: CPU local-first (matches .env.example). For GPU use:
+#   docker compose -f docker-compose.gpu.yml up --build
 
 services:
   stt_provider:
@@ -47,14 +46,14 @@ services:
       - ENVIRONMENT=production
       - BACKEND_HOST=0.0.0.0
       - BACKEND_PORT=8000
-      - USE_GPU=1
-      - WHISPER_DEVICE=cuda
-      - WHISPER_COMPUTE_TYPE=float16
+      - USE_GPU=0
+      - WHISPER_DEVICE=cpu
+      - WHISPER_COMPUTE_TYPE=int8
       - WHISPER_MODEL_SIZE=small
       - WHISPER_NUM_WORKERS=1
       - PRELOAD_MODELS=1
       - TRANSLATION_BACKEND=marian
-      - TRANSLATION_DEVICE=cuda
+      - TRANSLATION_DEVICE=cpu
       - HYBRID_ENABLE_MARIAN_FALLBACK=1
       - HYBRID_ENABLE_REMOTE=0
       - PREFER_CLOUD_TTS=0
@@ -75,13 +74,6 @@ services:
       - STT_PROVIDER_API_KEY=${STT_PROVIDER_API_KEY}
     volumes:
       - ./models:/app/models  # Cache downloaded models
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

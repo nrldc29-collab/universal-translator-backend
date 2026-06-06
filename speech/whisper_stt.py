@@ -54,9 +54,12 @@ class WhisperSpeechToText:
         return True
 
     def _run_transcribe(self, model, audio_path: str, source_language):
+        language = None
+        if source_language and str(source_language).lower() not in {"auto", "detect", "none"}:
+            language = source_language
         segments, _ = model.transcribe(
             audio_path,
-            language=source_language,
+            language=language,
             beam_size=get_whisper_beam_size(),
             best_of=1,
             temperature=0,

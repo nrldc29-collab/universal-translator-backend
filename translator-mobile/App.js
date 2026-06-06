@@ -1,4 +1,4 @@
-﻿import { useEffect, useRef } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { View, Text, TextInput, ScrollView, Pressable } from "react-native";
 import { Audio } from "expo-av";
 import Constants from "expo-constants";

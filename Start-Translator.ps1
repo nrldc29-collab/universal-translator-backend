@@ -111,7 +111,7 @@ if (-not $env:WHISPER_MODEL_SIZE) { $env:WHISPER_MODEL_SIZE = "small" }
 if (-not $env:PRELOAD_MODELS) { $env:PRELOAD_MODELS = "1" }
 if (-not $env:HYBRID_ENABLE_REMOTE) { $env:HYBRID_ENABLE_REMOTE = "0" }
 if (-not $env:PREFER_CLOUD_TTS) { $env:PREFER_CLOUD_TTS = "0" }
-if (-not $env:MAX_ACTIVE_STREAMS_PER_USER) { $env:MAX_ACTIVE_STREAMS_PER_USER = "4" }
+if (-not $env:MAX_ACTIVE_STREAMS_PER_USER) { $env:MAX_ACTIVE_STREAMS_PER_USER = "5" }
 if (-not $env:REQUESTS_PER_MINUTE) { $env:REQUESTS_PER_MINUTE = "120" }
 if (-not $env:STT_PROVIDER) { $env:STT_PROVIDER = "local" }
 

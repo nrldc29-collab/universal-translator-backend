@@ -583,6 +583,7 @@ function SectionAdvanced({
             {selfTest.translation !== '-' ? ` · ES: ${selfTest.translation}` : ''}
             {selfTest.htTranslation !== '-' ? ` · HT: ${selfTest.htTranslation}` : ''}
             {selfTest.htReverseTranslation !== '-' ? ` · HT→EN: ${selfTest.htReverseTranslation}` : ''}
+            {selfTest.htTts !== '-' ? ` · HT TTS: ${selfTest.htTts}` : ''}
             {selfTest.liveText !== '-' ? ` · Live text: ${selfTest.liveText}` : ''}
             {selfTest.websocket !== '-' ? ` · WebSocket: ${selfTest.websocket}` : ''}
           </span>

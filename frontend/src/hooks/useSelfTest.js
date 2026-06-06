@@ -18,6 +18,7 @@ const INITIAL = {
   translation: '-',
   htTranslation: '-',
   htReverseTranslation: '-',
+  htTts: '-',
   liveText: '-',
   websocket: '-',
   message: 'Not run yet',
@@ -81,6 +82,21 @@ function testAudioSocket(wsAudioUrl, authToken) {
       window.clearTimeout(timeout);
       reject(new Error('Audio socket failed'));
     };
+  });
+}
+
+function testHtTts(apiUrl, authToken) {
+  return fetch(`${apiUrl}/tts`, {
+    method: 'POST',
+    headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ text: 'Mwen bezwen èd', language: 'ht' }),
+  }).then(async (response) => {
+    if (!response.ok) throw new Error(await responseErrorMessage(response, 'HT TTS failed'));
+    const data = await response.json();
+    if (!data.audio_base64 || String(data.audio_base64).length < 100) {
+      throw new Error('HT TTS returned empty audio');
+    }
+    return 'ok';
   });
 }
 
@@ -161,6 +177,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
         translation: '-',
         htTranslation: '-',
         htReverseTranslation: '-',
+        htTts: '-',
         liveText: '-',
         websocket: '-',
         message,
@@ -174,6 +191,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       translation: 'checking',
       htTranslation: 'checking',
       htReverseTranslation: 'checking',
+      htTts: 'checking',
       liveText: 'checking',
       websocket: 'checking',
       message: 'Running checks...',
@@ -185,6 +203,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       translation: '-',
       htTranslation: '-',
       htReverseTranslation: '-',
+      htTts: '-',
       liveText: '-',
       websocket: '-',
       message: 'Self-test passed',
@@ -263,6 +282,13 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       }
 
       try {
+        next.htTts = await testHtTts(apiUrl, authToken);
+      } catch (error) {
+        next.htTts = 'failed';
+        failures.push(error.message || 'HT TTS test failed');
+      }
+
+      try {
         next.websocket = await testAudioSocket(wsAudioUrl, authToken);
       } catch (error) {
         next.websocket = 'failed';
@@ -279,6 +305,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       next.translation = 'failed';
       next.htTranslation = 'failed';
       next.htReverseTranslation = 'failed';
+      next.htTts = 'failed';
       next.liveText = 'failed';
       next.websocket = 'failed';
     }
