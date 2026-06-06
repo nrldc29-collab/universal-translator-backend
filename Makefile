@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup setup-deps setup-models verify-local verify-local-live verify-bundled-live verify-all preflight-deploy preflight-deploy-live run-backend run-frontend start-local test-translator
+.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup setup-deps setup-models verify-local verify-local-live verify-bundled-live verify-all preflight-deploy preflight-deploy-live release-ready run-backend run-frontend start-local test-translator
 
 setup-deps:
 	$(PYTHON) -m pip install -r requirements.txt
@@ -61,3 +61,6 @@ preflight-deploy:
 
 preflight-deploy-live:
 	bash scripts/preflight_deploy.sh --smoke http://127.0.0.1:8000
+
+release-ready: validate verify-all preflight-deploy
+	@echo "Release-ready: all local and production preflight checks passed."

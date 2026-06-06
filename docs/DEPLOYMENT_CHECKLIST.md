@@ -28,6 +28,7 @@
 
 ## Build validation
 
+- [ ] `make release-ready` (validate + verify-all + deploy preflight — run before tagging or Railway deploy)
 - [ ] `make validate` (pytest + frontend build + mobile lint)
 - [ ] `make verify-all` (offline imports + bundled production smoke)
 - [ ] `make preflight-deploy` (Railway/Docker production file checks)

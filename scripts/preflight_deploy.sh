@@ -46,6 +46,14 @@ if ! grep -q "\.up\.railway\.app" "$ROOT/frontend/src/utils.js"; then
   failures+=("frontend/src/utils.js missing Railway same-origin wss support")
 fi
 
+if ! grep -q "wss:" "$ROOT/frontend/src/main.jsx"; then
+  failures+=("frontend/src/main.jsx missing wss:// WebSocket URL handling for production")
+fi
+
+if ! grep -q "embedded_dist" "$ROOT/backend/api.py"; then
+  failures+=("backend/api.py must expose embedded_dist mode for bundled production")
+fi
+
 if ! grep -q "QUOTA_REQUESTS_PER_HOUR = \"500\"" "$ROOT/Get-Railway-Variables.ps1"; then
   failures+=("Get-Railway-Variables.ps1 missing QUOTA_REQUESTS_PER_HOUR=500")
 fi
