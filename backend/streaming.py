@@ -392,7 +392,16 @@ async def websocket_audio_translation(
         min_words = (min_words_base - 1) if interrupted else min_words_base
         if bool(re.search(r"[.!?;:,]\s*$", partial_buffer.strip())) or len(partial_buffer.split()) >= min_words:
             try:
-                partial_translation_raw = await run_pipeline_step("partial translation", pipeline.translator.translate, partial_buffer, partial_source_language, partial_target_language)
+                partial_translation_raw = await run_pipeline_step(
+                    "partial translation",
+                    lambda: pipeline.translate_local(
+                        partial_buffer,
+                        partial_source_language,
+                        partial_target_language,
+                        session_id=session_id,
+                        original_source_text=partial_buffer,
+                    ),
+                )
             except PipelineStepTimeout as exc:
                 if partial_generation == segment_generation:
                     await websocket.send_json({"type": "stage", "stage": "partial_timeout", "message": str(exc)})
@@ -513,10 +522,13 @@ async def websocket_audio_translation(
         try:
             raw_translation = await run_pipeline_step(
                 "live text translation",
-                pipeline.translator.translate,
-                text_value,
-                live_source_language,
-                live_target_language,
+                lambda: pipeline.translate_local(
+                    text_value,
+                    live_source_language,
+                    live_target_language,
+                    session_id=session_id,
+                    original_source_text=text_value,
+                ),
             )
         except PipelineStepTimeout as exc:
             if payload_revision == live_text_revision:
@@ -830,10 +842,13 @@ async def websocket_audio_translation(
             )
             raw_translated_text = await run_pipeline_step(
                 "translation",
-                pipeline.translator.translate,
-                improved_text,
-                active_source_language,
-                active_target_language,
+                lambda: pipeline.translate_local(
+                    improved_text,
+                    active_source_language,
+                    active_target_language,
+                    session_id=segment_session_id,
+                    original_source_text=source_text,
+                ),
             )
             memory_context = memory.get_context()
             speaker_context = speaker_memory.get_context(speaker)
@@ -1454,10 +1469,13 @@ async def websocket_streaming_stt_translation(
         )
         raw_translated_text = await run_pipeline_step(
             "translation",
-            pipeline.translator.translate,
-            improved_text,
-            source_language,
-            target_language,
+            lambda: pipeline.translate_local(
+                improved_text,
+                source_language,
+                target_language,
+                session_id=session_id,
+                original_source_text=source_text,
+            ),
         )
         memory_context = memory.get_context()
         speaker_context = speaker_memory.get_context(speaker)

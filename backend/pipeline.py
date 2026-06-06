@@ -54,10 +54,47 @@ class AnaiTranslatorPipeline:
         self.ailang_pipeline = get_ailang_pipeline() if enable_ailang else None
 
     def preload(self) -> dict:
-        return {
+        result = {
             "stt": self.stt.preload(),
             "tts": self.tts.preload(),
         }
+        try:
+            self.translate_local("hello", "en", "es")
+            result["translation"] = "warmed"
+        except (RuntimeError, OSError, ValueError) as exc:
+            result["translation"] = f"warmup_failed:{exc.__class__.__name__}"
+        return result
+
+    def translate_local(
+        self,
+        text: str,
+        source_language: str,
+        target_language: str,
+        *,
+        session_id: str | None = None,
+        original_source_text: str | None = None,
+        translator: object | None = None,
+    ) -> str:
+        """Translate through glossary protection and the configured local translator."""
+        if not text.strip():
+            return ""
+        sid = session_id or self.session_id
+        original = (original_source_text or text).strip()
+        active_translator = translator or self.translator
+        domains = detect_domains(original)
+        strict_medical = "medical" in (domains.get("high_stakes") or [])
+        prepared_text, glossary_meta = prepare_for_translation(text, strict_medical=strict_medical)
+        raw = active_translator.translate(prepared_text, source_language, target_language)
+        translated, _meta = finalize_translation(
+            original,
+            raw,
+            session_id=sid,
+            source_lang=source_language,
+            target_lang=target_language,
+            strict_medical=strict_medical,
+            metadata={**glossary_meta, "domains": domains},
+        )
+        return translated
 
     def translate_text(
         self,
@@ -112,26 +149,18 @@ class AnaiTranslatorPipeline:
         else:
             improved_text = self.context_layer.improve(text, source_language, target_language, tone)
 
-        domains = detect_domains(improved_text)
-        high_stakes = domains.get("high_stakes") or []
-        strict_medical = "medical" in high_stakes
-        prepared_text, glossary_meta = prepare_for_translation(improved_text, strict_medical=strict_medical)
-
-        # Base translation (local-first path configured via TRANSLATION_BACKEND)
-        translated_text = self.translator.translate(prepared_text, source_language, target_language)
-        translated_text, post_glossary_meta = finalize_translation(
+        domains = detect_domains(text)
+        translated_text = self.translate_local(
             improved_text,
-            translated_text,
+            source_language,
+            target_language,
             session_id=self.session_id,
-            source_lang=source_language,
-            target_lang=target_language,
-            strict_medical=strict_medical,
-            metadata={**glossary_meta, "domains": domains},
+            original_source_text=text,
         )
-        if ailang_metadata is not None or post_glossary_meta.get("glossary_applied") or strict_medical:
+        if domains.get("high_stakes") or domains.get("matches"):
             ailang_metadata = ailang_metadata or {}
-            ailang_metadata["glossary"] = post_glossary_meta
             ailang_metadata["domains"] = domains
+            ailang_metadata["glossary"] = {"applied_via": "translate_local"}
         if self.ailang_pipeline:
             context = self.ailang_pipeline.get_or_create_context(self.session_id)
 
@@ -249,22 +278,18 @@ class AnaiTranslatorPipeline:
         else:
             improved_text = self.context_layer.improve(text, source_language, target_language, tone)
 
-        domains = detect_domains(improved_text)
-        strict_medical = "medical" in (domains.get("high_stakes") or [])
-        prepared_text, glossary_meta = prepare_for_translation(improved_text, strict_medical=strict_medical)
-        translated_text = translator.translate(prepared_text, source_language, target_language)
-        translated_text, post_glossary_meta = finalize_translation(
+        domains = detect_domains(text)
+        translated_text = self.translate_local(
             improved_text,
-            translated_text,
+            source_language,
+            target_language,
             session_id=self.session_id,
-            source_lang=source_language,
-            target_lang=target_language,
-            strict_medical=strict_medical,
-            metadata={**glossary_meta, "domains": domains},
+            original_source_text=text,
+            translator=translator,
         )
-        if post_glossary_meta.get("glossary_applied") or strict_medical:
-            ailang_metadata["glossary"] = post_glossary_meta
+        if domains.get("high_stakes") or domains.get("matches"):
             ailang_metadata["domains"] = domains
+            ailang_metadata["glossary"] = {"applied_via": "translate_local"}
 
         # AILang post-translation pipeline
         if self.ailang_pipeline:

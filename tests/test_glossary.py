@@ -77,3 +77,21 @@ def test_finalize_translation_restores_protected_terms():
     )
     assert "ibuprofen" in final.lower() or "ibuprofeno" in final.lower()
     assert "glossary_applied" in final_meta
+
+
+class FakePassThroughTranslator:
+    def translate(self, text, source_language=None, target_language=None):
+        return text
+
+
+def test_translate_local_preserves_medical_terms():
+    from backend.pipeline import AnaiTranslatorPipeline
+
+    pipeline = AnaiTranslatorPipeline(translator=FakePassThroughTranslator(), enable_ailang=False)
+    result = pipeline.translate_local(
+        "Take ibuprofen for pain",
+        "en",
+        "es",
+        original_source_text="Take ibuprofen for pain",
+    )
+    assert "ibuprofen" in result.lower()

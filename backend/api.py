@@ -46,6 +46,7 @@ from backend.config import (
     get_stt_provider_ws_url,
     get_translation_backend,
     get_translation_device,
+    get_hybrid_enable_remote,
     get_vad_force_final_seconds,
     get_vad_silent_checks,
     get_whisper_compute_type,
@@ -298,19 +299,34 @@ def diagnostics(request: Request):
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
         ailang_health = pipeline.ailang_pipeline.get_health_status()
     
-    # Translation health: show fallback chain and remote translator reachability
+    # Translation health: show fallback chain and optional remote probe
     import os as _os
-    _hybrid_marian_fallback = _os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "0") == "1"
+    _backend = get_translation_backend()
+    _hybrid_marian_fallback = _os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "1") != "0"
+    _remote_enabled = get_hybrid_enable_remote()
+    if _backend == "marian":
+        _fallback_chain = ["marian"]
+    elif _backend == "lightweight":
+        _fallback_chain = ["lightweight"]
+    elif _backend == "hybrid":
+        _fallback_chain = ["lightweight"]
+        if _hybrid_marian_fallback:
+            _fallback_chain.append("marian")
+        if _remote_enabled:
+            _fallback_chain.append("remote_google")
+    else:
+        _fallback_chain = [_backend]
     _remote_ok: bool | None = None
     _remote_error: str | None = None
-    try:
-        from translation.remote_translator import RemoteTranslator as _RT
-        _r = _RT(timeout_seconds=2.0)
-        _probe = _r.translate("hello", "en", "es")
-        _remote_ok = bool(_probe and not _probe.startswith("[en->es]"))
-    except Exception as _exc:
-        _remote_ok = False
-        _remote_error = type(_exc).__name__
+    if _remote_enabled:
+        try:
+            from translation.remote_translator import RemoteTranslator as _RT
+            _r = _RT(timeout_seconds=2.0)
+            _probe = _r.translate("hello", "en", "es")
+            _remote_ok = bool(_probe and not _probe.startswith("[en->es]"))
+        except Exception as _exc:
+            _remote_ok = False
+            _remote_error = type(_exc).__name__
 
     from backend.store import get_quota_store as _gqs, get_user_store as _gus
     _qs = _gqs()
@@ -334,8 +350,9 @@ def diagnostics(request: Request):
             "runtime": runtime_state["models"].get("translation_runtime"),
             "backend": runtime_state["models"].get("translation_backend"),
             "device": runtime_state["models"].get("translation_device"),
-            "fallback_chain": ["lightweight", "remote_google", "marian" if _hybrid_marian_fallback else None],
+            "fallback_chain": _fallback_chain,
             "marian_fallback_enabled": _hybrid_marian_fallback,
+            "remote_fallback_enabled": _remote_enabled,
             "remote_translator_reachable": _remote_ok,
             "remote_translator_error": _remote_error,
             "tts_google_configured": bool(get_google_tts_api_key()),
