@@ -52,6 +52,13 @@ Windows preflight (optional):
 powershell -ExecutionPolicy Bypass -File .\Test-DeploymentReady.ps1 -RunSmoke
 ```
 
+Linux/macOS preflight:
+
+```bash
+make preflight-deploy
+make preflight-deploy-live   # includes full EN↔HT smoke on :8000
+```
+
 ## Notes
 
 - **HT TTS** uses eSpeak (installed in the Docker image). Piper handles English.
