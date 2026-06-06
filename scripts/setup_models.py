@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import sys
 import urllib.request
 from pathlib import Path
@@ -55,6 +56,26 @@ def warm_whisper() -> None:
     print(f"warm  whisper ({model_size})")
 
 
+def ensure_espeak_ng() -> bool:
+    """Install espeak-ng on Debian/Ubuntu when missing (required for HT/fr TTS)."""
+    if shutil.which("espeak-ng"):
+        return True
+    if sys.platform != "linux":
+        return False
+    for cmd in (
+        ["apt-get", "install", "-y", "espeak-ng"],
+        ["sudo", "apt-get", "install", "-y", "espeak-ng"],
+    ):
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            if result.returncode == 0 and shutil.which("espeak-ng"):
+                print("install espeak-ng")
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+    return False
+
+
 def warm_tts() -> None:
     from tts.piper_tts import PiperTextToSpeech
 
@@ -65,6 +86,18 @@ def warm_tts() -> None:
     if not out:
         raise RuntimeError("tts synthesis warmup failed")
     print("warm  tts (en)")
+
+
+def warm_tts_ht() -> None:
+    if not shutil.which("espeak-ng"):
+        return
+    from tts.piper_tts import PiperTextToSpeech
+
+    tts = PiperTextToSpeech()
+    out = tts.synthesize("bonjou", str(ROOT / "models" / "tts" / "setup-warmup-ht.wav"), language="ht")
+    if not out:
+        raise RuntimeError("ht tts warmup failed")
+    print("warm  tts (ht)")
 
 
 def main() -> int:
@@ -79,8 +112,8 @@ def main() -> int:
         except (OSError, urllib.error.URLError) as exc:
             errors.append(f"failed to download {filename}: {exc}")
 
-    if not shutil.which("espeak-ng"):
-        warnings.append("espeak-ng not found on PATH (install for HT/fr TTS fallback)")
+    if not ensure_espeak_ng() and not shutil.which("espeak-ng"):
+        warnings.append("espeak-ng not found (HT/fr TTS will fail until installed)")
 
     try:
         import faster_whisper  # noqa: F401
@@ -105,6 +138,7 @@ def main() -> int:
 
     try:
         warm_tts()
+        warm_tts_ht()
     except (RuntimeError, OSError, ValueError, ImportError) as exc:
         errors.append(f"tts warmup failed: {exc}")
 

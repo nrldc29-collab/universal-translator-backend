@@ -65,19 +65,9 @@ def check_health(base_url: str) -> list[str]:
     return errors
 
 
-def check_translate(base_url: str) -> list[str]:
+def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
     errors: list[str] = []
     root = base_url.rstrip("/")
-    status, login_payload = _post_json(
-        f"{root}/auth/login",
-        {"username": "demo", "password": "demo"},
-    )
-    if status != 200 or not isinstance(login_payload, dict) or not login_payload.get("access_token"):
-        errors.append(f"auth login failed ({status}): {login_payload}")
-        return errors
-
-    token = login_payload["access_token"]
-    auth = {"Authorization": f"Bearer {token}"}
 
     status, payload = _post_json(
         f"{root}/translate/text",
@@ -116,6 +106,26 @@ def check_translate(base_url: str) -> list[str]:
     return errors
 
 
+def check_tts(base_url: str, auth: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    root = base_url.rstrip("/")
+    for language, text, label in (
+        ("en", "hello", "en"),
+        ("ht", "Mwen bezwen èd", "ht"),
+    ):
+        status, payload = _post_json(
+            f"{root}/tts",
+            {"text": text, "language": language},
+            auth,
+        )
+        if status != 200 or not isinstance(payload, dict):
+            errors.append(f"tts {label} failed ({status}): {payload}")
+            continue
+        if not (payload.get("audio_base64") or payload.get("audio_url")):
+            errors.append(f"tts {label} returned no audio")
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
     errors.extend(check_imports())
@@ -124,7 +134,16 @@ def main() -> int:
     base_url = sys.argv[1] if len(sys.argv) > 1 else ""
     if base_url:
         errors.extend(check_health(base_url))
-        errors.extend(check_translate(base_url))
+        login_status, login_payload = _post_json(
+            f"{base_url.rstrip('/')}/auth/login",
+            {"username": "demo", "password": "demo"},
+        )
+        if login_status != 200 or not isinstance(login_payload, dict) or not login_payload.get("access_token"):
+            errors.append(f"auth login failed ({login_status}): {login_payload}")
+        else:
+            auth = {"Authorization": f"Bearer {login_payload['access_token']}"}
+            errors.extend(check_translate(base_url, auth))
+            errors.extend(check_tts(base_url, auth))
 
     if errors:
         print("Local smoke check failed:")
