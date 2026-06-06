@@ -20,7 +20,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     USE_GPU=0 \
     WHISPER_DEVICE=cpu \
     WHISPER_COMPUTE_TYPE=int8 \
-    WHISPER_MODEL_SIZE=small \
+    WHISPER_MODEL_SIZE=tiny \
     WHISPER_CPU_THREADS=4 \
     WHISPER_NUM_WORKERS=1 \
     PRELOAD_MODELS=1 \
@@ -51,7 +51,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     QUOTA_REQUESTS_PER_HOUR=500 \
     STT_PROVIDER=local \
     NEAR_ZERO_LATENCY_MODE=1 \
-    STREAM_BUFFER_MAX_MB=12
+    STREAM_BUFFER_MAX_MB=12 \
+    HF_HOME=/app/.cache/huggingface \
+    TRANSFORMERS_CACHE=/app/.cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/app/.cache/huggingface
 
 WORKDIR /app
 
@@ -74,12 +77,15 @@ COPY tts tts/
 COPY ailang ailang/
 COPY ailang_integration ailang_integration/
 COPY scripts/docker_fetch_piper.sh scripts/docker_fetch_piper.sh
+COPY scripts/docker_warm_models.py scripts/docker_warm_models.py
+COPY scripts/setup_models.py scripts/setup_models.py
 RUN chmod +x scripts/docker_fetch_piper.sh && ./scripts/docker_fetch_piper.sh models/tts
+RUN python scripts/docker_warm_models.py
 COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=5 \
   CMD curl -f http://localhost:8000/health || exit 1
 
 CMD ["python", "-m", "backend.app"]

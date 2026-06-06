@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -99,6 +100,18 @@ def check_model_files() -> list[str]:
         if not path.exists():
             errors.append(f"missing file: {path.relative_to(ROOT)}")
     return errors
+
+
+def _smoke_login_credentials() -> tuple[str, str]:
+    user = os.getenv("SMOKE_USERNAME", "").strip()
+    password = os.getenv("SMOKE_PASSWORD", "").strip()
+    if user and password:
+        return user, password
+    raw_users = os.getenv("USERS", "demo:demo").strip()
+    if ":" in raw_users:
+        username, user_password = raw_users.split(":", 1)
+        return username.strip(), user_password.strip()
+    return "demo", "demo"
 
 
 def check_health(base_url: str) -> list[str]:
@@ -754,6 +767,8 @@ def check_tts(base_url: str, auth: dict[str, str]) -> list[str]:
 
 
 def _is_local_smoke_url(base_url: str) -> bool:
+    if os.getenv("SMOKE_REMOTE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return False
     from urllib.parse import urlparse
 
     host = (urlparse(base_url).hostname or "").lower()
@@ -792,9 +807,10 @@ def main() -> int:
         errors.extend(check_self_test_bundle(base_url))
         errors.extend(check_diagnostics(base_url))
         errors.extend(check_pwa_assets(base_url))
+        username, password = _smoke_login_credentials()
         login_status, login_payload = _post_json_with_retry(
             f"{base_url.rstrip('/')}/auth/login",
-            {"username": "demo", "password": "demo"},
+            {"username": username, "password": password},
         )
         if login_status != 200 or not isinstance(login_payload, dict) or not login_payload.get("access_token"):
             errors.append(f"auth login failed ({login_status}): {login_payload}")
