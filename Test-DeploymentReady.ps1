@@ -173,9 +173,9 @@ Test-Check "Production frontend bundle path" {
 }
 
 Test-Check "Same-origin WebSocket support" {
-    $frontend = Get-Content -Path (Join-Path $Root "frontend\src\main.jsx") -Raw
-    if ($frontend -notmatch "\.up\.railway\.app" -or $frontend -notmatch "wss:") {
-        throw "Frontend is missing Railway same-origin wss support"
+    $utils = Get-Content -Path (Join-Path $Root "frontend\src\utils.js") -Raw
+    if ($utils -notmatch "\.up\.railway\.app" -or $utils -notmatch "wss:") {
+        throw "Frontend utils are missing Railway same-origin wss support"
     }
     "Railway app URLs use wss:// same-origin audio"
 }
@@ -197,7 +197,7 @@ if ($RunSmoke) {
             throw "Missing Test-Translator.ps1"
         }
         $output = powershell -NoProfile -ExecutionPolicy Bypass -File ".\Test-Translator.ps1" -BaseUrl $BaseUrl
-        if ($LASTEXITCODE -ne 0 -or -not ($output | Select-String -SimpleMatch "Smoke test passed.")) {
+        if ($LASTEXITCODE -ne 0 -or -not ($output | Select-String -SimpleMatch "Local smoke check passed.")) {
             throw "Smoke test failed for $BaseUrl"
         }
         "passed for $BaseUrl"
