@@ -448,4 +448,80 @@ export default StyleSheet.create({
   actionButtonText: { color: "#f8fafc", fontSize: 14, fontWeight: "900", textAlign: "center" },
   actionButtonTextGhost: { color: "#cbd5e1" },
   smallAction: { flex: 0, minHeight: 34, paddingHorizontal: 12 },
+
+  settingsBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#111827",
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.24)",
+  },
+  topBarActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  scrollPanel: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    gap: 12,
+  },
+  banner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  bannerError: {
+    backgroundColor: "#1f1215",
+    borderColor: "rgba(248, 113, 113, 0.45)",
+  },
+  bannerWarning: {
+    backgroundColor: "#281d0b",
+    borderColor: "rgba(245, 158, 11, 0.45)",
+  },
+  bannerText: {
+    flex: 1,
+    color: "#f8fafc",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  bannerAction: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+  },
+  bannerActionText: {
+    color: "#67e8f9",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  settingsOverlay: {
+    flex: 1,
+    backgroundColor: "#050711",
+  },
+  hintStrip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: "rgba(15, 23, 42, 0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.16)",
+  },
+  hintStripText: {
+    color: "#94a3b8",
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "center",
+  },
 });

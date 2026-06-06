@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { SafeAreaView, View, Text, Pressable, useWindowDimensions } from "react-native";
+import { SafeAreaView, View, Text, Pressable, useWindowDimensions, ScrollView, Modal, Linking } from "react-native";
 import Constants from "expo-constants";
 import * as Network from "expo-network";
 import * as Haptics from "expo-haptics";
@@ -14,6 +14,9 @@ import { useMobileStreamState } from "./hooks/useMobileStreamState";
 import { useMobileSession } from "./hooks/useMobileSession";
 import { useMobileConnectionState } from "./hooks/useMobileConnectionState";
 import { useMobileUiState } from "./hooks/useMobileUiState";
+import WelcomeSetupModal from "./components/WelcomeSetupModal";
+import ErrorBanner from "./components/ErrorBanner";
+import SettingsScreen from "./components/SettingsScreen";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl || "";
 const DEBUG_LOGS = Boolean(__DEV__ || process.env.EXPO_PUBLIC_DEBUG_LOGS === "1");
@@ -207,9 +210,13 @@ function IconControl({ icon, label, onPress, disabled = false, active = false, d
 
 function FlowStep({ icon, label, active = false }) {
   return (
-    <View style={[styles.flowStep, active && styles.flowStepActive]}>
+    <View
+      style={[styles.flowStep, active && styles.flowStepActive]}
+      accessibilityRole="text"
+      accessibilityLabel={`${label}${active ? ", active" : ""}`}
+    >
       <Ionicons name={icon} size={14} color={active ? "#07131f" : "#a5b4fc"} />
-      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={[styles.flowStepText, active && styles.flowStepTextActive]}>
+      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8} style={[styles.flowStepText, active && styles.flowStepTextActive]}>
         {label}
       </Text>
     </View>
@@ -220,7 +227,7 @@ export default function App() {
   const { height, width } = useWindowDimensions();
   const { status, setStatus, statusType, setStatusType, isConnected, setIsConnected, isConnectedRef, networkState, setNetworkState } = useMobileConnectionState();
   const { sourceLanguage, setSourceLanguage, targetLanguage, setTargetLanguage, mobileDeviceIdRef, mobileSessionIdRef } = useMobileSession();
-  const { result, setResult } = useMobileUiState();
+  const { result, setResult, showSettings, setShowSettings } = useMobileUiState();
   const {
     isStreaming,
     setIsStreaming,
@@ -248,13 +255,37 @@ export default function App() {
     stopTtsPlayback,
     hasReplayAudio,
   } = useMobileTts();
-  const { token, wsUrl, loadStoredData, saveRecentUrl, validateUrl } = useMobileAuth({
+  const {
+    token,
+    wsUrl,
+    setWsUrl,
+    username,
+    setUsername,
+    password,
+    setPassword,
+    recentUrls,
+    backendReachable,
+    setupComplete,
+    isCheckingBackend,
+    loadStoredData,
+    saveWsUrl,
+    markSetupComplete,
+    validateUrl,
+    checkBackendHealth,
+    login,
+    logout,
+    clearAllData,
+  } = useMobileAuth({
     defaultUrl: API_URL,
     onStatus: (message, type) => {
       setStatus(message);
       if (type) setStatusType(type);
     },
   });
+
+  const [showSetup, setShowSetup] = useState(false);
+  const [showDebugDetails, setShowDebugDetails] = useState(false);
+  const [dismissedError, setDismissedError] = useState("");
 
   const toggleStreamingRef = useRef(null);
   const autoConnectStartedRef = useRef(false);
@@ -266,7 +297,7 @@ export default function App() {
   const latencyStartRef = useRef({});
   const [isInterpreterActive, setIsInterpreterActive] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
-  const [voiceIntent, setVoiceIntent] = useState("Voice command ready");
+  const [voiceIntent, setVoiceIntent] = useState("Tap Start and speak");
   const [barrierMode, setBarrierMode] = useState(true);
   const [speakerRoute, setSpeakerRoute] = useState({
     speakerLabel: "Person 1",
@@ -321,17 +352,36 @@ export default function App() {
   const flowDetail = conversationBrain || intentLine;
   const isTranslating = !isPlayingTts && /translat/i.test(status || "");
   const latestLatency = latencyMetrics.endToEndLatency || latencyMetrics.ttsLatency || latencyMetrics.translationLatency;
-  const statusDetail = [
+  const friendlyStatusDetail = [
+    isInterpreterActive ? "Listening continuously" : isConnected ? "Tap Start when ready" : null,
+    barrierMode ? "Two-way conversation" : "One-way translation",
+    turnCount > 0 ? `${turnCount} phrase${turnCount === 1 ? "" : "s"} translated` : null,
+  ].filter(Boolean).join(" · ");
+  const debugStatusDetail = [
     flowDetail,
     barrierLabel,
     meaningCheck ? "Check meaning" : null,
-    isInterpreterActive ? "Auto loop" : "Standby",
-    hasReplayAudio ? "Replay ready" : null,
-    turnCount > 0 ? `${turnCount} spoken` : null,
     routeConfidenceLabel,
     latestLatency ? `${latestLatency}ms` : null,
     ttsQueue.length > 0 ? `${ttsQueue.length} queued` : null,
   ].filter(Boolean).join(" | ");
+  const statusDetail = showDebugDetails ? debugStatusDetail : friendlyStatusDetail;
+  const blockingError = useMemo(() => {
+    if (dismissedError && status === dismissedError) return null;
+    if (!networkState?.isConnected) {
+      return { message: "No internet connection. Check Wi‑Fi or mobile data.", action: "Retry", handler: checkNetworkState };
+    }
+    if (statusType === "error") {
+      if (/microphone|mic/i.test(status || "")) {
+        return { message: status, action: "Open Settings", handler: () => Linking.openSettings() };
+      }
+      if (/backend|url|reachable|connection failed/i.test(status || "")) {
+        return { message: status, action: "Server setup", handler: () => setShowSetup(true) };
+      }
+      return { message: status, action: "Retry", handler: connect };
+    }
+    return null;
+  }, [dismissedError, networkState?.isConnected, status, statusType]);
   const primaryActionLabel = isPlayingTts
     ? "Stop spoken translation"
     : isInterpreterActive
@@ -341,13 +391,23 @@ export default function App() {
   const primaryIcon = isPlayingTts ? "stop" : isInterpreterActive ? (isStreaming ? "pause" : "radio") : "mic";
 
   useEffect(() => {
-    loadStoredData();
+    loadStoredData().then(() => {
+      // Show setup if user has not finished onboarding or URL is missing.
+    });
     checkNetworkState();
     const interval = setInterval(checkNetworkState, 5000);
     return () => clearInterval(interval);
     // This starts the app's network poller once; recreating it on every render would duplicate connection attempts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!setupComplete || !validateUrl(wsUrl)) {
+      setShowSetup(true);
+    } else {
+      setShowSetup(false);
+    }
+  }, [setupComplete, wsUrl]);
 
   useEffect(() => {
     if (autoConnectStartedRef.current || !networkState?.isConnected || !wsUrl) return;
@@ -930,7 +990,7 @@ export default function App() {
     setLiveTranslation("");
     setResult(null);
     setTurnCount(0);
-    setVoiceIntent("Voice command ready");
+    setVoiceIntent("Tap Start and speak");
     setMeaningCheck("");
     setConversationTurns([]);
     clearTtsQueue();
@@ -969,23 +1029,124 @@ export default function App() {
 
   toggleStreamingRef.current = toggleInterpreter;
 
+  async function finishSetup() {
+    if (validateUrl(wsUrl)) {
+      await saveWsUrl(wsUrl);
+    }
+    await markSetupComplete();
+    setShowSetup(false);
+    setDismissedError("");
+    if (networkState?.isConnected) connect();
+  }
+
+  async function handleSaveServerUrl(url) {
+    await saveWsUrl(url);
+    setDismissedError("");
+    disconnect();
+    setTimeout(() => connect(), 400);
+    setShowSettings(false);
+  }
+
   return (
     <SafeAreaView style={styles.container}>
+      <WelcomeSetupModal
+        visible={showSetup}
+        wsUrl={wsUrl}
+        setWsUrl={setWsUrl}
+        username={username}
+        setUsername={setUsername}
+        password={password}
+        setPassword={setPassword}
+        onTestConnection={() => checkBackendHealth(wsUrl)}
+        onLogin={() => login({ onSuccess: () => markSetupComplete() })}
+        onContinue={finishSetup}
+        backendReachable={backendReachable}
+        isChecking={isCheckingBackend}
+      />
+
+      <Modal visible={showSettings} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSettings(false)}>
+        <SafeAreaView style={styles.settingsOverlay}>
+          <SettingsScreen
+            wsUrl={wsUrl}
+            setWsUrl={setWsUrl}
+            onSaveUrl={handleSaveServerUrl}
+            onClose={() => setShowSettings(false)}
+            onTestConnection={() => checkBackendHealth(wsUrl)}
+            onLogin={() => login()}
+            onLogout={() => logout({ onDisconnect: disconnect })}
+            username={username}
+            setUsername={setUsername}
+            password={password}
+            setPassword={setPassword}
+            isLoggedIn={Boolean(token)}
+            recentUrls={recentUrls}
+            sourceLanguage={sourceLanguage}
+            setSourceLanguage={setSourceLanguage}
+            targetLanguage={targetLanguage}
+            setTargetLanguage={setTargetLanguage}
+            volume={volume}
+            setVolume={setVolume}
+            playbackSpeed={playbackSpeed}
+            setPlaybackSpeed={setPlaybackSpeed}
+            debugMode={showDebugDetails}
+            setDebugMode={setShowDebugDetails}
+            onClearData={async () => {
+              await clearAllData();
+              setShowSettings(false);
+              setShowSetup(true);
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
+
       <View style={[styles.page, compactLayout && styles.pageCompact]}>
         <View style={[styles.interpreterPanel, compactLayout && styles.interpreterPanelCompact, tinyLayout && styles.interpreterPanelTiny]}>
           <View style={[styles.topBar, compactLayout && styles.topBarCompact]}>
-            <View>
+            <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.brand}>ANAI</Text>
-              <Text numberOfLines={1} style={styles.brandSubline}>Universal interpreter</Text>
+              <Text numberOfLines={1} style={styles.brandSubline}>Live voice interpreter</Text>
             </View>
-            <View style={styles.connectionBadge}>
-              <View style={[styles.connectionDot, { backgroundColor: systemColor }]} />
-              <Text numberOfLines={1} style={styles.connectionText}>{panelState}</Text>
+            <View style={styles.topBarActions}>
+              <Pressable
+                onPress={() => setShowSettings(true)}
+                style={styles.settingsBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Open settings"
+              >
+                <Ionicons name="settings-outline" size={20} color="#e2e8f0" />
+              </Pressable>
+              <View style={styles.connectionBadge}>
+                <View style={[styles.connectionDot, { backgroundColor: systemColor }]} accessibilityLabel={`Status ${panelState}`} />
+                <Text numberOfLines={1} style={styles.connectionText}>{panelState}</Text>
+              </View>
             </View>
           </View>
 
+          <ScrollView style={styles.scrollPanel} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <ErrorBanner
+            message={blockingError?.message}
+            actionLabel={blockingError?.action}
+            onAction={blockingError?.handler}
+            onDismiss={() => setDismissedError(status)}
+          />
+          {meaningCheck ? (
+            <ErrorBanner
+              message={meaningCheck || "This translation may need a quick double-check before you rely on it."}
+              variant="warning"
+              onDismiss={() => setMeaningCheck("")}
+            />
+          ) : null}
+          {!isInterpreterActive && !sourceText && !translatedText ? (
+            <View style={styles.hintStrip}>
+              <Text style={styles.hintStripText}>Tap the mic button to start. Speak naturally — translation plays automatically.</Text>
+            </View>
+          ) : null}
+
           <View style={[styles.routeBand, compactLayout && styles.routeBandCompact]}>
-            <View style={[styles.routeSide, Number(speakerRoute.speakerIndex) === 1 && styles.routeSideActive, compactLayout && styles.routeSideCompact]}>
+            <View
+              style={[styles.routeSide, Number(speakerRoute.speakerIndex) === 1 && styles.routeSideActive, compactLayout && styles.routeSideCompact]}
+              accessibilityLabel={`Person 1 speaks ${activeSource}`}
+            >
               <Text style={styles.routeCaption}>Person 1</Text>
               <Text numberOfLines={1} adjustsFontSizeToFit style={styles.routeLanguage}>{activeSource}</Text>
             </View>
@@ -1004,7 +1165,10 @@ export default function App() {
             >
               <Ionicons name="swap-horizontal" size={21} color="#0f172a" />
             </Pressable>
-            <View style={[styles.routeSide, Number(speakerRoute.speakerIndex) === 2 && styles.routeSideActive, compactLayout && styles.routeSideCompact]}>
+            <View
+              style={[styles.routeSide, Number(speakerRoute.speakerIndex) === 2 && styles.routeSideActive, compactLayout && styles.routeSideCompact]}
+              accessibilityLabel={`Person 2 speaks ${activeTarget}`}
+            >
               <Text style={styles.routeCaption}>Person 2</Text>
               <Text numberOfLines={1} adjustsFontSizeToFit style={styles.routeLanguage}>{activeTarget}</Text>
             </View>
@@ -1055,7 +1219,7 @@ export default function App() {
                 accessibilityLiveRegion="polite"
                 style={[styles.laneText, !sourceText && styles.lanePlaceholder]}
               >
-                {sourceText || "Waiting for speech"}
+                {sourceText || "Your words will appear here"}
               </Text>
             </View>
             <View style={[styles.translationLane, compactLayout && styles.translationLaneCompact]}>
@@ -1083,15 +1247,23 @@ export default function App() {
             )}
           </View>
 
-          <View style={[styles.statusStrip, compactLayout && styles.statusStripCompact]}>
+          <Pressable
+            onPress={() => setShowDebugDetails((current) => !current)}
+            style={[styles.statusStrip, compactLayout && styles.statusStripCompact]}
+            accessibilityRole="button"
+            accessibilityLabel="Status details"
+            accessibilityHint="Tap to show technical details"
+          >
             <Ionicons name="pulse" size={18} color={systemColor} />
             <View style={styles.statusTextWrap}>
-              <Text numberOfLines={1} accessibilityLiveRegion="polite" style={[styles.statusLine, { color: systemColor }]}>{status || panelState}</Text>
-              <Text numberOfLines={1} style={styles.statusDetail}>
-                {statusDetail}
-              </Text>
+              <Text numberOfLines={2} accessibilityLiveRegion="polite" style={[styles.statusLine, { color: systemColor }]}>{status || panelState}</Text>
+              {statusDetail ? (
+                <Text numberOfLines={2} style={styles.statusDetail}>
+                  {statusDetail}
+                </Text>
+              ) : null}
             </View>
-          </View>
+          </Pressable>
 
           <View style={[styles.controlDock, compactLayout && styles.controlDockCompact]}>
             <IconControl
@@ -1103,28 +1275,29 @@ export default function App() {
               accessibilityLabel="Replay last spoken translation"
             />
             <IconControl
-              icon={barrierMode ? "shield-checkmark" : "shield-outline"}
-              label="Barrier"
+              icon={barrierMode ? "people" : "arrow-forward"}
+              label="Two-way"
               onPress={() => {
                 const nextBarrierMode = !barrierMode;
                 setBarrierMode(nextBarrierMode);
                 setMeaningCheck("");
                 sendRouteConfig(sourceLanguage, targetLanguage, nextBarrierMode);
-                setStatus(nextBarrierMode ? "Barrier Mode active" : "One-way mode");
+                setStatus(nextBarrierMode ? "Two-way mode on" : "One-way mode");
                 setStatusType("success");
               }}
               active={barrierMode}
-              accessibilityLabel={barrierMode ? "Disable Barrier Mode" : "Enable Barrier Mode"}
+              accessibilityLabel={barrierMode ? "Switch to one-way translation" : "Switch to two-way conversation"}
             />
             <IconControl
               icon={isConnected ? "radio" : "refresh"}
-              label="Link"
+              label="Connect"
               onPress={isConnected ? disconnect : connect}
               active={isConnected}
-              accessibilityLabel={isConnected ? "Disconnect translator" : "Connect translator"}
+              accessibilityLabel={isConnected ? "Disconnect from server" : "Connect to server"}
             />
-            <IconControl icon="trash" label="Clear" onPress={clearPanel} danger accessibilityLabel="Clear conversation panel" />
+            <IconControl icon="trash" label="Clear" onPress={clearPanel} danger accessibilityLabel="Clear conversation" />
           </View>
+          </ScrollView>
         </View>
       </View>
     </SafeAreaView>

@@ -2,6 +2,8 @@ import { useState } from "react";
 import * as SecureStore from "expo-secure-store";
 
 const TOKEN_KEY = "translator_token";
+const WS_URL_KEY = "translator_ws_url";
+const SETUP_COMPLETE_KEY = "translator_setup_complete";
 const RECENT_URLS_KEY = "recent_urls";
 const MAX_RECENT_URLS = 5;
 
@@ -13,6 +15,8 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
   const [recentUrls, setRecentUrls] = useState([]);
   const [showRecentUrls, setShowRecentUrls] = useState(false);
   const [backendReachable, setBackendReachable] = useState(null);
+  const [setupComplete, setSetupComplete] = useState(false);
+  const [isCheckingBackend, setIsCheckingBackend] = useState(false);
 
   async function loadStoredData() {
     try {
@@ -21,11 +25,33 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
         setToken(storedToken);
         onStatus?.("Token restored", "success");
       }
+      const storedUrl = await SecureStore.getItemAsync(WS_URL_KEY);
+      if (storedUrl) {
+        setWsUrl(storedUrl);
+      } else if (defaultUrl && validateUrl(defaultUrl)) {
+        setWsUrl(defaultUrl);
+      }
       const storedUrls = await SecureStore.getItemAsync(RECENT_URLS_KEY);
       if (storedUrls) setRecentUrls(JSON.parse(storedUrls));
+      const storedSetup = await SecureStore.getItemAsync(SETUP_COMPLETE_KEY);
+      setSetupComplete(storedSetup === "1");
     } catch (error) {
       console.error("Error loading stored data:", error);
     }
+  }
+
+  async function saveWsUrl(url) {
+    const trimmed = String(url || "").trim();
+    setWsUrl(trimmed);
+    if (trimmed) {
+      await SecureStore.setItemAsync(WS_URL_KEY, trimmed);
+      await saveRecentUrl(trimmed);
+    }
+  }
+
+  async function markSetupComplete() {
+    setSetupComplete(true);
+    await SecureStore.setItemAsync(SETUP_COMPLETE_KEY, "1");
   }
 
   async function saveRecentUrl(url) {
@@ -48,9 +74,15 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
   }
 
   async function checkBackendHealth(url) {
+    const target = String(url || wsUrl || "").trim();
+    if (!validateUrl(target)) {
+      setBackendReachable(false);
+      return false;
+    }
     try {
-      onStatus?.("Checking backend...", "connecting");
-      const response = await fetch(`${url}/health`, {
+      setIsCheckingBackend(true);
+      onStatus?.("Checking server...", "connecting");
+      const response = await fetch(`${target}/health`, {
         method: "GET",
         cache: "no-store",
         headers: { "Content-Type": "application/json" },
@@ -60,6 +92,8 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     } catch {
       setBackendReachable(false);
       return false;
+    } finally {
+      setIsCheckingBackend(false);
     }
   }
 
@@ -105,9 +139,13 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
 
   async function clearAllData() {
     await SecureStore.deleteItemAsync(TOKEN_KEY);
+    await SecureStore.deleteItemAsync(WS_URL_KEY);
+    await SecureStore.deleteItemAsync(SETUP_COMPLETE_KEY);
     await SecureStore.deleteItemAsync(RECENT_URLS_KEY);
     setToken("");
     setRecentUrls([]);
+    setSetupComplete(false);
+    setWsUrl(defaultUrl || "");
   }
 
   return {
@@ -124,8 +162,12 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     showRecentUrls,
     setShowRecentUrls,
     backendReachable,
+    setupComplete,
+    isCheckingBackend,
     loadStoredData,
     saveRecentUrl,
+    saveWsUrl,
+    markSetupComplete,
     validateUrl,
     checkBackendHealth,
     login,

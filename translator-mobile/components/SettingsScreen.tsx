@@ -1,9 +1,21 @@
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
-import { useState } from "react";
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput } from "react-native";
+import { useEffect, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 
 interface SettingsScreenProps {
   wsUrl: string;
   setWsUrl: (url: string) => void;
+  onSaveUrl?: (url: string) => void | Promise<void>;
+  onClose?: () => void;
+  onTestConnection?: () => void | Promise<void>;
+  onLogin?: () => void | Promise<void>;
+  onLogout?: () => void | Promise<void>;
+  username?: string;
+  setUsername?: (value: string) => void;
+  password?: string;
+  setPassword?: (value: string) => void;
+  isLoggedIn?: boolean;
+  recentUrls?: string[];
   sourceLanguage: string;
   setSourceLanguage: (lang: string) => void;
   targetLanguage: string;
@@ -52,9 +64,25 @@ export default function SettingsScreen({
   AUDIO_QUALITIES,
   debugMode = false,
   setDebugMode,
+  onSaveUrl,
+  onClose,
+  onTestConnection,
+  onLogin,
+  onLogout,
+  username = "",
+  setUsername,
+  password = "",
+  setPassword,
+  isLoggedIn = false,
+  recentUrls = [],
 }: SettingsScreenProps) {
   const [localVolume, setLocalVolume] = useState(volume);
   const [localSpeed, setLocalSpeed] = useState(playbackSpeed);
+  const [localUrl, setLocalUrl] = useState(wsUrl);
+
+  useEffect(() => {
+    setLocalUrl(wsUrl);
+  }, [wsUrl]);
 
   const handleVolumeChange = (value: number) => {
     setLocalVolume(value);
@@ -78,15 +106,100 @@ export default function SettingsScreen({
 
   return (
     <ScrollView style={styles.container}>
-      <Text style={styles.title}>Settings</Text>
-      <Text style={styles.subtitle}>Tune Anai without leaving the interpreter flow.</Text>
-      
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Backend Configuration</Text>
-        <View style={styles.settingRow}>
-          <Text style={styles.label}>Backend URL</Text>
-          <Text style={styles.value}>{wsUrl}</Text>
+      <View style={styles.headerRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Settings</Text>
+          <Text style={styles.subtitle}>Languages, audio, and server connection.</Text>
         </View>
+        {onClose ? (
+          <Pressable onPress={onClose} style={styles.closeBtn} accessibilityRole="button" accessibilityLabel="Close settings">
+            <Ionicons name="close" size={22} color="#e2e8f0" />
+          </Pressable>
+        ) : null}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Server</Text>
+        <Text style={styles.settingDescription}>Railway HTTPS URL or local IP (port 8000).</Text>
+        <TextInput
+          value={localUrl}
+          onChangeText={(value) => {
+            setLocalUrl(value);
+            setWsUrl(value);
+          }}
+          placeholder="https://your-app.up.railway.app"
+          placeholderTextColor="#64748b"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          style={styles.urlInput}
+          accessibilityLabel="Backend server URL"
+        />
+        {recentUrls.length > 0 ? (
+          <View style={styles.chipRow}>
+            {recentUrls.map((url) => (
+              <Pressable
+                key={url}
+                style={[styles.chip, localUrl === url && styles.chipActive]}
+                onPress={() => {
+                  setLocalUrl(url);
+                  setWsUrl(url);
+                }}
+              >
+                <Text numberOfLines={1} style={[styles.chipText, localUrl === url && styles.chipTextActive]}>
+                  {url.replace(/^https?:\/\//, "").slice(0, 28)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+        <View style={styles.buttonRow}>
+          <Pressable style={styles.actionChip} onPress={() => onTestConnection?.()}>
+            <Text style={styles.actionChipText}>Test connection</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.actionChip, styles.actionChipPrimary]}
+            onPress={() => onSaveUrl?.(localUrl)}
+          >
+            <Text style={[styles.actionChipText, styles.actionChipTextPrimary]}>Save & reconnect</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Account</Text>
+        {isLoggedIn ? (
+          <>
+            <Text style={styles.settingDescription}>Signed in. Tap below to sign out.</Text>
+            <Pressable style={styles.actionChip} onPress={() => onLogout?.()}>
+              <Text style={styles.actionChipText}>Sign out</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <TextInput
+              value={username}
+              onChangeText={setUsername}
+              placeholder="Username"
+              placeholderTextColor="#64748b"
+              autoCapitalize="none"
+              style={styles.urlInput}
+              accessibilityLabel="Username"
+            />
+            <TextInput
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Password"
+              placeholderTextColor="#64748b"
+              secureTextEntry
+              style={styles.urlInput}
+              accessibilityLabel="Password"
+            />
+            <Pressable style={[styles.actionChip, styles.actionChipPrimary]} onPress={() => onLogin?.()}>
+              <Text style={[styles.actionChipText, styles.actionChipTextPrimary]}>Sign in</Text>
+            </Pressable>
+          </>
+        )}
       </View>
       
       <View style={styles.section}>
@@ -223,9 +336,46 @@ export default function SettingsScreen({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20 },
+  container: { flex: 1, padding: 20, backgroundColor: "#050711" },
+  headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 8 },
+  closeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#111827",
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.2)",
+  },
   title: { fontSize: 28, fontWeight: "900", color: '#f8fafc', marginBottom: 4 },
-  subtitle: { color: '#94a3b8', fontSize: 13, marginBottom: 18 },
+  subtitle: { color: '#94a3b8', fontSize: 13, marginBottom: 10 },
+  urlInput: {
+    backgroundColor: "#111827",
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.28)",
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    color: "#f8fafc",
+    fontSize: 14,
+    marginTop: 8,
+  },
+  actionChip: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 999,
+    alignItems: "center",
+    backgroundColor: "rgba(15, 23, 42, 0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(148, 163, 184, 0.2)",
+  },
+  actionChipPrimary: {
+    backgroundColor: "#22d3ee",
+    borderColor: "rgba(34, 211, 238, 0.5)",
+  },
+  actionChipText: { color: "#cbd5e1", fontSize: 13, fontWeight: "900" },
+  actionChipTextPrimary: { color: "#07131f" },
   section: { backgroundColor: '#07111f', padding: 15, borderRadius: 22, marginBottom: 15, borderWidth: 1, borderColor: 'rgba(103, 232, 249, 0.16)' },
   sectionTitle: { color: '#67e8f9', fontSize: 13, fontWeight: '900', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.7 },
   settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(148, 163, 184, 0.12)' },

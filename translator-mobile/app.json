@@ -11,7 +11,7 @@
     "scheme": "anaitranslator",
     "userInterfaceStyle": "dark",
     "extra": {
-      "apiUrl": "http://192.168.12.243:8000",
+      "apiUrl": "",
       "router": {},
       "eas": {
         "projectId": "38c5acaf-9582-4533-8822-a31f06a6e21d"
@@ -24,7 +24,6 @@
       "buildNumber": "1",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Anai Translator needs microphone access to capture speech for real-time translation.",
-        "NSCameraUsageDescription": "Anai Translator uses the camera for scanning text to translate.",
         "NSLocalNetworkUsageDescription": "Anai Translator connects to your local translation server.",
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
