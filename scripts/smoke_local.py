@@ -105,6 +105,23 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
         if "èd" not in translated.lower() and "ed" not in translated.lower():
             errors.append(f"translate en->ht glossary miss: {translated!r}")
 
+    status, payload = _post_json(
+        f"{root}/translate/text",
+        {
+            "text": "hello",
+            "source_language": "en",
+            "target_language": "es",
+            "session_id": "smoke-tts",
+            "synthesize_audio": True,
+            "audio_response_format": "url",
+        },
+        auth,
+    )
+    if status != 200 or not isinstance(payload, dict):
+        errors.append(f"translate with audio failed ({status}): {payload}")
+    elif not (payload.get("audio_url") or payload.get("audio_base64")):
+        errors.append("translate with audio returned no playable payload")
+
     return errors
 
 
@@ -155,6 +172,29 @@ def check_websocket_translate(base_url: str, token: str) -> list[str]:
     return asyncio.run(_ws_translate_roundtrip(base_url, token))
 
 
+async def _ws_audio_ping(base_url: str, token: str) -> list[str]:
+    import websockets
+
+    ws_base = base_url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = f"{ws_base}/ws/audio?access_token={quote(token)}"
+    try:
+        async with websockets.connect(ws_url, open_timeout=10) as ws:
+            ready = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            if ready.get("type") != "ready":
+                return [f"ws/audio bad ready frame: {ready}"]
+            await ws.send(json.dumps({"type": "ping"}))
+            reply = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            if reply.get("type") != "pong":
+                return [f"ws/audio unexpected reply: {reply}"]
+    except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError) as exc:
+        return [f"ws/audio failed: {exc}"]
+    return []
+
+
+def check_websocket_audio(base_url: str, token: str) -> list[str]:
+    return asyncio.run(_ws_audio_ping(base_url, token))
+
+
 def check_tts(base_url: str, auth: dict[str, str]) -> list[str]:
     errors: list[str] = []
     root = base_url.rstrip("/")
@@ -196,6 +236,7 @@ def main() -> int:
             errors.extend(check_translate(base_url, auth))
             errors.extend(check_tts(base_url, auth))
             errors.extend(check_websocket_translate(base_url, token))
+            errors.extend(check_websocket_audio(base_url, token))
 
     if errors:
         print("Local smoke check failed:")
