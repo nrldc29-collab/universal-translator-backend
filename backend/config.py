@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 
@@ -167,10 +168,17 @@ def get_allowed_origins() -> list[str]:
 
 
 def get_allowed_origin_regex() -> str:
-    return os.getenv(
-        "ALLOWED_ORIGIN_REGEX",
-        r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?",
+    default = (
+        r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|"
+        r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})"
+        r"(:\d+)?"
     )
+    pattern = os.getenv("ALLOWED_ORIGIN_REGEX", default)
+    try:
+        re.compile(pattern)
+    except re.error:
+        return default
+    return pattern
 
 
 def get_backend_host() -> str:

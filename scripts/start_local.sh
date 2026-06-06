@@ -18,15 +18,37 @@ done
 cd "$ROOT"
 mkdir -p logs
 
+PYTHON="${PYTHON:-python3}"
+if [[ -x "$ROOT/venv/bin/python" ]]; then
+  PYTHON="$ROOT/venv/bin/python"
+fi
+
 if [[ -f "$ROOT/.env" ]]; then
   set -a
   # shellcheck disable=SC1091
-  source <(sed 's/^\uFEFF//' "$ROOT/.env" | grep -v '^#' | grep -v '^$' | sed 's/^/export /')
+  source <("$PYTHON" - <<'PY' "$ROOT/.env"
+import shlex
+import sys
+from pathlib import Path
+
+for raw_line in Path(sys.argv[1]).read_text(encoding="utf-8-sig", errors="replace").splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, _, value = line.partition("=")
+    key = key.strip()
+    value = value.strip().strip('"').strip("'")
+    if key:
+        print(f"export {key}={shlex.quote(value)}")
+PY
+)
   set +a
 fi
 
 export FRONTEND_URL="${FRONTEND_URL:-http://127.0.0.1:${FRONTEND_PORT}}"
-export ALLOWED_ORIGIN_REGEX="${ALLOWED_ORIGIN_REGEX:-https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?|https://.*\.trycloudflare\.com}"
+if [[ -z "${ALLOWED_ORIGIN_REGEX:-}" ]]; then
+  export ALLOWED_ORIGIN_REGEX='https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?|https://.*\.trycloudflare\.com'
+fi
 export TRANSLATION_BACKEND="${TRANSLATION_BACKEND:-marian}"
 export WHISPER_MODEL_SIZE="${WHISPER_MODEL_SIZE:-small}"
 export PRELOAD_MODELS="${PRELOAD_MODELS:-1}"
@@ -41,10 +63,6 @@ fi
 export STT_PROVIDER="${STT_PROVIDER:-local}"
 export REQUESTS_PER_MINUTE="${REQUESTS_PER_MINUTE:-120}"
 
-PYTHON="${PYTHON:-python3}"
-if [[ -x "$ROOT/venv/bin/python" ]]; then
-  PYTHON="$ROOT/venv/bin/python"
-fi
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
   echo "Missing python3. Install requirements: pip install -r requirements.txt" >&2
   exit 1

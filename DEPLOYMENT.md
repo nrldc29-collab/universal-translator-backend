@@ -35,7 +35,7 @@ Recommendations:
 
 ## Hugging Face Spaces (free demo)
 
-The `hf-space/` folder is a self-contained Gradio app for English↔Spanish
+The `hf-space/` folder is a self-contained Gradio app for English↔Haitian Creole
 speech and text translation. It is the only artifact you need for HF Spaces.
 
 ### Option A: deploy in the browser
@@ -64,7 +64,7 @@ Add `-Private` to make the Space private.
 ### What the Space supports
 
 - Record/upload audio, transcribe with `faster-whisper` (tiny, CPU).
-- Translate English↔Spanish via Helsinki-NLP OPUS-MT models.
+- Translate English↔Haitian Creole via NLLB-200 (CPU).
 - Runs on the free CPU tier.
 
 ### What the Space does NOT do
@@ -91,7 +91,17 @@ port wiring needed.
 ### Required variables
 
 Generate variables with `./Get-Railway-Variables.ps1` and paste them into
-**Variables** in the Railway service.
+**Variables** in the Railway service. See also `RAILWAY-DEPLOY.md` for the
+full Railway checklist (quota limits, post-deploy smoke).
+
+Required for EN↔HT conversation mode:
+
+```bash
+MAX_ACTIVE_STREAMS_PER_USER=5
+REQUESTS_PER_MINUTE=120
+QUOTA_REQUESTS_PER_HOUR=500
+STT_PROVIDER=local
+```
 
 If you keep both the frontend and backend on the Railway URL, you can leave
 `ALLOWED_ORIGINS` unset. If you also deploy a separate Vercel/Netlify
@@ -109,11 +119,29 @@ Before pushing or deploying, run:
 ./Test-DeploymentReady.ps1 -RunSmoke
 ```
 
-This validates git state, ignored secrets, Railway files, production frontend
-serving, same-origin `wss://` support, generated variables, and a local smoke
-run.
+Linux/macOS:
+
+```bash
+make preflight-deploy
+make preflight-deploy-live   # includes full EN↔HT smoke on :8000
+```
+
+This validates Railway files, production frontend serving, same-origin
+`wss://` support, quota defaults in the Dockerfile, and the local smoke suite.
 
 ### After deploy
+
+```bash
+python scripts/smoke_local.py https://YOUR-RAILWAY-DOMAIN.up.railway.app
+```
+
+Or on Windows:
+
+```powershell
+./Test-Translator.ps1 -BaseUrl https://YOUR-RAILWAY-DOMAIN.up.railway.app
+```
+
+Quick health check:
 
 ```powershell
 Invoke-WebRequest https://YOUR-RAILWAY-DOMAIN.up.railway.app/health
@@ -177,6 +205,10 @@ WHISPER_MODEL_SIZE=tiny    # tiny | base | small | medium | large
 WHISPER_COMPUTE_TYPE=int8  # float16 on GPU, int8 on CPU
 STT_MAX_CONCURRENCY=1      # parallel STT requests
 WHISPER_BEAM_SIZE=1        # 1 (fast) — 5 (accurate)
+MAX_ACTIVE_STREAMS_PER_USER=5
+REQUESTS_PER_MINUTE=120
+QUOTA_REQUESTS_PER_HOUR=500
+STT_PROVIDER=local
 ```
 
 ## Google Cloud Run (serverless, CPU)
@@ -268,15 +300,30 @@ unset.
 
 ```bash
 curl https://your-backend-url/health
-curl https://your-backend-url/ready
-curl https://your-backend-url/docs   # interactive Swagger UI
+curl https://your-backend-url/ready    # confirm espeak_available for HT TTS
+curl https://your-backend-url/docs      # interactive Swagger UI
+```
+
+Full EN↔HT smoke (auth, translate, WebSocket, conversation triple-socket):
+
+```bash
+python scripts/smoke_local.py https://your-backend-url
+```
+
+Manual translate check (login first, or use demo credentials from `USERS`):
+
+```bash
+TOKEN=$(curl -s -X POST https://your-backend-url/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo","password":"demo"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
 curl -X POST https://your-backend-url/translate/text \
   -H "Content-Type: application/json" \
-  -d '{"text":"Hello","source_lang":"en","target_lang":"es"}'
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"text":"I need help","source_language":"en","target_language":"ht"}'
 ```
 
-For an end-to-end smoke test against a deployed backend:
+Windows wrapper:
 
 ```powershell
 ./Test-Translator.ps1 -BaseUrl https://your-backend-url
