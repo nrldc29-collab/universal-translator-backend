@@ -9,7 +9,7 @@ setup-deps:
 setup: setup-deps setup-models
 
 backend-test:
-	pytest
+	$(PYTHON) -m pytest -q
 
 backend-compile:
 	$(PYTHON) -m compileall backend translation speech tts llm tests scripts -q
