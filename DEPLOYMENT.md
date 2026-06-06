@@ -90,7 +90,8 @@ port wiring needed.
 
 ### Required variables
 
-Generate variables with `./Get-Railway-Variables.ps1` and paste them into
+Generate variables with `./Get-Railway-Variables.ps1` (Windows) or
+`./Get-Railway-Variables.sh` (Linux/macOS) and paste them into
 **Variables** in the Railway service. See also `RAILWAY-DEPLOY.md` for the
 full Railway checklist (quota limits, post-deploy smoke).
 
@@ -169,9 +170,9 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-`deploy.sh` installs Docker, Nginx, and Certbot, builds the backend image,
-starts the service, configures the Nginx reverse proxy, and sets up
-auto-restart.
+`deploy.sh` installs Docker and Nginx, builds the **bundled** production image
+(root `Dockerfile`: frontend + backend), generates production credentials,
+starts the service, configures the reverse proxy, and runs the EN↔HT smoke test.
 
 ### Set up HTTPS
 
