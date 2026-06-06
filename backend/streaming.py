@@ -19,7 +19,16 @@ from backend.latency import LatencyEngine
 from backend.stream_session import StreamSessionState
 from backend.audio import process_wav_for_stt, compute_rms
 from backend.cip_bridge import choose_translation, get_cip_confidence, get_cip_decision, is_cip_clarification
-from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
+from backend.confidence import (
+    ConfidenceEngine,
+    assess_translation_confidence,
+    estimate_stt_confidence,
+    estimate_translation_confidence,
+    detect_ambiguities,
+    clarification_for,
+)
+from backend.communication_brain import detect_domains
+from backend.glossary import get_session_glossary, glossary_coverage_score
 from backend.config import (
     get_client_vad_mode,
     get_client_vad_threshold,
@@ -857,7 +866,32 @@ async def websocket_audio_translation(
             # Confidence and ambiguity checks for final
             tr_conf = estimate_translation_confidence(source_text, translated_text)
             cip_conf = get_cip_confidence(cip)
-            conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
+            domains = detect_domains(source_text)
+            glossary_cov = glossary_coverage_score(
+                source_text,
+                translated_text,
+                get_session_glossary(segment_session_id),
+                active_source_language,
+                active_target_language,
+            )
+            assessment = assess_translation_confidence(
+                source_text,
+                translated_text,
+                stt_confidence=stt_conf,
+                domains=domains,
+                glossary_coverage=glossary_cov,
+            )
+            conf_score = cip_conf if cip_conf is not None else assessment["confidence"]
+            if assessment["low_confidence"] and not cip_clarify:
+                await websocket.send_json({
+                    "type": "confidence_warning",
+                    "confidence": assessment["confidence"],
+                    "threshold": assessment["confidence_threshold"],
+                    "high_stakes": assessment["high_stakes"],
+                    "needs_confirmation": assessment["needs_confirmation"],
+                    "message": assessment["confidence_message"],
+                    "domains": assessment["high_stakes"],
+                })
             if conf_score < 0.4 and not cip_clarify:
                 await websocket.send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
             translation_ms = round((time() - translation_started_at) * 1000)
@@ -1017,7 +1051,13 @@ async def websocket_audio_translation(
                 "cip_turn_policy": cip_turn_policy if cip_turn_policy else None,
                 "cip_client_hints": cip_client_hints if cip_client_hints else None,
                 "translated_by": cip.get("translation_source") if isinstance(cip, dict) and cip.get("translated") and cip.get("translation_source") else "UT",
-                "clarify": cip_clarify or conf_score < 0.4,
+                "clarify": cip_clarify or assessment["low_confidence"] or conf_score < 0.4,
+                "confidence": assessment["confidence"],
+                "confidence_threshold": assessment["confidence_threshold"],
+                "low_confidence": assessment["low_confidence"],
+                "needs_confirmation": assessment["needs_confirmation"],
+                "confidence_message": assessment["confidence_message"],
+                "high_stakes_domains": assessment["high_stakes"],
                 "session": shared_session,
                 **result.__dict__,
             })
@@ -1448,7 +1488,22 @@ async def websocket_streaming_stt_translation(
         translated_text = "" if cip_clarify else choose_translation(cip, translated_text)
         tr_conf = estimate_translation_confidence(source_text, translated_text)
         cip_conf = get_cip_confidence(cip)
-        conf_score = cip_conf if cip_conf is not None else ConfidenceEngine().evaluate(stt_conf, tr_conf)
+        domains = detect_domains(source_text)
+        glossary_cov = glossary_coverage_score(
+            source_text,
+            translated_text,
+            get_session_glossary(session_id),
+            source_language,
+            target_language,
+        )
+        assessment = assess_translation_confidence(
+            source_text,
+            translated_text,
+            stt_confidence=stt_conf,
+            domains=domains,
+            glossary_coverage=glossary_cov,
+        )
+        conf_score = cip_conf if cip_conf is not None else assessment["confidence"]
         translation_ms = round((time() - translation_started_at) * 1000)
         await send_json({"type": "latency", "metric": "translation", "ms": translation_ms})
         if cip:
@@ -1465,12 +1520,29 @@ async def websocket_streaming_stt_translation(
                 "client_hints": cip_client_hints,
                 "translated_by": cip.get("translation_source"),
             })
+        if assessment["low_confidence"] and not cip_clarify:
+            await send_json({
+                "type": "confidence_warning",
+                "confidence": assessment["confidence"],
+                "threshold": assessment["confidence_threshold"],
+                "high_stakes": assessment["high_stakes"],
+                "needs_confirmation": assessment["needs_confirmation"],
+                "message": assessment["confidence_message"],
+                "domains": assessment["high_stakes"],
+            })
         if cip_clarify:
             await send_json({"type": "clarify", "message": cip_decision.get("message") or "Can you rephrase that?", "stage": "cip_clarification"})
         elif conf_score < 0.4:
             await send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
         else:
-            await send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": translated_text})
+            await send_json({
+                "type": "live_translation",
+                "speaker": speaker,
+                "speaker_label": speaker_label,
+                "text": translated_text,
+                "confidence": assessment["confidence"],
+                "low_confidence": assessment["low_confidence"],
+            })
 
         memory.add(speaker, source_text, translated_text, {"cip": cip})
         speaker_memory.add_message(speaker, source_text)
@@ -1507,7 +1579,13 @@ async def websocket_streaming_stt_translation(
             "cip_turn_policy": cip_turn_policy if cip_turn_policy else None,
             "cip_client_hints": cip_client_hints if cip_client_hints else None,
             "translated_by": cip.get("translation_source") if isinstance(cip, dict) and cip.get("translated") and cip.get("translation_source") else "UT",
-            "clarify": cip_clarify or conf_score < 0.4,
+            "clarify": cip_clarify or assessment["low_confidence"] or conf_score < 0.4,
+            "confidence": assessment["confidence"],
+            "confidence_threshold": assessment["confidence_threshold"],
+            "low_confidence": assessment["low_confidence"],
+            "needs_confirmation": assessment["needs_confirmation"],
+            "confidence_message": assessment["confidence_message"],
+            "high_stakes_domains": assessment["high_stakes"],
             "session": shared_session,
             **result.__dict__,
         })

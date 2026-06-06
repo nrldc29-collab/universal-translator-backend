@@ -7,6 +7,12 @@ from tts import PiperTextToSpeech
 from backend.config import get_translation_backend
 from backend.stt_bridge import STTBridge
 from backend.ailang_pipeline import get_ailang_pipeline, AILangContext
+from backend.communication_brain import detect_domains
+from backend.glossary import (
+    finalize_translation,
+    prepare_for_translation,
+    set_session_glossary,
+)
 
 
 @dataclass
@@ -105,24 +111,40 @@ class AnaiTranslatorPipeline:
             improved_text = self.context_layer.improve(working_text, source_language, target_language, tone)
         else:
             improved_text = self.context_layer.improve(text, source_language, target_language, tone)
-        
-        # Base translation
-        translated_text = self.translator.translate(improved_text, source_language, target_language)
-        
-        # AILang post-translation pipeline
+
+        domains = detect_domains(improved_text)
+        high_stakes = domains.get("high_stakes") or []
+        strict_medical = "medical" in high_stakes
+        prepared_text, glossary_meta = prepare_for_translation(improved_text, strict_medical=strict_medical)
+
+        # Base translation (local-first path configured via TRANSLATION_BACKEND)
+        translated_text = self.translator.translate(prepared_text, source_language, target_language)
+        translated_text, post_glossary_meta = finalize_translation(
+            improved_text,
+            translated_text,
+            session_id=self.session_id,
+            source_lang=source_language,
+            target_lang=target_language,
+            strict_medical=strict_medical,
+            metadata={**glossary_meta, "domains": domains},
+        )
+        if ailang_metadata is not None or post_glossary_meta.get("glossary_applied") or strict_medical:
+            ailang_metadata = ailang_metadata or {}
+            ailang_metadata["glossary"] = post_glossary_meta
+            ailang_metadata["domains"] = domains
         if self.ailang_pipeline:
             context = self.ailang_pipeline.get_or_create_context(self.session_id)
-            
+
             # 5. Confidence-based fallback
             if confidence > 0:
                 confidence_result = self.ailang_pipeline.process_confidence_fallback(
-                    improved_text, translated_text, confidence, source_language, target_language, 
+                    improved_text, translated_text, confidence, source_language, target_language,
                     context, analysis.get("instructions", [])
                 )
                 if confidence_result.get("escalated"):
                     translated_text = confidence_result["final_translation"]
                     ailang_metadata["confidence_fallback"] = confidence_result
-            
+
             # 6. Dialect adaptation
             dialect_result = self.ailang_pipeline.process_dialect_adaptation(
                 improved_text, translated_text, source_language, target_language, context
@@ -130,16 +152,16 @@ class AnaiTranslatorPipeline:
             if dialect_result.get("adaptation_applied"):
                 translated_text = dialect_result["final_translation"]
                 ailang_metadata["dialect_adaptation"] = dialect_result
-            
-            # 7. Glossary injection
+
+            # 7. Glossary injection (AILang layer — local glossary already applied above)
             glossary_result = self.ailang_pipeline.process_glossary_injection(
-                improved_text, translated_text, source_language, target_language, 
+                improved_text, translated_text, source_language, target_language,
                 context, analysis.get("instructions", [])
             )
             if glossary_result.get("glossary_applied"):
                 translated_text = glossary_result["final_translation"]
                 ailang_metadata["glossary_injection"] = glossary_result
-            
+
             # 8. Back-translation verification
             back_translation_result = self.ailang_pipeline.process_back_translation(
                 improved_text, translated_text, source_language, target_language, context
@@ -147,23 +169,20 @@ class AnaiTranslatorPipeline:
             if back_translation_result.get("improved"):
                 translated_text = back_translation_result["final_translation"]
                 ailang_metadata["back_translation"] = back_translation_result
-            
-            # Add conversation turn to history
+
             self.ailang_pipeline.add_conversation_turn(
                 self.session_id, speaker or "unknown", text, translated_text
             )
-        
+
         audio_output_path = None
         if synthesize_audio:
-            # Apply emotion-aware TTS configuration if AILang is enabled
             emotion_config = None
             if self.ailang_pipeline:
                 context = self.ailang_pipeline.get_or_create_context(self.session_id)
                 emotion_result = self.ailang_pipeline.process_emotion_tts(translated_text, target_language, context)
                 emotion_config = emotion_result.get("tts_config")
                 ailang_metadata["emotion_tts"] = emotion_result
-            
-            # Emotion-aware TTS: speaking rate / pitch / volume carried into synthesis.
+
             audio_output_path = self.tts.synthesize(
                 translated_text, output_audio_path, language=target_language, emotion_config=emotion_config
             )
@@ -229,9 +248,24 @@ class AnaiTranslatorPipeline:
             improved_text = self.context_layer.improve(working_text, source_language, target_language, tone)
         else:
             improved_text = self.context_layer.improve(text, source_language, target_language, tone)
-        
-        translated_text = translator.translate(improved_text, source_language, target_language)
-        
+
+        domains = detect_domains(improved_text)
+        strict_medical = "medical" in (domains.get("high_stakes") or [])
+        prepared_text, glossary_meta = prepare_for_translation(improved_text, strict_medical=strict_medical)
+        translated_text = translator.translate(prepared_text, source_language, target_language)
+        translated_text, post_glossary_meta = finalize_translation(
+            improved_text,
+            translated_text,
+            session_id=self.session_id,
+            source_lang=source_language,
+            target_lang=target_language,
+            strict_medical=strict_medical,
+            metadata={**glossary_meta, "domains": domains},
+        )
+        if post_glossary_meta.get("glossary_applied") or strict_medical:
+            ailang_metadata["glossary"] = post_glossary_meta
+            ailang_metadata["domains"] = domains
+
         # AILang post-translation pipeline
         if self.ailang_pipeline:
             context = self.ailang_pipeline.get_or_create_context(self.session_id)
@@ -323,6 +357,7 @@ class AnaiTranslatorPipeline:
     
     def set_glossary(self, glossary: list) -> None:
         """Set custom glossary for the current session."""
+        set_session_glossary(self.session_id, glossary)
         if self.ailang_pipeline:
             self.ailang_pipeline.set_glossary(self.session_id, glossary)
     

@@ -84,11 +84,10 @@ def get_whisper_compute_type() -> str:
 
 
 def get_whisper_model_size() -> str:
-    # Optimize for faster partial translations - use tiny model for speed
+    # Default to small for better accent/dialect accuracy; override with WHISPER_MODEL_SIZE.
     if os.getenv("GPU_COST_MODE", "balanced").lower() == "low":
-        return os.getenv("WHISPER_MODEL_SIZE", "tiny")
-    # Use tiny model by default for fastest partial STT
-    return os.getenv("WHISPER_MODEL_SIZE", "tiny")
+        return os.getenv("WHISPER_MODEL_SIZE", "small")
+    return os.getenv("WHISPER_MODEL_SIZE", "small")
 
 
 def get_whisper_cpu_threads() -> int:
@@ -108,7 +107,19 @@ def get_whisper_beam_size() -> int:
 
 
 def get_translation_backend() -> str:
-    return os.getenv("TRANSLATION_BACKEND", "hybrid").lower()
+    return os.getenv("TRANSLATION_BACKEND", "marian").lower()
+
+
+def get_hybrid_enable_remote() -> bool:
+    return _to_bool("HYBRID_ENABLE_REMOTE", False)
+
+
+def get_confidence_warning_threshold() -> float:
+    return _to_float("CONFIDENCE_WARNING_THRESHOLD", 0.72, minimum=0.0, maximum=1.0)
+
+
+def get_high_stakes_confidence_threshold() -> float:
+    return _to_float("HIGH_STAKES_CONFIDENCE_THRESHOLD", 0.78, minimum=0.0, maximum=1.0)
 
 
 def get_translation_device() -> str:

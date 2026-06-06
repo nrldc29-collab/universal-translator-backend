@@ -47,6 +47,9 @@ export default function TranslationStack({
   // clarification
   clarifyVisible,
   clarifyMessage,
+  confidenceWarningVisible,
+  confidenceWarningMessage,
+  setConfidenceWarningVisible,
   result,
   setClarifyVisible,
   setPipelineStage,
@@ -277,6 +280,21 @@ export default function TranslationStack({
           </button>
         )}
       </article>
+
+      {confidenceWarningVisible && confidenceWarningMessage && (
+        <div className="confidence-warning-pill" role="status">
+          <span className="confidence-warning-text">{confidenceWarningMessage}</span>
+          <div className="clarify-pill-actions">
+            <button
+              type="button"
+              className="clarify-no"
+              onClick={() => setConfidenceWarningVisible(false)}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {clarifyVisible && clarifyMessage && (
         <div className="clarify-pill" role="alert">

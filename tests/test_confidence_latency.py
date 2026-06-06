@@ -2,6 +2,7 @@
 
 from backend.confidence import (
     ConfidenceEngine,
+    assess_translation_confidence,
     estimate_stt_confidence,
     estimate_translation_confidence,
     is_placeholder_translation,
@@ -132,6 +133,26 @@ class TestAmbiguity:
     def test_clarification_for_no_ambiguities_returns_generic(self):
         msg = clarification_for("hello", [])
         assert "rephrase" in msg.lower() or "misunderstood" in msg.lower()
+
+
+class TestAssessTranslationConfidence:
+    def test_high_stakes_lowers_threshold(self):
+        assessment = assess_translation_confidence(
+            "I need a doctor for chest pain",
+            "Necesito un doctor por dolor de pecho",
+            domains={"high_stakes": ["medical"], "risk_level": "high"},
+        )
+        assert assessment["high_stakes"] == ["medical"]
+        assert assessment["confidence_threshold"] >= 0.78
+
+    def test_low_confidence_sets_message(self):
+        assessment = assess_translation_confidence(
+            "bank",
+            "[en->es] bank",
+            domains={"high_stakes": ["financial"], "risk_level": "high"},
+        )
+        assert assessment["low_confidence"] is True
+        assert assessment["confidence_message"]
 
 
 # ---------------------------------------------------------------------------

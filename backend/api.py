@@ -62,7 +62,9 @@ from backend.security import WEBSOCKET_AUTH_RELEASE, authenticate_http, authenti
 from backend.sessions import session_registry
 from backend.streaming import websocket_audio_translation, websocket_text_translation
 from speech import SileroVoiceActivityDetector
-from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
+from backend.confidence import ConfidenceEngine, assess_translation_confidence, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
+from backend.communication_brain import detect_domains
+from backend.glossary import get_session_glossary, glossary_coverage_score
 from backend.cip_client import call_cip_brain, cip_health_snapshot, cip_settings
 from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, is_cip_clarification
 from backend import assistant as naia_assistant
@@ -627,7 +629,23 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         # Confidence/clarify for text path
         tr_conf = estimate_translation_confidence(request.text, final_text)
         cip_conf = get_cip_confidence(cip)
-        conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
+        domains = detect_domains(request.text)
+        session_key = request.session_id or identity
+        glossary_cov = glossary_coverage_score(
+            request.text,
+            final_text,
+            get_session_glossary(session_key),
+            request.source_language,
+            request.target_language,
+        )
+        assessment = assess_translation_confidence(
+            request.text,
+            final_text,
+            stt_confidence=stt_conf,
+            domains=domains,
+            glossary_coverage=glossary_cov,
+        )
+        conf_score = cip_conf if cip_conf is not None else assessment["confidence"]
         audio_path = None
         audio_payload = None
         if request.synthesize_audio and final_text and not cip_clarify:
@@ -656,6 +674,13 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         if interim.ailang_metadata:
             response_dict["ailang_metadata"] = interim.ailang_metadata
         
+        if assessment["low_confidence"] and not response_dict.get("clarify"):
+            response_dict["low_confidence"] = True
+            response_dict["confidence"] = assessment["confidence"]
+            response_dict["confidence_threshold"] = assessment["confidence_threshold"]
+            response_dict["needs_confirmation"] = assessment["needs_confirmation"]
+            response_dict["confidence_message"] = assessment["confidence_message"]
+            response_dict["high_stakes_domains"] = assessment["high_stakes"]
         if conf_score < 0.4 and not response_dict.get("clarify"):
             response_dict["clarify"] = True
             response_dict["clarify_message"] = clarification_for(request.text, detect_ambiguities(request.text))

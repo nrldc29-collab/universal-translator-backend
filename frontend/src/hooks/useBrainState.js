@@ -15,6 +15,8 @@ const INITIAL_BRAIN_UI = {
 export function useBrainState() {
   const [clarifyVisible, setClarifyVisible] = useState(false);
   const [clarifyMessage, setClarifyMessage] = useState('');
+  const [confidenceWarningVisible, setConfidenceWarningVisible] = useState(false);
+  const [confidenceWarningMessage, setConfidenceWarningMessage] = useState('');
   const [brainUi, setBrainUi] = useState(INITIAL_BRAIN_UI);
   const [conversationBrain, setConversationBrain] = useState('Idle');
   const [semanticContext, setSemanticContext] = useState({
@@ -50,6 +52,10 @@ export function useBrainState() {
     setClarifyVisible,
     clarifyMessage,
     setClarifyMessage,
+    confidenceWarningVisible,
+    setConfidenceWarningVisible,
+    confidenceWarningMessage,
+    setConfidenceWarningMessage,
     brainUi,
     setBrainUi,
     conversationBrain,

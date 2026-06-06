@@ -5,6 +5,14 @@ from .marian_translator import MarianTranslator
 from .remote_translator import RemoteTranslator
 
 
+def _marian_fallback_enabled() -> bool:
+    return os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "1") != "0"
+
+
+def _remote_fallback_enabled() -> bool:
+    return os.getenv("HYBRID_ENABLE_REMOTE", "0") == "1"
+
+
 class HybridTranslator:
     def __init__(self):
         self.lightweight = LightweightTranslator()
@@ -23,9 +31,14 @@ class HybridTranslator:
         lightweight_result = self.lightweight.translate(text, source_language, target_language)
         if not self.is_placeholder_translation(lightweight_result, source_language, target_language):
             return lightweight_result
-        try:
-            return self.remote.translate(text, source_language, target_language)
-        except (ConnectionError, TimeoutError, RuntimeError, ValueError):
-            if os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "0") != "1":
-                return lightweight_result
-            return self.marian.translate(text, source_language, target_language)
+        if _marian_fallback_enabled():
+            try:
+                return self.marian.translate(text, source_language, target_language)
+            except (RuntimeError, OSError, ValueError):
+                pass
+        if _remote_fallback_enabled():
+            try:
+                return self.remote.translate(text, source_language, target_language)
+            except (ConnectionError, TimeoutError, RuntimeError, ValueError):
+                pass
+        return lightweight_result

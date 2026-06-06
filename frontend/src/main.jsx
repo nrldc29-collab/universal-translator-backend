@@ -233,6 +233,8 @@ function App() {
   const {
     clarifyVisible, setClarifyVisible,
     clarifyMessage, setClarifyMessage,
+    confidenceWarningVisible, setConfidenceWarningVisible,
+    confidenceWarningMessage, setConfidenceWarningMessage,
     brainUi, setBrainUi,
     conversationBrain, setConversationBrain,
     semanticContext, setSemanticContext,
@@ -745,6 +747,10 @@ function App() {
         setLiveTranslation(data.translated_text || '');
         setClarifyMessage(data.clarify_message || 'Clarification requested');
         setClarifyVisible(true);
+      } else if (data.low_confidence && data.confidence_message) {
+        setConfidenceWarningVisible(true);
+        setConfidenceWarningMessage(data.confidence_message);
+        setStatus(data.confidence_message);
       } else {
         setStatus(brainUpdate?.message || 'Text translated');
         if (settings.ttsVoice === 'browser' && data.translated_text) {
@@ -1743,6 +1749,12 @@ function App() {
         setStatus(data.message || 'Clarification requested');
         setClarifyMessage(data.message || 'Clarification requested');
         setClarifyVisible(true);
+      }
+      if (data.type === 'confidence_warning') {
+        setPipelineStage('Verify translation');
+        setStatus(data.message || 'Low confidence translation');
+        setConfidenceWarningVisible(true);
+        setConfidenceWarningMessage(data.message || 'Verify this translation with a human before acting on it.');
       }
       if (data.type === 'stage') {
         setPipelineStage(data.message);
@@ -3072,6 +3084,9 @@ function App() {
           onClearConversation={clearInterpreterScreen}
           clarifyVisible={clarifyVisible}
           clarifyMessage={clarifyMessage}
+          confidenceWarningVisible={confidenceWarningVisible}
+          confidenceWarningMessage={confidenceWarningMessage}
+          setConfidenceWarningVisible={setConfidenceWarningVisible}
           result={result}
           setClarifyVisible={setClarifyVisible}
           setPipelineStage={setPipelineStage}
