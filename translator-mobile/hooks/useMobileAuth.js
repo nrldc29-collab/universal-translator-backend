@@ -41,7 +41,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
   }
 
   async function saveWsUrl(url) {
-    const trimmed = String(url || "").trim();
+    const trimmed = String(url || "").trim().replace(/\/+$/, "");
     setWsUrl(trimmed);
     if (trimmed) {
       await SecureStore.setItemAsync(WS_URL_KEY, trimmed);

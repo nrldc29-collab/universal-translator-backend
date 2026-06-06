@@ -466,10 +466,11 @@ export default StyleSheet.create({
   },
   scrollPanel: {
     flex: 1,
+    minHeight: 120,
   },
   scrollContent: {
     flexGrow: 1,
-    gap: 12,
+    paddingBottom: 4,
   },
   banner: {
     flexDirection: "row",

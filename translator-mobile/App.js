@@ -284,6 +284,7 @@ export default function App() {
   });
 
   const [showSetup, setShowSetup] = useState(false);
+  const [authLoaded, setAuthLoaded] = useState(false);
   const [showDebugDetails, setShowDebugDetails] = useState(false);
   const [dismissedError, setDismissedError] = useState("");
 
@@ -391,9 +392,7 @@ export default function App() {
   const primaryIcon = isPlayingTts ? "stop" : isInterpreterActive ? (isStreaming ? "pause" : "radio") : "mic";
 
   useEffect(() => {
-    loadStoredData().then(() => {
-      // Show setup if user has not finished onboarding or URL is missing.
-    });
+    loadStoredData().then(() => setAuthLoaded(true));
     checkNetworkState();
     const interval = setInterval(checkNetworkState, 5000);
     return () => clearInterval(interval);
@@ -402,12 +401,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!authLoaded) return;
     if (!setupComplete || !validateUrl(wsUrl)) {
       setShowSetup(true);
     } else {
       setShowSetup(false);
     }
-  }, [setupComplete, wsUrl]);
+  }, [authLoaded, setupComplete, wsUrl]);
 
   useEffect(() => {
     if (autoConnectStartedRef.current || !networkState?.isConnected || !wsUrl) return;
@@ -1030,9 +1030,13 @@ export default function App() {
   toggleStreamingRef.current = toggleInterpreter;
 
   async function finishSetup() {
-    if (validateUrl(wsUrl)) {
-      await saveWsUrl(wsUrl);
+    const trimmed = String(wsUrl || "").trim();
+    if (!validateUrl(trimmed)) {
+      setStatus("Enter a valid server URL starting with http:// or https://");
+      setStatusType("error");
+      return;
     }
+    await saveWsUrl(trimmed);
     await markSetupComplete();
     setShowSetup(false);
     setDismissedError("");
@@ -1122,7 +1126,6 @@ export default function App() {
             </View>
           </View>
 
-          <ScrollView style={styles.scrollPanel} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <ErrorBanner
             message={blockingError?.message}
             actionLabel={blockingError?.action}
@@ -1209,6 +1212,12 @@ export default function App() {
             <FlowStep icon="volume-high" label="Speak" active={isPlayingTts} />
           </View>
 
+          <ScrollView
+            style={styles.scrollPanel}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
           <View style={[styles.transcriptStack, compactLayout && styles.transcriptStackCompact, tinyLayout && styles.transcriptStackTiny]}>
             <View style={[styles.transcriptLane, compactLayout && styles.transcriptLaneCompact]}>
               <Text style={styles.laneLabel}>{activeSpeakerLabel} said {routeSource}</Text>
@@ -1246,6 +1255,7 @@ export default function App() {
               </View>
             )}
           </View>
+          </ScrollView>
 
           <Pressable
             onPress={() => setShowDebugDetails((current) => !current)}
@@ -1297,7 +1307,6 @@ export default function App() {
             />
             <IconControl icon="trash" label="Clear" onPress={clearPanel} danger accessibilityLabel="Clear conversation" />
           </View>
-          </ScrollView>
         </View>
       </View>
     </SafeAreaView>

@@ -5,6 +5,9 @@ export default StyleSheet.create({
     flex: 1,
     backgroundColor: "#050711",
   },
+  flex: {
+    flex: 1,
+  },
   scroll: {
     padding: 20,
     paddingBottom: 40,
