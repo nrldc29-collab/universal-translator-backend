@@ -325,9 +325,13 @@ export default StyleSheet.create({
   },
   turnChipText: {
     color: "#cbd5e1",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0,
+    fontSize: 11,
+    fontWeight: "700",
+    lineHeight: 15,
+  },
+  turnChipSpeaker: {
+    color: "#67e8f9",
+    fontWeight: "900",
   },
   laneLabel: {
     color: "#93a4bd",
@@ -524,5 +528,60 @@ export default StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     textAlign: "center",
+  },
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: "#050711",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 14,
+  },
+  loadingScreenText: {
+    color: "#94a3b8",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  offlineCta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 16,
+    backgroundColor: "#0c1a2e",
+    borderWidth: 1,
+    borderColor: "rgba(34, 211, 238, 0.35)",
+  },
+  offlineCtaText: {
+    flex: 1,
+    color: "#e0f2fe",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
+  offlineCtaBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#22d3ee",
+  },
+  offlineCtaBtnText: {
+    color: "#07131f",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  routeFlag: {
+    fontSize: 20,
+    marginBottom: 2,
+  },
+  routeTapHint: {
+    marginTop: 4,
+    color: "#64748b",
+    fontSize: 9,
+    fontWeight: "800",
+    textTransform: "uppercase",
+  },
+  voiceButtonBusy: {
+    opacity: 0.85,
   },
 });

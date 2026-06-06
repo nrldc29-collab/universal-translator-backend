@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { SafeAreaView, View, Text, Pressable, useWindowDimensions, ScrollView, Modal, Linking } from "react-native";
+import { SafeAreaView, View, Text, Pressable, useWindowDimensions, ScrollView, Modal, Linking, ActivityIndicator } from "react-native";
 import Constants from "expo-constants";
 import * as Network from "expo-network";
 import * as Haptics from "expo-haptics";
@@ -17,6 +17,8 @@ import { useMobileUiState } from "./hooks/useMobileUiState";
 import WelcomeSetupModal from "./components/WelcomeSetupModal";
 import ErrorBanner from "./components/ErrorBanner";
 import SettingsScreen from "./components/SettingsScreen";
+import LanguagePickerModal, { LANGUAGE_OPTIONS } from "./components/LanguagePickerModal";
+import LoadingScreen from "./components/LoadingScreen";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl || "";
 const DEBUG_LOGS = Boolean(__DEV__ || process.env.EXPO_PUBLIC_DEBUG_LOGS === "1");
@@ -39,6 +41,23 @@ const LANGUAGES = [
 ];
 
 const LANGUAGE_BY_CODE = Object.fromEntries(LANGUAGES.map((language) => [language.code, language]));
+const LANGUAGE_FLAGS = Object.fromEntries(LANGUAGE_OPTIONS.map((language) => [language.code, language.flag]));
+
+async function tapHaptic(style = "light") {
+  try {
+    if (style === "success") {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else if (style === "warning") {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    } else if (style === "medium") {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+  } catch {
+    // Haptics optional on some devices.
+  }
+}
 
 function debugLog(...args) {
   if (DEBUG_LOGS) console.debug(...args);
@@ -287,6 +306,7 @@ export default function App() {
   const [authLoaded, setAuthLoaded] = useState(false);
   const [showDebugDetails, setShowDebugDetails] = useState(false);
   const [dismissedError, setDismissedError] = useState("");
+  const [languagePicker, setLanguagePicker] = useState(null);
 
   const toggleStreamingRef = useRef(null);
   const autoConnectStartedRef = useRef(false);
@@ -389,7 +409,9 @@ export default function App() {
       ? "Pause interpreter"
       : "Start interpreter";
   const primaryButtonText = isPlayingTts ? "Stop" : isInterpreterActive ? "Pause" : "Start";
+  const isConnecting = statusType === "connecting";
   const primaryIcon = isPlayingTts ? "stop" : isInterpreterActive ? (isStreaming ? "pause" : "radio") : "mic";
+  const showOfflineCta = authLoaded && !showSetup && !isConnected && validateUrl(wsUrl);
 
   useEffect(() => {
     loadStoredData().then(() => setAuthLoaded(true));
@@ -483,17 +505,20 @@ export default function App() {
       setIsConnected(true);
       setStatus(isInterpreterActiveRef.current ? "Ready to listen" : "Connected");
       setStatusType("success");
+      tapHaptic("success");
       return;
     }
 
     if (!validateUrl(wsUrl)) {
       setStatus("Backend URL is not ready");
       setStatusType("error");
+      setShowSetup(true);
       return;
     }
 
     setStatus("Connecting");
     setStatusType("connecting");
+    tapHaptic("light");
     const url = apiToWsUrl(wsUrl, "/ws/audio", token);
     debugLog("Connecting to:", url);
     wsControlRef.current = connectWS(url, handleMessage, setStatusWithType);
@@ -979,10 +1004,37 @@ export default function App() {
 
   async function toggleInterpreter() {
     if (isInterpreterActive) {
+      await tapHaptic("light");
       await pauseInterpreter();
     } else {
+      await tapHaptic("medium");
       activateInterpreter();
     }
+  }
+
+  function applyLanguageSelection(side, code) {
+    if (!code || (side === "source" && code === sourceLanguage) || (side === "target" && code === targetLanguage)) {
+      setLanguagePicker(null);
+      return;
+    }
+    const nextSource = side === "source" ? code : sourceLanguage;
+    const nextTarget = side === "target" ? code : targetLanguage;
+    setSourceLanguage(nextSource);
+    setTargetLanguage(nextTarget);
+    sendRouteConfig(nextSource, nextTarget, barrierMode);
+    setSpeakerRoute((current) => ({
+      ...current,
+      sourceLanguage: nextSource,
+      targetLanguage: nextTarget,
+      detectedLanguage: side === "source" ? nextSource : current.detectedLanguage,
+    }));
+    setVoiceIntent(
+      barrierMode
+        ? `${getLanguageLabel(nextSource)} ↔ ${getLanguageLabel(nextTarget)}`
+        : `${getLanguageLabel(nextSource)} → ${getLanguageLabel(nextTarget)}`
+    );
+    setLanguagePicker(null);
+    tapHaptic("success");
   }
 
   function clearPanel() {
@@ -998,6 +1050,7 @@ export default function App() {
   }
 
   function swapRoute() {
+    tapHaptic("light");
     const nextSource = targetLanguage;
     const nextTarget = sourceLanguage;
     setSourceLanguage(nextSource);
@@ -1051,8 +1104,31 @@ export default function App() {
     setShowSettings(false);
   }
 
+  if (!authLoaded) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <LoadingScreen />
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
+      <LanguagePickerModal
+        visible={languagePicker === "source"}
+        title="Person 1 language"
+        selectedCode={sourceLanguage}
+        onSelect={(code) => applyLanguageSelection("source", code)}
+        onClose={() => setLanguagePicker(null)}
+      />
+      <LanguagePickerModal
+        visible={languagePicker === "target"}
+        title="Person 2 language"
+        selectedCode={targetLanguage}
+        onSelect={(code) => applyLanguageSelection("target", code)}
+        onClose={() => setLanguagePicker(null)}
+      />
+
       <WelcomeSetupModal
         visible={showSetup}
         wsUrl={wsUrl}
@@ -1139,20 +1215,39 @@ export default function App() {
               onDismiss={() => setMeaningCheck("")}
             />
           ) : null}
-          {!isInterpreterActive && !sourceText && !translatedText ? (
+          {showOfflineCta ? (
+            <View style={styles.offlineCta}>
+              <Ionicons name="cloud-offline-outline" size={22} color="#67e8f9" />
+              <Text style={styles.offlineCtaText}>Not connected to the translator server yet.</Text>
+              <Pressable
+                onPress={connect}
+                style={styles.offlineCtaBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Connect to server"
+              >
+                <Text style={styles.offlineCtaBtnText}>Connect</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {!isInterpreterActive && !sourceText && !translatedText && !showOfflineCta ? (
             <View style={styles.hintStrip}>
-              <Text style={styles.hintStripText}>Tap the mic button to start. Speak naturally — translation plays automatically.</Text>
+              <Text style={styles.hintStripText}>Tap Start, then speak. Your translation plays out loud automatically.</Text>
             </View>
           ) : null}
 
           <View style={[styles.routeBand, compactLayout && styles.routeBandCompact]}>
-            <View
+            <Pressable
+              onPress={() => setLanguagePicker("source")}
               style={[styles.routeSide, Number(speakerRoute.speakerIndex) === 1 && styles.routeSideActive, compactLayout && styles.routeSideCompact]}
-              accessibilityLabel={`Person 1 speaks ${activeSource}`}
+              accessibilityRole="button"
+              accessibilityLabel={`Person 1 speaks ${activeSource}. Tap to change language.`}
             >
+              <Text style={styles.routeFlag}>{LANGUAGE_FLAGS[sourceLanguage] || "🌐"}</Text>
               <Text style={styles.routeCaption}>Person 1</Text>
               <Text numberOfLines={1} adjustsFontSizeToFit style={styles.routeLanguage}>{activeSource}</Text>
-            </View>
+              <Text style={styles.routeTapHint}>Tap to change</Text>
+            </Pressable>
             <Pressable
               onPress={isConnected ? swapRoute : undefined}
               disabled={!isConnected}
@@ -1168,17 +1263,22 @@ export default function App() {
             >
               <Ionicons name="swap-horizontal" size={21} color="#0f172a" />
             </Pressable>
-            <View
+            <Pressable
+              onPress={() => setLanguagePicker("target")}
               style={[styles.routeSide, Number(speakerRoute.speakerIndex) === 2 && styles.routeSideActive, compactLayout && styles.routeSideCompact]}
-              accessibilityLabel={`Person 2 speaks ${activeTarget}`}
+              accessibilityRole="button"
+              accessibilityLabel={`Person 2 speaks ${activeTarget}. Tap to change language.`}
             >
+              <Text style={styles.routeFlag}>{LANGUAGE_FLAGS[targetLanguage] || "🌐"}</Text>
               <Text style={styles.routeCaption}>Person 2</Text>
               <Text numberOfLines={1} adjustsFontSizeToFit style={styles.routeLanguage}>{activeTarget}</Text>
-            </View>
+              <Text style={styles.routeTapHint}>Tap to change</Text>
+            </Pressable>
           </View>
 
           <Pressable
             onPress={toggleInterpreter}
+            disabled={isConnecting && !isInterpreterActive}
             accessibilityRole="button"
             accessibilityLabel={primaryActionLabel}
             accessibilityHint="Starts or pauses continuous speech translation."
@@ -1191,17 +1291,22 @@ export default function App() {
               isInterpreterActive && styles.voiceButtonArmed,
               isStreaming && styles.voiceButtonListening,
               isPlayingTts && styles.voiceButtonSpeaking,
+              isConnecting && !isInterpreterActive && styles.voiceButtonBusy,
               pressed && styles.voiceButtonPressed,
             ]}
           >
             <View style={[styles.voiceCore, compactLayout && styles.voiceCoreCompact, tinyLayout && styles.voiceCoreTiny]}>
-              <Ionicons
-                name={primaryIcon}
-                size={primaryIconSize}
-                color="#f8fafc"
-              />
+              {isConnecting && !isInterpreterActive ? (
+                <ActivityIndicator size="large" color="#f8fafc" />
+              ) : (
+                <Ionicons
+                  name={primaryIcon}
+                  size={primaryIconSize}
+                  color="#f8fafc"
+                />
+              )}
               <Text numberOfLines={1} adjustsFontSizeToFit style={styles.voiceButtonText}>
-                {primaryButtonText}
+                {isConnecting && !isInterpreterActive ? "Connecting" : primaryButtonText}
               </Text>
             </View>
           </Pressable>
@@ -1222,9 +1327,7 @@ export default function App() {
             <View style={[styles.transcriptLane, compactLayout && styles.transcriptLaneCompact]}>
               <Text style={styles.laneLabel}>{activeSpeakerLabel} said {routeSource}</Text>
               <Text
-                numberOfLines={2}
-                adjustsFontSizeToFit
-                minimumFontScale={0.72}
+                numberOfLines={4}
                 accessibilityLiveRegion="polite"
                 style={[styles.laneText, !sourceText && styles.lanePlaceholder]}
               >
@@ -1234,9 +1337,7 @@ export default function App() {
             <View style={[styles.translationLane, compactLayout && styles.translationLaneCompact]}>
               <Text style={styles.laneLabel}>{activeListenerLabel} hears {routeTarget}</Text>
               <Text
-                numberOfLines={3}
-                adjustsFontSizeToFit
-                minimumFontScale={0.68}
+                numberOfLines={5}
                 accessibilityLiveRegion="polite"
                 style={[styles.translationText, !translatedText && styles.lanePlaceholder]}
               >
@@ -1245,10 +1346,11 @@ export default function App() {
             </View>
             {conversationTurns.length > 0 && (
               <View style={styles.turnRail}>
-                {conversationTurns.slice(-2).map((turn) => (
+                {conversationTurns.slice(-3).map((turn) => (
                   <View key={turn.id} style={[styles.turnChip, turn.clarify && styles.turnChipWarning]}>
-                    <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={styles.turnChipText}>
-                      {turn.speakerLabel}: {turn.sourceText} to {turn.translatedText}
+                    <Text numberOfLines={2} style={styles.turnChipText}>
+                      <Text style={styles.turnChipSpeaker}>{turn.speakerLabel}</Text>
+                      {`: ${turn.sourceText} → ${turn.translatedText}`}
                     </Text>
                   </View>
                 ))}
