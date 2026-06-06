@@ -30,7 +30,7 @@ jobs:
       - name: Offline smoke check
         run: python scripts/smoke_local.py
       - name: Run backend tests
-        run: pytest -q
+        run: python -m pytest -q
 
   ai-comm-system:
     runs-on: ubuntu-latest

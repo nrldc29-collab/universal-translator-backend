@@ -6,6 +6,8 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -22,13 +24,35 @@ PIPER_VOICE_URLS = {
 }
 
 
-def download_file(url: str, dest: Path) -> None:
+def download_file(url: str, dest: Path, *, retries: int = 5) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.stat().st_size > 0:
         print(f"skip  {dest.name} (already present)")
         return
     print(f"fetch {dest.name}")
-    urllib.request.urlretrieve(url, dest)
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            urllib.request.urlretrieve(url, dest)
+            return
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code in {429, 500, 502, 503, 504} and attempt + 1 < retries:
+                delay = min(30, 2 ** attempt)
+                print(f"retry {dest.name} in {delay}s ({exc.code})")
+                time.sleep(delay)
+                continue
+            raise
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_error = exc
+            if attempt + 1 < retries:
+                delay = min(30, 2 ** attempt)
+                print(f"retry {dest.name} in {delay}s ({exc.__class__.__name__})")
+                time.sleep(delay)
+                continue
+            raise
+    if last_error is not None:
+        raise last_error
 
 
 def warm_translation() -> None:
