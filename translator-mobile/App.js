@@ -86,12 +86,17 @@ export default function App() {
   }, []);
 
   const langInitializedRef = useRef(false);
+  const sessionReadyRef = useRef(false);
+  const [sessionReady, setSessionReady] = useState(false);
+
   useEffect(() => {
     if (!langInitializedRef.current) {
       langInitializedRef.current = true;
       return;
     }
     if (isConnectedRef.current && wsControlRef.current?.readyState === WebSocket.OPEN) {
+      sessionReadyRef.current = false;
+      setSessionReady(false);
       sendSessionStart();
     }
   }, [sourceLanguage, targetLanguage]);
@@ -154,16 +159,19 @@ export default function App() {
     setStatus(nextStatus);
     if (type) {
       setStatusType(type);
-    } else if (nextStatus.includes("Connected")) {
-      setStatusType("success");
-      setIsConnected(true);
-      saveRecentUrl(wsUrl);
+    } else if (nextStatus.includes("Handshaking")) {
+      setStatusType("connecting");
     } else if (nextStatus.includes("Disconnected") || nextStatus.includes("failed") || nextStatus.includes("error")) {
       setStatusType("error");
       setIsConnected(false);
+      sessionReadyRef.current = false;
+      setSessionReady(false);
       setIsStreaming(false);
     } else if (nextStatus.includes("Reconnecting") || nextStatus.includes("Connecting")) {
       setStatusType("connecting");
+      setIsConnected(false);
+      sessionReadyRef.current = false;
+      setSessionReady(false);
     } else if (nextStatus.includes("Reconnecting in")) {
       setStatusType("warning");
     }
@@ -176,15 +184,25 @@ export default function App() {
       case "ready":
         setIsConnected(true);
         saveRecentUrl(wsUrl);
-        setStatus("Connected");
-        setStatusType("success");
+        sessionReadyRef.current = false;
+        setSessionReady(false);
+        setStatus("Connected — starting session...");
+        setStatusType("connecting");
         sendSessionStart();
+        break;
+      case "listening":
+        sessionReadyRef.current = true;
+        setSessionReady(true);
+        setStatus(message.message || "Ready for live voice");
+        setStatusType("success");
         break;
       case "error":
         if (message.warming) {
           setStatus("Models still loading — wait for LIVE");
           setStatusType("warning");
           setIsConnected(false);
+          sessionReadyRef.current = false;
+          setSessionReady(false);
           break;
         }
         setStatus(message.message || message.error || "Stream error");
@@ -261,6 +279,8 @@ export default function App() {
     }
     stopTtsPlayback();
     setIsConnected(false);
+    sessionReadyRef.current = false;
+    setSessionReady(false);
     setStatus("Disconnected");
     setStatusType("idle");
   }
@@ -282,8 +302,8 @@ export default function App() {
       return;
     }
 
-    if (!isConnected) {
-      setStatus("Connect to backend first");
+    if (!isConnected || !sessionReadyRef.current) {
+      setStatus(sessionReadyRef.current ? "Connect to backend first" : "Waiting for backend session...");
       setStatusType("error");
       return;
     }
@@ -328,7 +348,7 @@ export default function App() {
   const activeTargetLabel = TARGET_LANGUAGES.find((language) => language.code === targetLanguage)?.label || targetLanguage.toUpperCase();
   const heroDirection = `${activeSourceLabel} ↔ ${activeTargetLabel}`;
   const primaryActionLabel = isStreaming ? "Stop Live Voice" : "Start Live Voice";
-  const primaryActionDisabled = !isConnected || isPlayingTts;
+  const primaryActionDisabled = !isConnected || !sessionReady || isPlayingTts;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
