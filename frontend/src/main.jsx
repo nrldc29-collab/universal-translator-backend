@@ -71,6 +71,7 @@ import {
   isSameOriginBackendHost,
   defaultApiUrl,
   configuredUrl,
+  BACKEND_TTS_LANGS,
   // constants
   TARGET_LANGUAGE_OPTIONS,
   VOICE_WARMUP_PHRASES,
@@ -133,9 +134,7 @@ const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.repla
 
 const INITIAL_DEVICE_ID = localStorage.getItem('translator_device_id') || crypto.randomUUID();
 
-// Browser TTS -- used as fallback when backend has no voice for the target language.
-// Works offline, free, covers all languages via system voices.
-const PIPER_SUPPORTED_LANGS = new Set(['en', 'es']); // languages with local Piper voices
+// Browser TTS -- fallback when backend has no voice or user selects browser mode.
 const BROWSER_TTS_LANG_MAP = {
   en: 'en-US', es: 'es-MX', fr: 'fr-FR', de: 'de-DE', it: 'it-IT',
   pt: 'pt-BR', ru: 'ru-RU', zh: 'zh-CN', ja: 'ja-JP', ko: 'ko-KR',
@@ -525,6 +524,7 @@ function App() {
     streamStartedAtRef, streamRecordingStartedAtRef, firstAudioSeenRef,
     streamReconnectRef, streamSafetyTimeoutRef, resumeAfterTtsRef,
   } = useStreamRefs();
+  const streamTranslationRef = useRef('');
   const { streamHeartbeatRef, clearStreamHeartbeat, markStreamPong, startStreamHeartbeat } = useStreamHeartbeat({ socketRef, setPipelineStage, setStatus });
   const { holdToTalkTimerRef, holdToTalkActiveRef, holdToTalkReleasePendingRef, ignoreNextMicClickRef } = useHoldToTalk();
   const { audioSendQueueRef, sendAudioPacket, queueAudioPacket, flushAudioSendQueue, drainQueue: drainAudioSendQueue } = useAudioSendQueue({ debugLog });
@@ -1603,6 +1603,14 @@ function App() {
             setStatus('Audio translated');
           }});
         }, playDelay);
+      } else if (data.translated_text) {
+        const voice = await fetchTranslationVoice(data.translated_text, targetLanguage, authToken);
+        if (voice && await playEmbeddedTranslationAudio(voice, 'Audio translated')) {
+          return;
+        }
+        if (settings.ttsVoice === 'browser' || !BACKEND_TTS_LANGS.has(targetLanguage)) {
+          browserTtsSpeak(data.translated_text, targetLanguage, settings.ttsSpeed ?? 1.0);
+        }
       }
     } catch (error) {
       console.error('UPLOAD: catch error', error);
@@ -1813,6 +1821,7 @@ function App() {
       }
       if (data.type === 'partial_translation') {
         rememberSpeaker(data);
+        streamTranslationRef.current = data.text || '';
         setLiveTranslation(data.text);
         setPipelineStage('Live translation');
       }
@@ -1823,12 +1832,13 @@ function App() {
       }
       if (data.type === 'live_translation') {
         rememberSpeaker(data);
+        streamTranslationRef.current = data.text || '';
         setLiveTranslation(data.text);
         setPipelineStage('Translation ready');
         // Browser TTS fallback: speak live translations directly when backend
         // has no voice for this language (avoids needing Google TTS API key)
         const useBrowserTts = settings.ttsVoice === 'browser' ||
-          (settings.partialTts !== false && !PIPER_SUPPORTED_LANGS.has(targetLanguage));
+          (settings.partialTts !== false && !BACKEND_TTS_LANGS.has(targetLanguage));
         if (useBrowserTts && data.text && !ttsPlayingRef.current) {
           browserTtsSpeak(data.text, targetLanguage, settings.ttsSpeed ?? 1.0);
         }
@@ -1907,6 +1917,17 @@ function App() {
           setTtsChunksBuffer((chunks) => {
             if (chunks.length === 0) {
               debugLog('No TTS chunks to play');
+              const textToSpeak = streamTranslationRef.current;
+              if (textToSpeak && !lowBandwidthMode) {
+                fetchTranslationVoice(textToSpeak, targetLanguage, authToken)
+                  .then(async (voice) => {
+                    if (voice && await playEmbeddedTranslationAudio(voice)) return;
+                    if (settings.ttsVoice === 'browser' || !BACKEND_TTS_LANGS.has(targetLanguage)) {
+                      browserTtsSpeak(textToSpeak, targetLanguage, settings.ttsSpeed ?? 1.0);
+                    }
+                  })
+                  .catch(() => {});
+              }
               // Nothing played — update UI to reflect completion
               setPlaying(false);
               setTtsPlaying(false);
@@ -1998,7 +2019,10 @@ function App() {
         const brainUpdate = applyBrainPayload(data, 'final');
         rememberSpeaker(data);
         setResult(data);
-        if (data.translated_text) setLiveTranslation(data.translated_text);
+        if (data.translated_text) {
+          streamTranslationRef.current = data.translated_text;
+          setLiveTranslation(data.translated_text);
+        }
         if (data.session) {
           applySharedSession(data.session);
         } else {

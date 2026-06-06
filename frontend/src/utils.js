@@ -47,6 +47,11 @@ export function configuredUrl(value) {
   return value;
 }
 
+/** Languages the local backend can synthesize offline (Piper voices + eSpeak). */
+export const BACKEND_TTS_LANGS = new Set([
+  'en', 'es', 'ht', 'fr', 'de', 'it', 'pt', 'nl', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi',
+]);
+
 // ---------- Session/device identifiers ----------
 
 export function normalizeSessionId(value) {

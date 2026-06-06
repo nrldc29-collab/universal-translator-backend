@@ -12,15 +12,14 @@
  */
 import { useRef, useState, useCallback, useEffect } from 'react';
 
+import { BACKEND_TTS_LANGS } from '../utils';
+
 // ─── Language config ─────────────────────────────────────────────────────
 const BROWSER_TTS_MAP = {
   en:'en-US', es:'es-MX', fr:'fr-FR', de:'de-DE', it:'it-IT',
   pt:'pt-BR', ru:'ru-RU', zh:'zh-CN', ja:'ja-JP', ko:'ko-KR',
   ar:'ar-SA', hi:'hi-IN', ht:'ht-HT', nl:'nl-NL',
 };
-const BACKEND_TTS_LANGS = new Set([
-  'en', 'es', 'ht', 'fr', 'de', 'it', 'pt', 'nl', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi',
-]);
 
 // ─── Language detection ──────────────────────────────────────────────────
 const LANG_PATTERNS = {
@@ -193,7 +192,7 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
         else if (d.type === 'partial_translation') handlers.onTranslation?.(d.text, false);
         else if (d.type === 'final' || d.type === 'translation') handlers.onTranslation?.(d.translated_text || d.text || '', true);
         if (d.type === 'tts_audio_chunk' && d.audio_base64) handlers.onTtsChunk?.(d.audio_base64, d.mime_type);
-        if (d.type === 'tts_end') handlers.onTtsEnd?.();
+        if (d.type === 'tts_end' && !d.partial) handlers.onTtsEnd?.();
       } catch {}
     };
     ws.onerror = () => { ready = false; handlers.onError?.({ message: 'WebSocket error' }); };
@@ -310,6 +309,8 @@ export function useAutoConversation({
       setTurns(prev => [...prev, {
         speaker,
         speaker_label: speaker === 'A' ? 'Person 1' : 'Person 2',
+        srcLang: speaker === 'A' ? srcRef.current : tgtRef.current,
+        tgtLang: speaker === 'A' ? tgtRef.current : srcRef.current,
         source_text: sourceText,
         translated_text: translatedText,
         conversationSpeaker: speaker,
@@ -518,7 +519,8 @@ export function useAutoConversation({
     clearTimeout(ttsTimerRef.current);
     clearTimeout(ttsTimerBARef.current);
     const capturedUtteranceId = utteranceIdRef.current;
-    ttsTimerRef.current = setTimeout(() => {
+    const timeoutRef = speaker === 'B' ? ttsTimerBARef : ttsTimerRef;
+    timeoutRef.current = setTimeout(() => {
       if (activeRef.current && utteranceIdRef.current === capturedUtteranceId &&
           (phaseRef.current === 'processing' || phaseRef.current === 'speaking')) {
         utteranceIdRef.current++; // invalidate any pending handler

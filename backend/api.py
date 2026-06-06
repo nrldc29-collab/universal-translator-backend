@@ -687,8 +687,13 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         audio_path = None
         audio_payload = None
         if request.synthesize_audio and final_text and not cip_clarify:
-            audio_payload = _cached_tts_payload(final_text, request.target_language, audio_response_format, google_api_key=_google_key)
-            audio_path = audio_payload["audio_output_path"]
+            try:
+                audio_payload = _cached_tts_payload(final_text, request.target_language, audio_response_format, google_api_key=_google_key)
+                audio_path = audio_payload["audio_output_path"]
+            except (RuntimeError, OSError, ValueError) as exc:
+                logger.warning("text_translation_tts_failed identity=%s error=%s", identity, exc)
+                audio_payload = None
+                audio_path = None
         result = type(interim)(
             source_text=request.text,
             improved_text=interim.improved_text,
@@ -876,7 +881,11 @@ async def translate_audio(
         conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
         audio_path = None
         if synthesize_audio and final_text and conf_score >= 0.4 and not cip_clarify:
-            audio_path = await run_in_threadpool(pipeline.tts.synthesize, final_text, f"models/tts/{uuid4()}.wav", target_language)
+            try:
+                audio_path = await run_in_threadpool(pipeline.tts.synthesize, final_text, f"models/tts/{uuid4()}.wav", target_language)
+            except (RuntimeError, OSError, ValueError) as exc:
+                logger.warning("audio_translation_tts_failed identity=%s error=%s", identity, exc)
+                audio_path = None
         result = type(interim)(
             source_text=source_text,
             improved_text=interim.improved_text,

@@ -81,3 +81,22 @@ class TestTts:
         assert response.status_code == 200
         payload = response.json()
         assert payload.get("audio_base64") or payload.get("audio_url")
+
+    def test_translate_text_survives_tts_failure(self, app_module, client, monkeypatch):
+        def fail_cached(*args, **kwargs):
+            raise RuntimeError("tts unavailable")
+
+        monkeypatch.setattr(app_module, "_cached_tts_payload", fail_cached)
+        response = client.post(
+            "/translate/text",
+            json={
+                "text": "hello",
+                "source_language": "en",
+                "target_language": "es",
+                "synthesize_audio": True,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert "hola" in payload["translated_text"].lower()
+        assert not payload.get("audio_base64")

@@ -136,7 +136,7 @@ if (Test-PortListening -Port $BackendPort) {
     $backendHealthy = $false
     try {
         $health = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/health" -TimeoutSec 5
-        $backendHealthy = ($health.status -eq "ok")
+        $backendHealthy = ($health.ready -eq $true)
     } catch {
         $backendHealthy = $false
     }
@@ -203,3 +203,5 @@ Write-Output "Logs:"
 Write-Output "  Backend:  $backendErr"
 Write-Output "  Frontend: $frontendErr"
 Write-Output "  Tunnel:   $tunnelErr"
+Write-Output ""
+Write-Output "When LIVE, verify with: .\Test-Translator.ps1"
