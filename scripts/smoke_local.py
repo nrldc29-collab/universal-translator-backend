@@ -178,6 +178,23 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
     status, payload = _post_json_with_retry(
         f"{root}/translate/text",
         {
+            "text": "Mwen bezwen èd",
+            "source_language": "en",
+            "target_language": "ht",
+            "session_id": "smoke-ht-flip",
+        },
+        auth,
+    )
+    if status != 200 or not isinstance(payload, dict):
+        errors.append(f"translate ht auto-flip failed ({status}): {payload}")
+    else:
+        translated = str(payload.get("translated_text") or "").lower()
+        if not any(word in translated for word in ("help", "need", "assist")):
+            errors.append(f"translate ht auto-flip returned unexpected English: {payload}")
+
+    status, payload = _post_json_with_retry(
+        f"{root}/translate/text",
+        {
             "text": "hello",
             "source_language": "en",
             "target_language": "es",

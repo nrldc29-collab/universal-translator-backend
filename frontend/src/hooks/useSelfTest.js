@@ -266,14 +266,14 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
           ensureAuthToken,
           {
             text: 'mwen bezwen èd',
-            source_language: 'ht',
-            target_language: 'en',
+            source_language: 'en',
+            target_language: 'ht',
             synthesize_audio: false,
           },
-          'HT to EN translation test',
+          'HT auto-flip translation test',
         );
         if (!htToEnTranslationLooksValid(htReverse)) {
-          throw new Error(`HT→EN translation unexpected: ${htReverse}`);
+          throw new Error(`HT auto-flip translation unexpected: ${htReverse}`);
         }
         next.htReverseTranslation = htReverse;
       } catch (error) {

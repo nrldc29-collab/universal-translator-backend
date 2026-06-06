@@ -59,6 +59,19 @@ class UsageLimiter:
                 qs.seed_audio(identity, self.audio_usage)
             self._audio_seeded.add(identity)
 
+    def check_connection(self, identity: str) -> tuple[bool, int]:
+        """Rate-limit WebSocket connects without consuming hourly HTTP quota."""
+        with self._lock:
+            now = time()
+            minute_start = now - 60
+            minute_requests = [ts for ts in self.minute_usage[identity] if ts >= minute_start]
+            limit = get_requests_per_minute()
+            if len(minute_requests) >= limit:
+                return False, 0
+            minute_requests.append(now)
+            self.minute_usage[identity] = minute_requests
+            return True, limit - len(minute_requests)
+
     def check(self, identity: str) -> tuple[bool, int]:
         with self._lock:
             now = time()
@@ -285,7 +298,7 @@ async def authenticate_websocket(websocket: WebSocket) -> tuple[bool, str]:
     if identity == "anonymous":
         return True, identity
 
-    allowed, remaining = usage_limiter.check(identity)
+    allowed, remaining = usage_limiter.check_connection(identity)
     if not allowed:
         await websocket.accept()
         await websocket.close(code=1008, reason="Quota exceeded.")

@@ -235,7 +235,7 @@ def get_user_tiers() -> dict[str, str]:
 
 
 def get_requests_per_minute() -> int:
-    return _to_int("REQUESTS_PER_MINUTE", 20, minimum=1)
+    return _to_int("REQUESTS_PER_MINUTE", 120, minimum=1)
 
 
 def get_max_audio_mb() -> int:

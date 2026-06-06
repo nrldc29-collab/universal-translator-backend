@@ -1979,6 +1979,8 @@ function App() {
       }
       if (data.type === 'live_translation') {
         rememberSpeaker(data);
+        if (data.target_language) speechLastLiveTargetRef.current = data.target_language;
+        if (data.source_language) speechLastDetectedLangRef.current = data.source_language;
         streamTranslationRef.current = data.text || '';
         setLiveTranslation(data.text);
         setPipelineStage('Translation ready');
@@ -2200,6 +2202,8 @@ function App() {
       if (data.type === 'vad' && data.speech_detected) setStatus('Streaming audio... speech detected');
       if (data.type === 'final') {
         const keepContinuous = shouldKeepContinuousStream(socket);
+        if (data.target_language) speechLastLiveTargetRef.current = data.target_language;
+        if (data.source_language) speechLastDetectedLangRef.current = data.source_language;
         if (!keepContinuous) {
           disableStreamReconnect();
           clearStreamHeartbeat();

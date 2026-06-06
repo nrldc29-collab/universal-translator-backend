@@ -471,8 +471,11 @@ async def websocket_audio_translation(
                 return
             # Lock or auto-detect language for this speaker once
             if not speaker_memory.get_language(partial_speaker):
-                auto_lang = detect_language_heuristic(partial_text)
-                speaker_memory.register(partial_speaker, language=partial_source_language or auto_lang)
+                if language_pair_has_ht(partial_source_language, partial_target_language):
+                    speaker_memory.register(partial_speaker, language=partial_active_src)
+                else:
+                    auto_lang = detect_language_heuristic(partial_text)
+                    speaker_memory.register(partial_speaker, language=partial_source_language or auto_lang)
             refined_partial = refine_translation(partial_buffer, partial_translation_raw, memory.get_context(), speaker_memory.get_context(partial_speaker))
             # Confidence and ambiguity checks for partials
             stt_conf = estimate_stt_confidence(partial_text)
@@ -484,8 +487,8 @@ async def websocket_audio_translation(
             allow_partial_updates = latency_engine.total() <= 2.5
             if allow_partial_updates and refined_partial and refined_partial != last_sent_translation:
                 last_sent_translation = refined_partial
-                await websocket.send_json({"type": "partial_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": refined_partial})
-                await websocket.send_json({"type": "live_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": refined_partial})
+                await websocket.send_json({"type": "partial_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": refined_partial, "source_language": partial_active_src, "target_language": partial_active_tgt})
+                await websocket.send_json({"type": "live_translation", "speaker": partial_speaker, "speaker_label": partial_speaker_label, "text": refined_partial, "source_language": partial_active_src, "target_language": partial_active_tgt})
             live_tts_delta = live_translation_delta(partial_tts_text, refined_partial)
             tts_text_to_speak = live_tts_delta if is_speakable_live_delta(live_tts_delta) else (refined_partial if refined_partial != partial_tts_text else "")
             if get_partial_tts_mode() and is_speakable_live_delta(tts_text_to_speak):
@@ -647,6 +650,8 @@ async def websocket_audio_translation(
                 "text": refined,
                 "source": "browser_live_text",
                 "final": payload["final"],
+                "source_language": live_source_language,
+                "target_language": live_target_language,
             })
             await websocket.send_json({
                 "type": "live_translation",
@@ -655,6 +660,8 @@ async def websocket_audio_translation(
                 "text": refined,
                 "source": "browser_live_text",
                 "final": payload["final"],
+                "source_language": live_source_language,
+                "target_language": live_target_language,
             })
 
         is_final = bool(payload.get("final"))
@@ -1282,6 +1289,8 @@ async def websocket_audio_translation(
                 "speaker_index": speaker_index,
                 "device_id": device_id,
                 "detection": speaker_detection,
+                "source_language": active_source_language,
+                "target_language": active_target_language,
                 "semantic_context": semantic_context,
                 "cip_decision": cip_decision,
                 "cip_analysis": cip.get("analysis") if isinstance(cip, dict) else None,
