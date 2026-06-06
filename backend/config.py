@@ -508,6 +508,21 @@ _RAILWAY_TEMP_ORIGINS: frozenset[str] = frozenset({
     "http://localhost:8000",
 })
 
+_RAILWAY_PUBLIC_ORIGIN_REGEX = r"https://.*\.up\.railway\.app"
+
+
+def _is_broken_allowed_origin(origin: str) -> bool:
+    """True when an origin string cannot be used for browser CORS checks."""
+    value = origin.strip()
+    if not value:
+        return True
+    if value.rstrip("/") in {"https:", "http:", "https://", "http://"}:
+        return True
+    if "://" not in value:
+        return True
+    host = value.split("://", 1)[-1].split("/", 1)[0].strip()
+    return not host or host == "."
+
 
 def _railway_public_domain() -> str:
     return os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
@@ -668,8 +683,7 @@ def ensure_railway_public_domain() -> str | None:
         if domain:
             os.environ["RAILWAY_PUBLIC_DOMAIN"] = domain
             _log.warning(
-                "Railway public domain provisioned: https://%s — redeploy or refresh "
-                "ALLOWED_ORIGINS if browsers still cannot connect.",
+                "Railway public domain provisioned: https://%s",
                 domain,
             )
             return domain
@@ -703,6 +717,7 @@ def apply_railway_production_defaults() -> list[str]:
     needs_origin = (
         not origin_list
         or any("example.com" in item or "your-frontend" in item for item in origin_list)
+        or any(_is_broken_allowed_origin(item) for item in origin_list)
         or (
             origin
             and origin_list
@@ -716,6 +731,10 @@ def apply_railway_production_defaults() -> list[str]:
             # Networking not enabled yet — bundled UI is same-origin; avoid placeholder block.
             os.environ["ALLOWED_ORIGINS"] = "http://127.0.0.1:8000"
         applied.append("ALLOWED_ORIGINS")
+
+    if not os.getenv("ALLOWED_ORIGIN_REGEX", "").strip():
+        os.environ["ALLOWED_ORIGIN_REGEX"] = _RAILWAY_PUBLIC_ORIGIN_REGEX
+        applied.append("ALLOWED_ORIGIN_REGEX")
 
     jwt = os.getenv("JWT_SECRET", "dev-only-change-me")
     if jwt in _UNSAFE_JWT_SECRETS or len(jwt) < 32:

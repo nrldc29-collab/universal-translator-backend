@@ -57,6 +57,7 @@ $variables = [ordered]@{
     REQUESTS_PER_MINUTE = "120"
     QUOTA_REQUESTS_PER_HOUR = "500"
     MAX_ACTIVE_STREAMS_PER_USER = "5"
+    ALLOWED_ORIGIN_REGEX = "https://.*\.up\.railway\.app"
     JWT_SECRET = $jwtSecret
     USERS = "$Username`:$Password"
     USER_TIERS = "$Username`:free"
@@ -64,6 +65,8 @@ $variables = [ordered]@{
 
 if ($FrontendOrigin) {
     $variables.ALLOWED_ORIGINS = $FrontendOrigin
+} else {
+    $variables.ALLOWED_ORIGINS = 'https://${{RAILWAY_PUBLIC_DOMAIN}}'
 }
 
 Write-Output ""
