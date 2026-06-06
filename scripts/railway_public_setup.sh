@@ -12,7 +12,7 @@ RUN_SMOKE="${RUN_SMOKE:-1}"
 ensure_railway_cli() {
   export PATH="${HOME}/.railway/bin:${PATH}"
   if ! command -v railway >/dev/null 2>&1; then
-    curl -fsSL https://railway.app/install.sh | sh
+    curl -fsSL https://railway.app/install.sh | bash
     export PATH="${HOME}/.railway/bin:${PATH}"
   fi
 }
