@@ -70,3 +70,24 @@ def test_railway_bootstrap_does_not_override_explicit_secrets(monkeypatch):
     assert config.get_jwt_secret() == "x" * 64
     assert config.get_users() == {"operator": "strong-pass-here"}
     assert config.get_allowed_origins() == ["https://app.mycompany.com"]
+
+
+def test_railway_bootstrap_disables_blocking_preload(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET", "x" * 64)
+    monkeypatch.setenv("USERS", "operator:strong-pass-here")
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://app.mycompany.com")
+    monkeypatch.setenv("RAILWAY_PUBLIC_DOMAIN", "my-app.up.railway.app")
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+    monkeypatch.setenv("PRELOAD_MODELS", "1")
+
+    applied = config.apply_railway_production_defaults()
+    assert applied == ["PRELOAD_MODELS"]
+    assert config.get_preload_models() is False
+
+
+def test_production_defaults_preload_off_when_unset(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("PRELOAD_MODELS", raising=False)
+
+    assert config.get_preload_models() is False
