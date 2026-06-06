@@ -39,6 +39,7 @@ export default function SettingsPanel({
   apiUrl,
   selfTest,
   runSelfTest,
+  connectionStatus,
   onRequestMicPermission,
 }) {
   const [activeSection, setActiveSection] = useState('language');
@@ -74,7 +75,14 @@ export default function SettingsPanel({
     try {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
       const json = await res.json().catch(() => ({}));
-      setBackendTestResult({ ok: res.ok, msg: res.ok ? `Connected — ${json.status || 'ok'}` : `HTTP ${res.status}` });
+      setBackendTestResult({
+        ok: res.ok && json.ready !== false,
+        msg: res.ok
+          ? (json.ready === false
+            ? `Connected but not LIVE — ${(json.blockers || []).join(', ') || 'models still loading'}`
+            : `Connected — LIVE`)
+          : `HTTP ${res.status}`,
+      });
     } catch (err) {
       setBackendTestResult({ ok: false, msg: err?.message || 'Unreachable' });
     } finally {
@@ -166,6 +174,7 @@ export default function SettingsPanel({
                 apiUrl={apiUrl}
                 selfTest={selfTest}
                 runSelfTest={runSelfTest}
+                connectionStatus={connectionStatus}
               />
             )}
             {activeSection === 'about' && (
@@ -502,7 +511,15 @@ function SectionAdvanced({
   apiUrl,
   selfTest,
   runSelfTest,
+  connectionStatus,
 }) {
+  const selfTestReady = connectionStatus === 'online';
+  const selfTestHint = connectionStatus === 'warming'
+    ? 'Wait for LIVE in the header before running checks'
+    : connectionStatus === 'offline'
+      ? 'Start the backend before running checks'
+      : 'Quick translation + audio WebSocket check';
+
   return (
     <div className="sp-section">
       <h2 className="sp-section-title">Advanced Settings</h2>
@@ -547,12 +564,12 @@ function SectionAdvanced({
 
       <div className="sp-divider-label">Self Test</div>
 
-      <SettingRow label="Run Self Test" hint="Quick translation + audio WebSocket check" icon={<Activity size={15} />}>
+      <SettingRow label="Run Self Test" hint={selfTestHint} icon={<Activity size={15} />}>
         <button
           type="button"
           className="sp-test-btn"
           onClick={() => runSelfTest?.()}
-          disabled={!runSelfTest || selfTest?.status === 'running'}
+          disabled={!runSelfTest || !selfTestReady || selfTest?.status === 'running'}
         >
           {selfTest?.status === 'running' ? 'Running…' : 'Run Self Test'}
         </button>

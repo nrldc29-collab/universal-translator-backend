@@ -18,7 +18,9 @@ const BROWSER_TTS_MAP = {
   pt:'pt-BR', ru:'ru-RU', zh:'zh-CN', ja:'ja-JP', ko:'ko-KR',
   ar:'ar-SA', hi:'hi-IN', ht:'ht-HT', nl:'nl-NL',
 };
-const PIPER_LANGS = new Set(['en','es']);
+const BACKEND_TTS_LANGS = new Set([
+  'en', 'es', 'ht', 'fr', 'de', 'it', 'pt', 'nl', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi',
+]);
 
 // ─── Language detection ──────────────────────────────────────────────────
 const LANG_PATTERNS = {
@@ -187,10 +189,11 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
           }
           return;
         }
-        if (d.type === 'live_translation' || d.type === 'partial_translation') handlers.onTranslation?.(d.text, false);
-        if (d.type === 'final' || d.type === 'translation')  handlers.onTranslation?.(d.translated_text || d.text || '', true);
-        if (d.type === 'tts_audio_chunk' && !d.partial)      handlers.onTtsChunk?.(d.audio_base64, d.mime_type);
-        if (d.type === 'tts_end' && !d.partial)              handlers.onTtsEnd?.();
+        if (d.type === 'live_translation') handlers.onTranslation?.(d.text, true);
+        else if (d.type === 'partial_translation') handlers.onTranslation?.(d.text, false);
+        else if (d.type === 'final' || d.type === 'translation') handlers.onTranslation?.(d.translated_text || d.text || '', true);
+        if (d.type === 'tts_audio_chunk' && d.audio_base64) handlers.onTtsChunk?.(d.audio_base64, d.mime_type);
+        if (d.type === 'tts_end') handlers.onTtsEnd?.();
       } catch {}
     };
     ws.onerror = () => { ready = false; handlers.onError?.({ message: 'WebSocket error' }); };
@@ -335,7 +338,7 @@ export function useAutoConversation({
     const src = srcRef.current;
     const tgt = tgtRef.current;
 
-    function makeTtsHandler(dir) {
+    function makeTtsHandler(dir, outboundTargetLang) {
       const chunkBuf = dir === 'AB' ? ttsChunksAB : ttsChunksBA;
       const timerRef = dir === 'AB' ? ttsTimerRef : ttsTimerBARef;
       let finalTranslation = '';
@@ -346,6 +349,14 @@ export function useAutoConversation({
           if (!activeRef.current) return;
           setLiveTrans(text);
           if (isFinal) finalTranslation = text;
+          if (isFinal && text && !BACKEND_TTS_LANGS.has(outboundTargetLang)) {
+            clearTimeout(timerRef.current);
+            clearTimeout(dir === 'AB' ? ttsTimerBARef.current : ttsTimerRef.current);
+            setPhaseR('speaking');
+            speakBrowser(text, outboundTargetLang, {
+              onEnd: () => afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B'),
+            });
+          }
         },
         onTtsChunk(b64) {
           if (!activeRef.current) return;
@@ -389,8 +400,8 @@ export function useAutoConversation({
       };
     }
 
-    const handlerAB = makeTtsHandler('AB');
-    const handlerBA = makeTtsHandler('BA');
+    const handlerAB = makeTtsHandler('AB', tgt);
+    const handlerBA = makeTtsHandler('BA', src);
 
     sockABRef.current = createTranslationSocket(() => buildUrl(), src, tgt, handlerAB);
     sockBARef.current = createTranslationSocket(() => buildUrl(), tgt, src, handlerBA);
@@ -523,31 +534,6 @@ export function useAutoConversation({
       speakBrowser(text, detTgt, {
         onEnd: () => afterTts(text, '(offline)', speaker)
       });
-    }
-
-    // For browser-TTS target languages: backend sends translation text, we speak it
-    // The onTranslation handler in makeTtsHandler will call speakBrowser when isFinal
-    // For PIPER_LANGS: tts_audio_chunk arrives and we play via AudioContext
-    if (!PIPER_LANGS.has(detTgt)) {
-      // Override the handler to use browser TTS when final translation arrives
-      const handler = sock?._handler;
-      if (handler) {
-        const origOnTrans = handler.onTranslation.bind(handler);
-        handler.onTranslation = (translatedText, isFinal) => {
-          if (!activeRef.current) return;
-          setLiveTrans(translatedText);
-          if (isFinal && translatedText) {
-            clearTimeout(ttsTimerRef.current);
-            clearTimeout(ttsTimerBARef.current);
-            setPhaseR('speaking');
-            speakBrowser(translatedText, detTgt, {
-              onEnd: () => afterTts(text, translatedText, speaker)
-            });
-            // Restore original handler for next turn
-            handler.onTranslation = origOnTrans;
-          }
-        };
-      }
     }
   }
 

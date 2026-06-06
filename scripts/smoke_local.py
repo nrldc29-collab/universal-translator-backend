@@ -226,6 +226,9 @@ def check_pwa_assets(base_url: str) -> list[str]:
     icons = payload.get("icons") or []
     if not any(icon.get("src") == "/icons/icon-512.png" for icon in icons if isinstance(icon, dict)):
         errors.append("manifest is missing the 512px app icon")
+    icon_status, _ = _get_text(f"{root}/icons/icon-512.png")
+    if icon_status != 200:
+        errors.append(f"app icon fetch failed ({icon_status})")
 
     sw_status, sw_body = _get_text(f"{root}/sw.js")
     if sw_status != 200:

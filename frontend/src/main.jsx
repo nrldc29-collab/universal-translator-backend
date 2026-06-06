@@ -311,6 +311,7 @@ function App() {
     apiUrl: liveApiUrl,
     wsAudioUrl: `${liveWsUrl}/ws/audio`,
     ensureAuthToken,
+    connectionStatus,
     onStatus: (message) => setStatus(message),
   });
   const { sessionId, setSessionId, updateSessionId, sharedSession, setSharedSession, speakerMode, setSpeakerMode } = useStreamSession();
@@ -2063,7 +2064,6 @@ function App() {
         releaseWakeLock();
         setStatus('Connection lost. Tap to restart.');
         setPipelineStage('Connection lost');
-        setConnectionStatus('offline');
         return;
       }
 
@@ -2956,7 +2956,7 @@ function App() {
   const timingLabel = Number.isFinite(latencyTotalMs) ? `${latencyTotalMs}ms` : latencyAverageMs ? `${latencyAverageMs}ms avg` : '';
   const speakerSummary = activeSpeakerLabel;
   const micHint = !micReady
-    ? (connectionStatus === 'checking' ? 'Connecting to backend...' : connectionStatus === 'warming' ? 'Wait for LIVE in the header' : micPermission === 'denied' ? 'Allow microphone access in browser settings' : micPermission === 'unavailable' ? 'Connect a microphone to use voice' : 'Start backend with: cd backend && python app.py')
+    ? (connectionStatus === 'checking' ? 'Connecting to backend...' : connectionStatus === 'warming' ? 'Wait for LIVE in the header' : micPermission === 'denied' ? 'Allow microphone access in browser settings' : micPermission === 'unavailable' ? 'Connect a microphone to use voice' : 'Start backend with: make start-local')
     : perceivedListening ? 'Listening now' : processing ? 'Translation in motion' : playing ? 'Voice playing' : 'Ready for one tap';
   const visibleRepairOptions = (brainUi.repairOptions || []).slice(0, 3);
   const visibleHighlightTerms = (brainUi.highlightTerms || []).slice(0, 5);
@@ -3182,6 +3182,7 @@ function App() {
           apiUrl={liveApiUrl}
           selfTest={selfTest}
           runSelfTest={runSelfTest}
+          connectionStatus={connectionStatus}
           onRequestMicPermission={requestMicPermission}
         />
         {settings.debugMode && showDebugPanel && (

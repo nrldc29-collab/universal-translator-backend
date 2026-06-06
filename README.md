@@ -84,6 +84,28 @@ MarianTranslator
 PiperTextToSpeech
 ```
 
+## Quick Start (recommended)
+
+After cloning, the fastest path to a working local stack:
+
+```bash
+cp .env.example .env
+pip install -r requirements.txt
+make setup-models          # downloads Piper voices; requires espeak-ng on Linux for HT TTS
+make start-local           # add --restart if port 8000 is stale
+```
+
+Wait for **LIVE** in the app header, then verify:
+
+```bash
+make verify-local-live
+make verify-bundled-live   # optional: bundled frontend + full smoke
+```
+
+Windows: `.\Start-Translator.ps1` then `.\Test-Translator.ps1`.
+
+Browser self-test: **Settings → Advanced → Run Self Test** (available when LIVE).
+
 ## Setup Instructions
 
 ### Step 1: Clone the Repository
@@ -225,7 +247,21 @@ http://127.0.0.1:8000/docs
 
 ## Validation
 
-Run backend checks:
+Offline stack check (no server):
+
+```bash
+make verify-local
+```
+
+Live checks (backend must be running and LIVE):
+
+```bash
+make verify-local-live
+make verify-bundled-live
+bash scripts/test_translator.sh http://127.0.0.1:8000
+```
+
+Run backend unit tests:
 
 ```bash
 pytest

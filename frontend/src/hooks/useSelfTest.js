@@ -45,10 +45,24 @@ function testAudioSocket(wsAudioUrl, authToken) {
   });
 }
 
-export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onStatus } = {}) {
+export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onStatus, connectionStatus } = {}) {
   const [selfTest, setSelfTest] = useState(INITIAL);
 
   const runSelfTest = useCallback(async () => {
+    if (connectionStatus && connectionStatus !== 'online') {
+      const message = connectionStatus === 'warming'
+        ? 'Models still loading — wait for LIVE'
+        : 'Backend offline — start the server first';
+      setSelfTest({
+        status: 'offline',
+        translation: '-',
+        websocket: '-',
+        message,
+      });
+      onStatus?.(message);
+      return;
+    }
+
     setSelfTest({
       status: 'running',
       translation: 'checking',
@@ -141,7 +155,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
     }
 
     setSelfTest(next);
-  }, [apiUrl, wsAudioUrl, ensureAuthToken, onStatus]);
+  }, [apiUrl, wsAudioUrl, ensureAuthToken, onStatus, connectionStatus]);
 
   return { selfTest, runSelfTest };
 }
