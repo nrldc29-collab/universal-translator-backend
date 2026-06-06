@@ -34,10 +34,13 @@ def _check_worker_safety() -> int:
 
 if __name__ == "__main__":
     workers = _check_worker_safety()
+    host = get_backend_host()
+    port = get_backend_port()
+    _log.info("Starting Anai Translator on %s:%s (workers=%s)", host, port, workers)
     uvicorn.run(
         "backend.api:app",
-        host=get_backend_host(),
-        port=get_backend_port(),
+        host=host,
+        port=port,
         reload=not is_production(),
         workers=workers,
         ws_ping_interval=20,
