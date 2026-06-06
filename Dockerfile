@@ -78,7 +78,6 @@ COPY ailang ailang/
 COPY ailang_integration ailang_integration/
 COPY scripts/docker_fetch_piper.sh scripts/docker_fetch_piper.sh
 COPY scripts/docker_warm_models.py scripts/docker_warm_models.py
-COPY scripts/setup_models.py scripts/setup_models.py
 RUN chmod +x scripts/docker_fetch_piper.sh && ./scripts/docker_fetch_piper.sh models/tts
 RUN python scripts/docker_warm_models.py
 COPY --from=frontend-build /frontend/dist frontend/dist

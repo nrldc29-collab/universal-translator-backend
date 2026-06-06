@@ -102,15 +102,20 @@ def check_model_files() -> list[str]:
     return errors
 
 
-def _smoke_login_credentials() -> tuple[str, str]:
+def _smoke_login_credentials(base_url: str) -> tuple[str, str]:
     user = os.getenv("SMOKE_USERNAME", "").strip()
     password = os.getenv("SMOKE_PASSWORD", "").strip()
     if user and password:
         return user, password
-    raw_users = os.getenv("USERS", "demo:demo").strip()
-    if ":" in raw_users:
-        username, user_password = raw_users.split(":", 1)
-        return username.strip(), user_password.strip()
+    use_users_env = (
+        os.getenv("SMOKE_REMOTE", "").strip().lower() in {"1", "true", "yes", "on"}
+        or not _is_local_smoke_url(base_url)
+    )
+    if use_users_env:
+        raw_users = os.getenv("USERS", "demo:demo").strip()
+        if ":" in raw_users:
+            username, user_password = raw_users.split(":", 1)
+            return username.strip(), user_password.strip()
     return "demo", "demo"
 
 
@@ -807,7 +812,7 @@ def main() -> int:
         errors.extend(check_self_test_bundle(base_url))
         errors.extend(check_diagnostics(base_url))
         errors.extend(check_pwa_assets(base_url))
-        username, password = _smoke_login_credentials()
+        username, password = _smoke_login_credentials(base_url)
         login_status, login_payload = _post_json_with_retry(
             f"{base_url.rstrip('/')}/auth/login",
             {"username": username, "password": password},

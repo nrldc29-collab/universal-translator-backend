@@ -1,29 +1,33 @@
 #!/usr/bin/env python3
-"""Bake EN↔HT model weights into the Railway Docker image at build time."""
+"""Prefetch EN↔HT Hugging Face assets into the Docker image without loading torch."""
 
 from __future__ import annotations
 
+import os
 import sys
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from scripts import setup_models
+REPO_IDS = (
+    "Systran/faster-whisper-tiny",
+    "Helsinki-NLP/opus-mt-en-ht",
+    "Helsinki-NLP/opus-mt-ht-en",
+    "facebook/nllb-200-distilled-600M",
+)
 
 
 def main() -> int:
-    setup_models._configure_hf_hub()
-    for subdir in ("whisper", "translation", "tts", "uploads"):
-        (ROOT / "models" / subdir).mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "300")
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        print("huggingface_hub not installed", file=sys.stderr)
+        return 1
 
-    setup_models.ensure_espeak_ng()
-    setup_models.warm_whisper()
-    setup_models.warm_translation()
-    setup_models.warm_tts()
-    setup_models.warm_tts_ht()
-    print("Docker EN↔HT model warmup complete.")
+    cache_dir = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
+    for repo_id in REPO_IDS:
+        print(f"prefetch {repo_id}")
+        snapshot_download(repo_id, cache_dir=cache_dir)
+    print("Docker EN↔HT model prefetch complete.")
     return 0
 
 
