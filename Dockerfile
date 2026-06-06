@@ -79,7 +79,7 @@ COPY ailang_integration ailang_integration/
 COPY scripts/docker_fetch_piper.sh scripts/docker_fetch_piper.sh
 COPY scripts/docker_warm_models.py scripts/docker_warm_models.py
 RUN chmod +x scripts/docker_fetch_piper.sh && ./scripts/docker_fetch_piper.sh models/tts
-RUN python scripts/docker_warm_models.py
+RUN python scripts/docker_warm_models.py || echo "WARN: model prefetch failed — runtime will download on first use"
 COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000
