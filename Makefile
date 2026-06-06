@@ -1,15 +1,18 @@
 PYTHON ?= python
 
-.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup-models
+.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup-models verify-local
 
 backend-test:
 	pytest
 
 backend-compile:
-	$(PYTHON) -m compileall backend translation speech tts llm tests -q
+	$(PYTHON) -m compileall backend translation speech tts llm tests scripts -q
 
 setup-models:
 	$(PYTHON) scripts/setup_models.py
+
+verify-local:
+	$(PYTHON) scripts/smoke_local.py
 
 frontend-build:
 	cd frontend && npm run build

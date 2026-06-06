@@ -38,6 +38,33 @@ def warm_translation() -> None:
     print(f"warm  translation ({result!r})")
 
 
+def warm_whisper() -> None:
+    from backend.config import get_whisper_compute_type, get_whisper_device, get_whisper_model_size
+    from speech.whisper_stt import WhisperSpeechToText
+
+    model_size = get_whisper_model_size()
+    stt = WhisperSpeechToText(
+        model_size=model_size,
+        device=get_whisper_device(),
+        compute_type=get_whisper_compute_type(),
+    )
+    if not stt.preload():
+        raise RuntimeError("whisper preload returned false")
+    print(f"warm  whisper ({model_size})")
+
+
+def warm_tts() -> None:
+    from tts.piper_tts import PiperTextToSpeech
+
+    tts = PiperTextToSpeech()
+    if not tts.preload():
+        raise RuntimeError("piper preload returned false")
+    out = tts.synthesize("ready", str(ROOT / "models" / "tts" / "setup-warmup.wav"), language="en")
+    if not out:
+        raise RuntimeError("tts synthesis warmup failed")
+    print("warm  tts (en)")
+
+
 def main() -> int:
     errors: list[str] = []
     for subdir in ("whisper", "translation", "tts", "uploads"):
@@ -56,6 +83,11 @@ def main() -> int:
         import faster_whisper  # noqa: F401
     except ImportError:
         errors.append("faster-whisper not installed (pip install -r requirements.txt)")
+    else:
+        try:
+            warm_whisper()
+        except (RuntimeError, OSError, ValueError) as exc:
+            errors.append(f"whisper warmup failed: {exc}")
 
     try:
         import transformers  # noqa: F401
@@ -68,6 +100,11 @@ def main() -> int:
         except (RuntimeError, OSError, ValueError) as exc:
             errors.append(f"translation warmup failed: {exc}")
 
+    try:
+        warm_tts()
+    except (RuntimeError, OSError, ValueError, ImportError) as exc:
+        errors.append(f"tts warmup failed: {exc}")
+
     if errors:
         print("\nSetup incomplete:")
         for err in errors:
@@ -75,7 +112,7 @@ def main() -> int:
         return 1
 
     print("\nLocal model setup complete.")
-    print("Whisper and Marian/NLLB models download automatically on first use.")
+    print("STT, translation, and TTS are pre-warmed for first use.")
     return 0
 
 

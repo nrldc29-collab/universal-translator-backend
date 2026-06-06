@@ -5,7 +5,7 @@ import React from 'react';
 import { Activity, Clock3, Mic, UserRound, Zap } from 'lucide-react';
 
 export default function MicPanel({
-  micState, micLevel, perceivedListening, micLabel, micHint,
+  micState, micLevel, perceivedListening, micLabel, micHint, micReady = true,
   handleMicClick, handleMicPointerDown, handleMicPointerUp,
   playing, processing, streaming, recording,
   liveHudMode, liveHudItems = [],
@@ -23,7 +23,7 @@ export default function MicPanel({
         onPointerUp={handleMicPointerUp}
         onPointerCancel={handleMicPointerUp}
         onContextMenu={e => e.preventDefault()}
-        disabled={playing || (processing && !streaming)}
+        disabled={!micReady || playing || (processing && !streaming)}
         aria-label={micLabel}
         aria-live="polite"
         type="button"

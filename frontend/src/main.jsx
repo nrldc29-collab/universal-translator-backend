@@ -1326,6 +1326,10 @@ function App() {
 
   async function handleMicClick() {
     debugLog('MIC BUTTON CLICKED');
+    if (connectionStatus !== 'online') {
+      setStatus(connectionStatus === 'warming' ? 'Models still loading — wait for LIVE' : 'Backend offline — start the server first');
+      return;
+    }
     if (ignoreNextMicClickRef.current) {
       ignoreNextMicClickRef.current = false;
       return;
@@ -1351,6 +1355,7 @@ function App() {
 
   async function handleMicPointerDown(event) {
     debugLog('MIC BUTTON CLICKED');
+    if (connectionStatus !== 'online') return;
     synchronousAudioUnlock();
     if (isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING) return;
     if (socketRef.current || processing || playing) return;
@@ -2904,7 +2909,10 @@ function App() {
   const hasTranslatedText = Boolean(liveTranslation || result?.translated_text);
   const perceivedListening = streaming || instantListening;
   const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
-  const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
+  const micReady = connectionStatus === 'online';
+  const micLabel = !micReady
+    ? (connectionStatus === 'warming' ? 'Starting models' : 'Offline')
+    : playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
   const statusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
   const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
   const activeSpeakerLabel = detectedSpeaker && detectedSpeaker !== '-' && detectedSpeaker !== 'Person' ? detectedSpeaker : '';
@@ -2916,7 +2924,9 @@ function App() {
   const statusTone = connectionStatus !== 'online' ? 'offline' : playing || ttsPlaying ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'ready';
   const timingLabel = Number.isFinite(latencyTotalMs) ? `${latencyTotalMs}ms` : latencyAverageMs ? `${latencyAverageMs}ms avg` : '';
   const speakerSummary = activeSpeakerLabel;
-  const micHint = perceivedListening ? 'Listening now' : processing ? 'Translation in motion' : playing ? 'Voice playing' : 'Ready for one tap';
+  const micHint = !micReady
+    ? (connectionStatus === 'warming' ? 'Wait for LIVE in the header' : 'Start backend with: cd backend && python app.py')
+    : perceivedListening ? 'Listening now' : processing ? 'Translation in motion' : playing ? 'Voice playing' : 'Ready for one tap';
   const visibleRepairOptions = (brainUi.repairOptions || []).slice(0, 3);
   const visibleHighlightTerms = (brainUi.highlightTerms || []).slice(0, 5);
   const brainModeLabel = brainUi.mode ? brainUi.mode.replace(/_/g, ' ') : brainUi.strategy?.replace(/_/g, ' ');
@@ -3041,6 +3051,7 @@ function App() {
           perceivedListening={perceivedListening}
           micLabel={micLabel}
           micHint={micHint}
+          micReady={micReady}
           handleMicClick={handleMicClick}
           handleMicPointerDown={handleMicPointerDown}
           handleMicPointerUp={handleMicPointerUp}
