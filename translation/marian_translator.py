@@ -4,7 +4,7 @@ from backend.config import get_translation_device
 
 
 class MarianTranslator:
-    def __init__(self, default_source_language: str = "en", default_target_language: str = "es"):
+    def __init__(self, default_source_language: str = "en", default_target_language: str = "ht"):
         self.default_source_language = default_source_language
         self.default_target_language = default_target_language
         self._models = {}

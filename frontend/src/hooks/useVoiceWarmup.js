@@ -42,8 +42,8 @@ export function useVoiceWarmup({
   async function warmVoiceCache(reason = 'idle') {
     const current = voiceWarmupRef.current;
     const now = Date.now();
-    const language = targetLanguage || 'es';
-    const phrases = warmupPhrases[language] || warmupPhrases.es;
+    const language = targetLanguage || 'ht';
+    const phrases = warmupPhrases[language] || warmupPhrases.ht || warmupPhrases.es;
     // Handle object format with categories (casual, formal, greeting) or array format
     let textToWarm;
     if (typeof phrases === 'object' && !Array.isArray(phrases)) {

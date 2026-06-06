@@ -24,7 +24,7 @@ class HybridTranslator:
         if not text:
             return False
         source = source_language or "en"
-        target = target_language or "es"
+        target = target_language or "ht"
         return text.startswith(f"[{source}->{target}]")
 
     def translate(self, text: str, source_language: str | None = None, target_language: str | None = None) -> str:
