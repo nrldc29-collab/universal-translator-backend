@@ -9,6 +9,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 TTS_DIR = ROOT / "models" / "tts"
 
 PIPER_VOICE_URLS = {
@@ -67,6 +69,7 @@ def warm_tts() -> None:
 
 def main() -> int:
     errors: list[str] = []
+    warnings: list[str] = []
     for subdir in ("whisper", "translation", "tts", "uploads"):
         (ROOT / "models" / subdir).mkdir(parents=True, exist_ok=True)
 
@@ -77,7 +80,7 @@ def main() -> int:
             errors.append(f"failed to download {filename}: {exc}")
 
     if not shutil.which("espeak-ng"):
-        errors.append("espeak-ng not found on PATH (required for non-English TTS fallback)")
+        warnings.append("espeak-ng not found on PATH (install for HT/fr TTS fallback)")
 
     try:
         import faster_whisper  # noqa: F401
@@ -110,6 +113,11 @@ def main() -> int:
         for err in errors:
             print(f"  - {err}")
         return 1
+
+    if warnings:
+        print("\nSetup warnings:")
+        for warn in warnings:
+            print(f"  - {warn}")
 
     print("\nLocal model setup complete.")
     print("STT, translation, and TTS are pre-warmed for first use.")

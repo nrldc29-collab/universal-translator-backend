@@ -14,6 +14,28 @@ import signal
 logger = logging.getLogger(__name__)
 
 
+def usable_agent_text(candidate: str | None, original: str = "") -> bool:
+    """Return True when an agent text field is safe to feed into Marian/TTS."""
+    if not candidate or not isinstance(candidate, str):
+        return False
+    stripped = candidate.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(("{", "[", "[AI:")):
+        return False
+    try:
+        parsed = json.loads(stripped)
+        if isinstance(parsed, (dict, list)):
+            return False
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return True
+
+
+def coalesce_agent_text(candidate: str | None, fallback: str) -> str:
+    return candidate if usable_agent_text(candidate, fallback) else fallback
+
+
 class TimeoutError(Exception):
     """Custom timeout exception for agent calls."""
     pass
@@ -556,6 +578,13 @@ class AILangPipelineManager:
             if agent:
                 result = self._call_agent_with_circuit_breaker("ContextMemoryAgent", agent.call, "process", text, context.current_speaker or "unknown", source_lang, context.conversation_history, context.speaker_registry, expected_fields=["resolved_text", "original_text"])
                 if result:
+                    resolved = coalesce_agent_text(result.get("resolved_text"), text)
+                    result["resolved_text"] = resolved
+                    result["resolution_applied"] = bool(
+                        result.get("resolution_applied")
+                        and usable_agent_text(resolved, text)
+                        and resolved.strip() != text.strip()
+                    )
                     # Update context with new registry
                     context.speaker_registry = result.get("speaker_registry", context.speaker_registry)
                     return result
@@ -604,6 +633,13 @@ class AILangPipelineManager:
             if agent:
                 result = self._call_agent_with_circuit_breaker("DialectAdapterAgent", agent.call, "process", source_text, base_translation, source_lang, target_lang, context.dialect_preference, expected_fields=["final_translation", "adaptation_applied"])
                 if result:
+                    result["final_translation"] = coalesce_agent_text(
+                        result.get("final_translation"), base_translation
+                    )
+                    result["adaptation_applied"] = bool(
+                        result.get("adaptation_applied")
+                        and result["final_translation"].strip() != base_translation.strip()
+                    )
                     return result
         except Exception as e:
             logger.error(f"DialectAdapterAgent failed: {e}", exc_info=True)
@@ -622,6 +658,13 @@ class AILangPipelineManager:
             if agent:
                 result = self._call_agent_with_circuit_breaker("GlossaryInjectorAgent", agent.call, "process", text, base_translation, source_lang, target_lang, context.domain, context.glossary, instructions, expected_fields=["final_translation", "glossary_applied"])
                 if result:
+                    result["final_translation"] = coalesce_agent_text(
+                        result.get("final_translation"), base_translation
+                    )
+                    result["glossary_applied"] = bool(
+                        result.get("glossary_applied")
+                        and result["final_translation"].strip() != base_translation.strip()
+                    )
                     return result
         except Exception as e:
             logger.error(f"GlossaryInjectorAgent failed: {e}", exc_info=True)
@@ -641,6 +684,7 @@ class AILangPipelineManager:
                 history_summary = "\n".join([f"{t.get('speaker', 'unknown')}: {t.get('text', '')}" for t in context.conversation_history[-6:]])
                 result = self._call_agent_with_circuit_breaker("AmbiguityResolverAgent", agent.call, "process", text, source_lang, target_lang, context.domain, history_summary or "", expected_fields=["has_ambiguities", "resolved_text"])
                 if result and isinstance(result, dict) and "has_ambiguities" in result:
+                    result["resolved_text"] = coalesce_agent_text(result.get("resolved_text"), text)
                     return result
         except Exception as e:
             logger.error(f"AmbiguityResolverAgent failed: {e}", exc_info=True)
@@ -659,6 +703,9 @@ class AILangPipelineManager:
             if agent:
                 result = self._call_agent_with_circuit_breaker("ConfidenceFallbackAgent", agent.call, "process", text, base_translation, confidence, source_lang, target_lang, context.domain, instructions, expected_fields=["final_translation", "escalated"])
                 if result:
+                    result["final_translation"] = coalesce_agent_text(
+                        result.get("final_translation"), base_translation
+                    )
                     return result
         except Exception as e:
             logger.error(f"ConfidenceFallbackAgent failed: {e}", exc_info=True)
@@ -677,6 +724,9 @@ class AILangPipelineManager:
             if agent:
                 result = self._call_agent_with_circuit_breaker("BackTranslatorAgent", agent.call, "verify", original, translated, source_lang, target_lang, context.domain, expected_fields=["verified", "final_translation"])
                 if result and isinstance(result, dict) and "verified" in result:
+                    result["final_translation"] = coalesce_agent_text(
+                        result.get("final_translation"), translated
+                    )
                     return result
         except Exception as e:
             logger.error(f"BackTranslatorAgent failed: {e}", exc_info=True)

@@ -1,4 +1,4 @@
-PYTHON ?= python
+PYTHON ?= python3
 
 .PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup-models verify-local
 
