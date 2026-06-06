@@ -40,10 +40,12 @@ chmod +x Get-Railway-Variables.sh
 
 ## Post-deploy verification
 
-From your machine (replace URL):
+From your machine (replace URL; only needs `pip install websockets` when testing a remote deploy):
 
 ```bash
 python scripts/smoke_local.py https://YOUR-SERVICE.up.railway.app
+# or
+make smoke-production URL=https://YOUR-SERVICE.up.railway.app
 ```
 
 Or locally before push:

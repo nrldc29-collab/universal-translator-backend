@@ -38,7 +38,9 @@
 
 - [ ] `GET /health` returns `status: ok` and the expected release ID.
 - [ ] `GET /ready` shows model readiness, `espeak_available: true`, and STT provider reachable.
-- [ ] `python scripts/smoke_local.py https://YOUR-SERVICE-URL` passes (full EN↔HT smoke).
+- [ ] `python scripts/smoke_local.py https://YOUR-SERVICE-URL` passes (full EN↔HT smoke; remote URL needs only `websockets` installed)
+- [ ] Or: `make smoke-production URL=https://YOUR-SERVICE-URL`
+- [ ] Or: GitHub Actions → **Production smoke** workflow (enter your deployed URL)
 - [ ] `GET /diagnostics` shows:
   - `translation.remote_translator_reachable: true`
   - `persistence.quota_store_available: true` (when `DATA_DIR` set)

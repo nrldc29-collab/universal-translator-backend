@@ -753,12 +753,37 @@ def check_tts(base_url: str, auth: dict[str, str]) -> list[str]:
     return errors
 
 
+def _is_local_smoke_url(base_url: str) -> bool:
+    from urllib.parse import urlparse
+
+    host = (urlparse(base_url).hostname or "").lower()
+    if host in {"127.0.0.1", "localhost"}:
+        return True
+    return host.startswith("192.168.") or host.startswith("10.") or host.startswith("172.")
+
+
+def check_remote_runtime() -> list[str]:
+    errors: list[str] = []
+    try:
+        import websockets  # noqa: F401
+    except ImportError:
+        errors.append("missing python package: websockets (pip install websockets)")
+    return errors
+
+
 def main() -> int:
     errors: list[str] = []
-    errors.extend(check_imports())
-    errors.extend(check_model_files())
-
     base_url = sys.argv[1] if len(sys.argv) > 1 else ""
+
+    if not base_url:
+        errors.extend(check_imports())
+        errors.extend(check_model_files())
+    elif _is_local_smoke_url(base_url):
+        errors.extend(check_imports())
+        errors.extend(check_model_files())
+    else:
+        errors.extend(check_remote_runtime())
+
     if base_url:
         errors.extend(check_health(base_url))
         errors.extend(check_ready_details(base_url))
@@ -786,12 +811,14 @@ def main() -> int:
             errors.extend(check_websocket_speaker_session(base_url, token))
 
     if errors:
-        print("Local smoke check failed:")
+        label = "Smoke check" if base_url and not _is_local_smoke_url(base_url) else "Local smoke check"
+        print(f"{label} failed:")
         for err in errors:
             print(f"  - {err}")
         return 1
 
-    print("Local smoke check passed.")
+    label = "Smoke check" if base_url and not _is_local_smoke_url(base_url) else "Local smoke check"
+    print(f"{label} passed.")
     if not base_url:
         print("Tip: run `python scripts/smoke_local.py http://127.0.0.1:8000` with backend up.")
     return 0
