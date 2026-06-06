@@ -28,6 +28,16 @@ def download_file(url: str, dest: Path) -> None:
     urllib.request.urlretrieve(url, dest)
 
 
+def warm_translation() -> None:
+    from translation.marian_translator import MarianTranslator
+
+    translator = MarianTranslator()
+    result = translator.translate("hello", "en", "es")
+    if not result or result.startswith("[en->es]"):
+        raise RuntimeError(f"translation warmup failed: {result!r}")
+    print(f"warm  translation ({result!r})")
+
+
 def main() -> int:
     errors: list[str] = []
     for subdir in ("whisper", "translation", "tts", "uploads"):
@@ -52,6 +62,11 @@ def main() -> int:
         import torch  # noqa: F401
     except ImportError:
         errors.append("transformers/torch not installed (required for Marian translation)")
+    else:
+        try:
+            warm_translation()
+        except (RuntimeError, OSError, ValueError) as exc:
+            errors.append(f"translation warmup failed: {exc}")
 
     if errors:
         print("\nSetup incomplete:")

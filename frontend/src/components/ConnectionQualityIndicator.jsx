@@ -30,6 +30,8 @@ export default function ConnectionQualityIndicator({
         return <CheckCircle2 size={14} color="#22d3ee" />;
       case 'offline':
         return <WifiOff size={14} color="#f87171" />;
+      case 'warming':
+        return <Activity size={14} color="#fbbf24" />;
       case 'error':
         return <AlertTriangle size={14} color="#fbbf24" />;
       default:
@@ -65,6 +67,7 @@ export default function ConnectionQualityIndicator({
       return `Reconnecting... (${reconnectAttempt}/${maxReconnectAttempts})`;
     }
     if (connectionStatus === 'offline') return 'Offline';
+    if (connectionStatus === 'warming') return 'Starting models';
     if (connectionStatus === 'error') return 'Connection Error';
     if (latencyMs) return `${latencyMs}ms`;
     return 'Connected';

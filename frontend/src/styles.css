@@ -3069,6 +3069,12 @@ select:focus-visible {
   animation: connPulse 1s ease-in-out infinite;
 }
 
+.neo-conn-dot.warming {
+  background: #fb923c;
+  box-shadow: 0 0 8px rgba(251,146,60,.55);
+  animation: connPulse 0.9s ease-in-out infinite;
+}
+
 .neo-conn-label {
   font-size: .52rem;
   font-weight: 800;

@@ -170,14 +170,25 @@ def test_runtime_payload_degraded_when_streaming_unreachable():
 
 def test_runtime_payload_ready_reflects_runtime_state():
     original = runtime_state.get("ready")
+    original_readiness = runtime_state.get("readiness")
     try:
         runtime_state["ready"] = True
+        runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": []}
         payload = runtime_payload()
         assert payload.get("ready") is True
 
         runtime_state["ready"] = False
+        runtime_state["readiness"] = {
+            "ready": False,
+            "blockers": ["translation_preload_failed"],
+            "warnings": [],
+        }
         payload = runtime_payload()
         assert payload.get("ready") is False
+        assert payload.get("blockers") == ["translation_preload_failed"]
+        assert payload.get("status") == "degraded"
     finally:
         if original is not None:
             runtime_state["ready"] = original
+        if original_readiness is not None:
+            runtime_state["readiness"] = original_readiness

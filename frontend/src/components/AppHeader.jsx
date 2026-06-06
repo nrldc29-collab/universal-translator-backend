@@ -15,6 +15,7 @@ export default function AppHeader({
 }) {
   const isOnline = connectionStatus === 'online';
   const isChecking = connectionStatus === 'checking';
+  const isWarming = connectionStatus === 'warming';
 
   return (
     <header className="neo-header">
@@ -32,7 +33,7 @@ export default function AppHeader({
         <div className="neo-status-row">
           <span className={`neo-conn-dot ${connectionStatus}`} />
           <span className="neo-conn-label">
-            {isChecking ? 'SYNCING' : isOnline ? 'LIVE' : 'OFFLINE'}
+            {isWarming ? 'WARMING' : isChecking ? 'SYNCING' : isOnline ? 'LIVE' : 'OFFLINE'}
           </span>
         </div>
       </div>

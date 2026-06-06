@@ -22,7 +22,13 @@ export function useConnectionStatus({ apiUrl, pollIntervalMs, onLanguages, onOff
       try {
         const r = await fetch(`${apiUrl}/health`, { cache: 'no-store' });
         if (!r.ok) throw new Error('health check failed');
-        if (!cancelled) setConnectionStatus('online');
+        const data = await r.json();
+        if (cancelled) return;
+        if (data.ready === false) {
+          setConnectionStatus(Array.isArray(data.blockers) && data.blockers.length ? 'warming' : 'checking');
+          return;
+        }
+        setConnectionStatus('online');
       } catch {
         if (!cancelled) setConnectionStatus('offline');
       }
@@ -33,7 +39,7 @@ export function useConnectionStatus({ apiUrl, pollIntervalMs, onLanguages, onOff
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [apiUrl, pollIntervalMs]);
 
   return { connectionStatus, setConnectionStatus };
 }

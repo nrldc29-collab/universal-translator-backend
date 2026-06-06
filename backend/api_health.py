@@ -94,6 +94,12 @@ def runtime_payload(include_details: bool = False) -> dict:
         "release": RELEASE_ID,
         "uptime_seconds": round(time() - runtime_state["started_at"], 2),
     }
+    readiness = runtime_state.get("readiness")
+    if readiness and not runtime_state["ready"]:
+        payload["blockers"] = readiness.get("blockers") or []
+        payload["warnings"] = readiness.get("warnings") or []
+        if payload["blockers"]:
+            payload["status"] = "degraded"
     if include_details:
         stt_provider = stt_provider_health_snapshot()
         preload = runtime_state.get("models", {}).get("preloaded")
