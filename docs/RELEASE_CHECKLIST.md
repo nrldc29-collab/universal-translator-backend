@@ -2,7 +2,7 @@
 
 ## Code quality
 
-- [ ] Backend tests pass with `pytest`.
+- [ ] Backend tests pass with `make validate` or `python -m pytest`.
 - [ ] Frontend builds with `npm run build`.
 - [ ] Mobile lints and builds with `npm run lint && npm run build`.
 - [ ] `git diff --check` has no whitespace errors.

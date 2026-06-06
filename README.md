@@ -100,8 +100,8 @@ make start-local           # add --restart if port 8000 is stale
 Wait for **LIVE** in the app header, then verify:
 
 ```bash
-make verify-local-live
-make verify-bundled-live   # optional: bundled frontend + full smoke
+make preflight-deploy-live   # deploy file checks + full EN↔HT smoke (recommended)
+make verify-all              # offline imports + bundled production smoke
 ```
 
 Windows: `.\Start-Translator.ps1` then `.\Test-Translator.ps1`.

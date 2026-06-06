@@ -12,19 +12,29 @@ python scripts/smoke_local.py
 
 ```bash
 make start-local
+make preflight-deploy-live   # recommended: deploy checks + full EN↔HT smoke
 make verify-local-live
 make verify-bundled-live
-make verify-all          # offline imports + full bundled smoke
+make verify-all              # offline imports + full bundled smoke
 bash scripts/test_translator.sh http://127.0.0.1:8000
 ```
 
 Windows: `.\Test-Translator.ps1`
 
+## Deploy preflight (no server required for file checks)
+
+```bash
+make preflight-deploy
+bash scripts/preflight_deploy.sh --smoke http://127.0.0.1:8000
+```
+
+Windows: `powershell -File .\Test-DeploymentReady.ps1 -RunSmoke`
+
 ## Backend unit tests
 
 ```bash
 pip install -r requirements.txt
-pytest --ignore=tests/test_stt_integration.py -q
+python -m pytest --ignore=tests/test_stt_integration.py -q
 ```
 
 If `pytest` is unavailable, targeted smoke checks can still use:
