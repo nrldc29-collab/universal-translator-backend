@@ -92,10 +92,11 @@ After cloning, the fastest path to a working local stack:
 
 ```bash
 cp .env.example .env
-pip install -r requirements.txt
-make setup-models          # downloads Piper voices; requires espeak-ng or espeak for HT TTS on all platforms
+make setup                 # pip + frontend deps + model warmup (needs espeak-ng for HT TTS)
 make start-local           # add --restart if port 8000 is stale
 ```
+
+Production (Railway/VPS): see `RAILWAY-DEPLOY.md` — generate vars with `./Get-Railway-Variables.sh`, deploy, then `python scripts/smoke_local.py https://YOUR-URL`.
 
 Wait for **LIVE** in the app header, then verify:
 

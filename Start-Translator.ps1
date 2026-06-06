@@ -104,7 +104,9 @@ if ($Restart) {
 Import-DotEnv -Path (Join-Path $Root ".env")
 
 $env:FRONTEND_URL = "http://127.0.0.1:$FrontendPort"
-$env:ALLOWED_ORIGIN_REGEX = "https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?|https://.*\.trycloudflare\.com"
+if (-not $env:ALLOWED_ORIGIN_REGEX) {
+    $env:ALLOWED_ORIGIN_REGEX = "https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?|https://.*\.trycloudflare\.com"
+}
 $env:PARTIAL_TTS_MODE = "true"
 if (-not $env:TRANSLATION_BACKEND) { $env:TRANSLATION_BACKEND = "marian" }
 if (-not $env:WHISPER_MODEL_SIZE) { $env:WHISPER_MODEL_SIZE = "small" }

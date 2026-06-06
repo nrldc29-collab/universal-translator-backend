@@ -54,6 +54,19 @@ if ! grep -qE 'QUOTA_REQUESTS_PER_HOUR.*500' "$ROOT/Get-Railway-Variables.sh"; t
   failures+=("Get-Railway-Variables.sh missing QUOTA_REQUESTS_PER_HOUR=500")
 fi
 
+if [[ -f "$ROOT/.env.example" ]]; then
+  bom_check="$(python3 - "$ROOT/.env.example" <<'PY'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+sys.exit(0 if path.read_bytes()[:3] != b"\xef\xbb\xbf" else 1)
+PY
+)"
+  if [[ "$bom_check" -ne 0 ]]; then
+    failures+=(".env.example must not contain a UTF-8 BOM (breaks cp .env.example .env on Linux)")
+  fi
+fi
+
 if ! bash "$ROOT/Get-Railway-Variables.sh" demo test-password 2>/dev/null | grep -q "USERS=demo:test-password"; then
   failures+=("Get-Railway-Variables.sh did not emit expected USERS line")
 fi
