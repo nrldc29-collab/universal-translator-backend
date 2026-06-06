@@ -139,14 +139,14 @@ Invoke-SmokeCheck "PWA assets" {
     if ($manifest.display -ne "standalone") {
         throw "Manifest display is not standalone"
     }
-    if ($manifest.background_color -ne "#0b1120" -or $manifest.theme_color -ne "#2563eb") {
+    if ($manifest.background_color -ne "#03050a" -or $manifest.theme_color -ne "#050711") {
         throw "Manifest colors are not the installable app colors"
     }
     if (-not ($manifest.icons | Where-Object { $_.src -eq "/icons/icon-512.png" -and $_.sizes -eq "512x512" })) {
         throw "Manifest is missing the 512px app icon"
     }
     $serviceWorker = Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/sw.js" -TimeoutSec $TimeoutSec
-    if ($serviceWorker.Content -notmatch "anai-translator-shell-v") {
+    if ($serviceWorker.Content -notmatch "anai-translator-shell-") {
         throw "Service worker is not using the Anai Translator cache"
     }
     if ($serviceWorker.Content -notmatch "cacheDiscoveredShellAssets" -or $serviceWorker.Content -notmatch "/offline.html") {

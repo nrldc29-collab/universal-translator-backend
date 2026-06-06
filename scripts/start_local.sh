@@ -24,6 +24,7 @@ if [[ -f "$ROOT/.env" ]]; then
 fi
 
 export FRONTEND_URL="${FRONTEND_URL:-http://127.0.0.1:${FRONTEND_PORT}}"
+export ALLOWED_ORIGIN_REGEX="${ALLOWED_ORIGIN_REGEX:-https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?|https://.*\.trycloudflare\.com}"
 export TRANSLATION_BACKEND="${TRANSLATION_BACKEND:-marian}"
 export WHISPER_MODEL_SIZE="${WHISPER_MODEL_SIZE:-small}"
 export PRELOAD_MODELS="${PRELOAD_MODELS:-1}"
@@ -32,6 +33,9 @@ export PREFER_CLOUD_TTS="${PREFER_CLOUD_TTS:-0}"
 export PARTIAL_TTS_MODE="${PARTIAL_TTS_MODE:-true}"
 
 PYTHON="${PYTHON:-python3}"
+if [[ -x "$ROOT/venv/bin/python" ]]; then
+  PYTHON="$ROOT/venv/bin/python"
+fi
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
   echo "Missing python3. Install requirements: pip install -r requirements.txt" >&2
   exit 1

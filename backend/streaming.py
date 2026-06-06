@@ -1179,6 +1179,11 @@ async def websocket_audio_translation(
                     target_language = payload.get("target_language", "es")
                     device_id = payload.get("device_id")
                     requested_speaker_label = payload.get("speaker_name") or payload.get("speaker_label")
+                    if previous_device_id:
+                        session_registry.disconnect(previous_session_id, previous_speaker, identity, previous_device_id)
+                    if session_registry.active_stream_count(identity) >= get_max_active_streams_per_user():
+                        await websocket.send_json({"type": "error", "message": "Too many active streams for this user."})
+                        continue
                     if speaker_mode == "auto":
                         speaker_profile = session_registry.resolve_auto_speaker(
                             session_id,
@@ -1210,14 +1215,6 @@ async def websocket_audio_translation(
                         )
                         speaker_index = session_state.get("speaker_index", speaker_index)
                         device_id = session_state.get("device_id")
-                    if previous_device_id and (
-                        previous_session_id != session_id or previous_speaker != speaker or previous_device_id != device_id
-                    ):
-                        session_registry.disconnect(previous_session_id, previous_speaker, identity, previous_device_id)
-                    if session_registry.active_stream_count(identity) > get_max_active_streams_per_user():
-                        session_registry.disconnect(session_id, speaker, identity, device_id)
-                        await websocket.send_json({"type": "error", "message": "Too many active streams for this user."})
-                        continue
                     client_mime_type = payload.get("mime_type") or client_mime_type
                     audio_suffix = audio_suffix_for_mime(client_mime_type)
                     await websocket.send_json({
@@ -1373,12 +1370,13 @@ async def websocket_audio_translation(
 
     except WebSocketDisconnect:
         observability.increment("websocket_disconnects_total")
-        session_registry.disconnect(session_id, speaker, identity, device_id)
+        session_registry.disconnect_session(session_id, identity)
         return
     except (RuntimeError, ValueError, ConnectionError, TimeoutError):
         observability.increment("websocket_errors_total")
         raise
     finally:
+        session_registry.disconnect_session(session_id, identity)
         if partial_task is not None:
             partial_task.cancel()
             with suppress(asyncio.CancelledError, Exception):

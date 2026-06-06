@@ -10,6 +10,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import quote
+from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -28,6 +29,36 @@ def _post_json(url: str, payload: dict, headers: dict | None = None) -> tuple[in
             return exc.code, json.loads(raw) if raw else {}
         except json.JSONDecodeError:
             return exc.code, raw
+
+
+def _get_json(url: str, headers: dict | None = None, timeout: int = 10) -> tuple[int, dict | str]:
+    request = urllib.request.Request(url, headers=headers or {}, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            try:
+                return resp.status, json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                return resp.status, raw
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return exc.code, json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return exc.code, raw
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return 0, str(exc)
+
+
+def _get_text(url: str, headers: dict | None = None, timeout: int = 10) -> tuple[int, str]:
+    request = urllib.request.Request(url, headers=headers or {}, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as resp:
+            return resp.status, resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return 0, str(exc)
 
 
 def check_imports() -> list[str]:
@@ -146,6 +177,44 @@ def check_languages(base_url: str) -> list[str]:
     return errors
 
 
+def check_diagnostics(base_url: str) -> list[str]:
+    errors: list[str] = []
+    status, payload = _get_json(f"{base_url.rstrip('/')}/diagnostics")
+    if status != 200 or not isinstance(payload, dict):
+        errors.append(f"diagnostics check failed ({status}): {payload}")
+        return errors
+    if not payload.get("ready"):
+        errors.append(f"diagnostics reports not ready: {payload.get('status')}")
+    frontend = payload.get("frontend") or {}
+    if frontend.get("mode") == "embedded_dist" and not frontend.get("reachable"):
+        errors.append(f"embedded frontend not reachable: {frontend}")
+    return errors
+
+
+def check_pwa_assets(base_url: str) -> list[str]:
+    errors: list[str] = []
+    root = base_url.rstrip("/")
+    status, raw_payload = _get_json(f"{root}/manifest.json")
+    if status != 200 or not isinstance(raw_payload, dict) or raw_payload.get("name") != "Anai Translator":
+        return errors
+    payload = raw_payload
+    if payload.get("display") != "standalone":
+        errors.append(f"manifest display is not standalone: {payload.get('display')!r}")
+    icons = payload.get("icons") or []
+    if not any(icon.get("src") == "/icons/icon-512.png" for icon in icons if isinstance(icon, dict)):
+        errors.append("manifest is missing the 512px app icon")
+
+    sw_status, sw_body = _get_text(f"{root}/sw.js")
+    if sw_status != 200:
+        errors.append(f"service worker fetch failed ({sw_status})")
+        return errors
+    if "anai-translator-shell-" not in sw_body:
+        errors.append("service worker is not using the Anai Translator cache")
+    if "cacheDiscoveredShellAssets" not in sw_body or "/offline.html" not in sw_body:
+        errors.append("service worker is missing offline shell caching")
+    return errors
+
+
 def check_app_shell(base_url: str) -> list[str]:
     errors: list[str] = []
     url = base_url.rstrip("/") + "/"
@@ -200,11 +269,84 @@ async def _ws_translate_roundtrip(base_url: str, token: str) -> list[str]:
                 return [f"ws/translate en->es unexpected: {translated!r}"]
     except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError) as exc:
         return [f"ws/translate failed: {exc}"]
+    except Exception as exc:
+        return [f"ws/translate failed: {exc}"]
     return []
 
 
 def check_websocket_translate(base_url: str, token: str) -> list[str]:
     return asyncio.run(_ws_translate_roundtrip(base_url, token))
+
+
+async def _expect_speaker(ws, expected_speaker: str, expected_label: str) -> dict:
+    speaker_message: dict | None = None
+    for _ in range(20):
+        message = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+        if message.get("type") == "error":
+            raise RuntimeError(f"WebSocket error while waiting for speaker detection: {message}")
+        if message.get("type") == "speaker_detected":
+            if message.get("speaker") != expected_speaker:
+                raise RuntimeError(f"Expected {expected_speaker}, got {message}")
+            if message.get("speaker_label") != expected_label:
+                raise RuntimeError(f"Expected {expected_label}, got {message}")
+            if message.get("detection") != "device_source":
+                raise RuntimeError(f"Expected device_source detection, got {message}")
+            speaker_message = message
+            continue
+        if speaker_message and message.get("type") in {"turn", "session_restored", "listening", "config_ack"}:
+            if message.get("type") == "listening":
+                return speaker_message
+            continue
+    if speaker_message:
+        return speaker_message
+    raise RuntimeError("Timed out waiting for speaker_detected")
+
+
+async def _ws_audio_speaker_session(base_url: str, token: str) -> list[str]:
+    import websockets
+
+    ws_base = base_url.rstrip("/").replace("http://", "ws://").replace("https://", "wss://")
+    ws_url = f"{ws_base}/ws/audio?access_token={quote(token)}"
+    session_id = f"smoke-{uuid4()}"
+    try:
+        async with websockets.connect(ws_url, open_timeout=10) as ws:
+            ready = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            if ready.get("type") != "ready":
+                return [f"ws/audio bad ready frame: {ready}"]
+            await ws.send(json.dumps({"type": "ping"}))
+            pong = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+            if pong.get("type") != "pong":
+                return [f"ws/audio unexpected ping reply: {pong}"]
+
+            async def start_device(device_id: str, expected_speaker: str, expected_label: str) -> dict:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "start",
+                            "session_id": session_id,
+                            "device_id": device_id,
+                            "speaker_mode": "auto",
+                            "source_language": "en",
+                            "target_language": "es",
+                            "mime_type": "audio/webm;codecs=opus",
+                        }
+                    )
+                )
+                return await _expect_speaker(ws, expected_speaker, expected_label)
+
+            first = await start_device("smoke-device-1", "person-1", "Person 1")
+            same = await start_device("smoke-device-1", "person-1", "Person 1")
+            if first.get("speaker_label") != "Person 1" or same.get("speaker_label") != "Person 1":
+                return [f"ws/audio auto speaker labels unstable: {first}, {same}"]
+    except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError, RuntimeError) as exc:
+        return [f"ws/audio speaker session failed: {exc}"]
+    except Exception as exc:
+        return [f"ws/audio speaker session failed: {exc}"]
+    return []
+
+
+def check_websocket_speaker_session(base_url: str, token: str) -> list[str]:
+    return asyncio.run(_ws_audio_speaker_session(base_url, token))
 
 
 async def _ws_audio_ping(base_url: str, token: str) -> list[str]:
@@ -222,6 +364,8 @@ async def _ws_audio_ping(base_url: str, token: str) -> list[str]:
             if reply.get("type") != "pong":
                 return [f"ws/audio unexpected reply: {reply}"]
     except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError) as exc:
+        return [f"ws/audio failed: {exc}"]
+    except Exception as exc:
         return [f"ws/audio failed: {exc}"]
     return []
 
@@ -261,6 +405,8 @@ def main() -> int:
         errors.extend(check_ready_details(base_url))
         errors.extend(check_languages(base_url))
         errors.extend(check_app_shell(base_url))
+        errors.extend(check_diagnostics(base_url))
+        errors.extend(check_pwa_assets(base_url))
         login_status, login_payload = _post_json(
             f"{base_url.rstrip('/')}/auth/login",
             {"username": "demo", "password": "demo"},
@@ -274,6 +420,7 @@ def main() -> int:
             errors.extend(check_tts(base_url, auth))
             errors.extend(check_websocket_translate(base_url, token))
             errors.extend(check_websocket_audio(base_url, token))
+            errors.extend(check_websocket_speaker_session(base_url, token))
 
     if errors:
         print("Local smoke check failed:")

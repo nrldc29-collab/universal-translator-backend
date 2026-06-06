@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup-models verify-local verify-local-live verify-bundled-live run-backend run-frontend start-local
+.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup-models verify-local verify-local-live verify-bundled-live run-backend run-frontend start-local test-translator
 
 backend-test:
 	pytest
@@ -25,6 +25,9 @@ run-frontend:
 
 start-local:
 	bash scripts/start_local.sh
+
+test-translator:
+	bash scripts/test_translator.sh http://127.0.0.1:8000
 
 verify-bundled-live: frontend-build
 	@echo "Starting bundled backend (SERVE_FRONTEND_DIST=1) on port 8001..."

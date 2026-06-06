@@ -109,3 +109,9 @@ class TestSessionRegistry:
         assert len(self.registry.shared_sessions) == 1
         self.registry.cleanup()
         assert len(self.registry.shared_sessions) >= 0
+
+    def test_text_turn_does_not_count_as_active_stream(self):
+        self.registry.resolve_auto_speaker("sess-text", "user1", "device-A", "en", "es", connected=False)
+        assert self.registry.active_stream_count("user1") == 0
+        self.registry.resolve_auto_speaker("sess-live", "user1", "device-B", "en", "es", connected=True)
+        assert self.registry.active_stream_count("user1") == 1

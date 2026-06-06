@@ -277,6 +277,7 @@ async def authenticate_websocket(websocket: WebSocket) -> tuple[bool, str]:
 
     allowed, remaining = usage_limiter.check(identity)
     if not allowed:
+        await websocket.accept()
         await websocket.close(code=1008, reason="Quota exceeded.")
         return False, identity
     return True, identity

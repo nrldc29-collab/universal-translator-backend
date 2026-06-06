@@ -751,6 +751,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 request.source_language,
                 request.target_language,
                 request.speaker_name,
+                connected=False,
             )
             shared_session = session_registry.record_turn(
                 request.session_id,
