@@ -146,6 +146,41 @@ def check_languages(base_url: str) -> list[str]:
     return errors
 
 
+def check_app_shell(base_url: str) -> list[str]:
+    errors: list[str] = []
+    url = base_url.rstrip("/") + "/"
+    try:
+        request = urllib.request.Request(url, headers={"Accept": "text/html"})
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        errors.append(f"app shell check failed ({url}): {exc}")
+        return errors
+    lowered = body.lower()
+    if "anai translator" not in lowered and 'id="root"' not in lowered:
+        errors.append("root URL did not return the Anai Translator app shell")
+    return errors
+
+
+def check_ready_details(base_url: str) -> list[str]:
+    errors: list[str] = []
+    url = f"{base_url.rstrip('/')}/ready"
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        errors.append(f"ready check failed ({url}): {exc}")
+        return errors
+    if not payload.get("ready"):
+        blockers = payload.get("blockers") or payload.get("readiness", {}).get("blockers") or []
+        errors.append(f"/ready not ready: {blockers or payload.get('status')}")
+        return errors
+    models = payload.get("models") or {}
+    if models.get("translation_backend") not in {"marian", "hybrid", "lightweight"}:
+        errors.append(f"/ready missing translation backend metadata: {models}")
+    return errors
+
+
 async def _ws_translate_roundtrip(base_url: str, token: str) -> list[str]:
     import websockets
 
@@ -223,7 +258,9 @@ def main() -> int:
     base_url = sys.argv[1] if len(sys.argv) > 1 else ""
     if base_url:
         errors.extend(check_health(base_url))
+        errors.extend(check_ready_details(base_url))
         errors.extend(check_languages(base_url))
+        errors.extend(check_app_shell(base_url))
         login_status, login_payload = _post_json(
             f"{base_url.rstrip('/')}/auth/login",
             {"username": "demo", "password": "demo"},

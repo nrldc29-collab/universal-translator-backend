@@ -140,7 +140,7 @@ const PIPER_SUPPORTED_LANGS = new Set(['en', 'es']); // languages with local Pip
 const BROWSER_TTS_LANG_MAP = {
   en: 'en-US', es: 'es-MX', fr: 'fr-FR', de: 'de-DE', it: 'it-IT',
   pt: 'pt-BR', ru: 'ru-RU', zh: 'zh-CN', ja: 'ja-JP', ko: 'ko-KR',
-  ar: 'ar-SA', hi: 'hi-IN', ht: 'fr-HT', nl: 'nl-NL',
+  ar: 'ar-SA', hi: 'hi-IN', ht: 'ht-HT', nl: 'nl-NL',
 };
 let browserTtsLastText = '';
 function browserTtsSpeak(text, langCode, speed = 1.0) {

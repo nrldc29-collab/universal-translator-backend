@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup-models verify-local verify-local-live run-backend run-frontend
+.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup-models verify-local verify-local-live verify-bundled-live run-backend run-frontend start-local
 
 backend-test:
 	pytest
@@ -22,6 +22,17 @@ run-backend:
 
 run-frontend:
 	cd frontend && npm run dev
+
+start-local:
+	bash scripts/start_local.sh
+
+verify-bundled-live: frontend-build
+	@echo "Starting bundled backend (SERVE_FRONTEND_DIST=1) on port 8001..."
+	@SERVE_FRONTEND_DIST=1 BACKEND_PORT=8001 $(PYTHON) -m uvicorn backend.api:app --host 127.0.0.1 --port 8001 >logs/bundled-backend.log 2>&1 & echo $$! >logs/bundled-backend.pid
+	@for i in $$(seq 1 60); do curl -sf http://127.0.0.1:8001/health >/dev/null 2>&1 && break; sleep 2; done
+	$(PYTHON) scripts/smoke_local.py http://127.0.0.1:8001 || (kill $$(cat logs/bundled-backend.pid) 2>/dev/null; exit 1)
+	@kill $$(cat logs/bundled-backend.pid) 2>/dev/null || true
+	@rm -f logs/bundled-backend.pid
 
 frontend-build:
 	cd frontend && npm run build
