@@ -767,6 +767,8 @@ def check_tts(base_url: str, auth: dict[str, str]) -> list[str]:
 
 
 def _is_local_smoke_url(base_url: str) -> bool:
+    if os.getenv("SMOKE_REMOTE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return False
     from urllib.parse import urlparse
 
     host = (urlparse(base_url).hostname or "").lower()
