@@ -137,6 +137,9 @@ def _translator_for_request(mode: str | None, provider: str | None):
         return LightweightTranslator()
     if p in ("hybrid",) or m == "balanced":
         return HybridTranslator()
+    if p == "remote":
+        logger.warning("Remote translation provider is disabled; using Marian NMT")
+        return MarianTranslator()
     return None
 
 
@@ -163,6 +166,9 @@ async def lifespan(app_instance: FastAPI):
             username,
             password,
         )
+    bootstrap = railway_bootstrap_status()
+    if bootstrap.get("public_access_ready") is False and bootstrap.get("next_step"):
+        logger.warning("Railway public access not enabled: %s", bootstrap["next_step"])
     config_errors = validate_production_config()
     if config_errors:
         for err in config_errors:

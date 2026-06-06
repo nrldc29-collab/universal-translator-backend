@@ -220,11 +220,13 @@ async def websocket_audio_translation(
     tts_active = False
     partial_tts_active = False
     last_partial_tts_at = 0.0
-    phrase_accumulation_buffer = ""
-    phrase_accumulation_start = 0.0   # when accumulation began (never reset mid-speech)
+    last_partial_clarify_at = 0.0
     PARTIAL_TTS_MIN_INTERVAL = 0.8    # fire at most every 800ms
+    PARTIAL_CLARIFY_COOLDOWN_SECONDS = 8.0
     PARTIAL_TTS_MIN_WORDS = 2         # need at least 2 words before speaking
     PARTIAL_TTS_MAX_WORDS = 15        # cap phrase length
+    phrase_accumulation_buffer = ""
+    phrase_accumulation_start = 0.0   # when accumulation began (never reset mid-speech)
     turn_announced_for_segment = False
     active_speaker_notice_at = 0.0
 
@@ -369,7 +371,7 @@ async def websocket_audio_translation(
         partial_generation: int,
         partial_started_at: float,
     ) -> None:
-        nonlocal partial_text, partial_buffer, partial_tts_text, last_sent_translation, last_active_speaker, tts_active, partial_tts_active
+        nonlocal partial_text, partial_buffer, partial_tts_text, last_sent_translation, last_active_speaker, tts_active, partial_tts_active, last_partial_clarify_at
         upload_dir = Path("models/uploads")
         upload_dir.mkdir(parents=True, exist_ok=True)
         partial_audio_path = upload_dir / f"{uuid4()}-partial{partial_suffix}"
@@ -482,7 +484,10 @@ async def websocket_audio_translation(
             tr_conf = estimate_translation_confidence(partial_buffer, refined_partial)
             conf_score = confidence_engine.evaluate(stt_conf, tr_conf)
             if conf_score < 0.4:
-                await websocket.send_json({"type": "clarify", "message": clarification_for(partial_buffer, detect_ambiguities(partial_buffer)), "stage": "partial_low_confidence"})
+                now = time()
+                if now - last_partial_clarify_at >= PARTIAL_CLARIFY_COOLDOWN_SECONDS:
+                    last_partial_clarify_at = now
+                    await websocket.send_json({"type": "clarify", "message": clarification_for(partial_buffer, detect_ambiguities(partial_buffer)), "stage": "partial_low_confidence"})
             # Adaptive partial update suppression if under heavy load
             allow_partial_updates = latency_engine.total() <= 2.5
             if allow_partial_updates and refined_partial and refined_partial != last_sent_translation:

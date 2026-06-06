@@ -763,11 +763,28 @@ def apply_railway_production_defaults() -> list[str]:
 
 
 def railway_bootstrap_status() -> dict:
-    return {
+    status = {
         "active": bool(railway_bootstrap_applied),
         "fields": list(railway_bootstrap_applied),
         "public_domain": _railway_public_domain(),
     }
+    if is_production() and _is_railway_runtime():
+        domain = _railway_public_domain()
+        token_configured = bool(_railway_api_token())
+        status["public_access_ready"] = bool(domain)
+        status["domain_token_configured"] = token_configured
+        if not domain:
+            if token_configured:
+                status["next_step"] = (
+                    "RAILWAY_TOKEN is set but no public domain was provisioned — "
+                    "check deploy logs for Railway GraphQL errors, then redeploy."
+                )
+            else:
+                status["next_step"] = (
+                    "Add RAILWAY_TOKEN to Railway Variables and redeploy, or use "
+                    "Service → Settings → Networking → Generate Domain."
+                )
+    return status
 
 
 def validate_production_config() -> list[str]:
@@ -804,6 +821,11 @@ def validate_production_config() -> list[str]:
         errors.append(
             f"ALLOWED_ORIGINS contains placeholder domain(s): {placeholder_origins}. "
             "Set your actual deployed frontend origin(s)."
+        )
+
+    if get_hybrid_enable_remote():
+        errors.append(
+            "HYBRID_ENABLE_REMOTE is enabled — cloud translation fallback must stay off in production."
         )
 
     return errors

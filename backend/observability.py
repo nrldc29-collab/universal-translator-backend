@@ -6,6 +6,14 @@ from time import time
 
 
 class Observability:
+    _SENSITIVE_TEXT_FIELDS = frozenset({
+        "source_text",
+        "translated_text",
+        "text",
+        "partial_text",
+        "transcript",
+    })
+
     def __init__(self):
         self.events_path = Path(os.getenv("EVENT_LOG_PATH", "logs/events.jsonl"))
         self.events_path.parent.mkdir(parents=True, exist_ok=True)
@@ -23,8 +31,22 @@ class Observability:
         self.latencies = {}
         self._lock = RLock()
 
+    def _sanitize_fields(self, fields: dict) -> dict:
+        sanitized = dict(fields)
+        for key, value in list(sanitized.items()):
+            if key not in self._SENSITIVE_TEXT_FIELDS or not isinstance(value, str):
+                continue
+            text = value.strip()
+            if not text:
+                continue
+            if len(text) <= 48:
+                sanitized[key] = text
+            else:
+                sanitized[key] = f"{text[:24]}…({len(text)} chars)"
+        return sanitized
+
     def record_event(self, event_type: str, **fields) -> None:
-        event = {"timestamp": time(), "type": event_type, **fields}
+        event = {"timestamp": time(), "type": event_type, **self._sanitize_fields(fields)}
         try:
             with self._lock:
                 self.events_path.parent.mkdir(parents=True, exist_ok=True)

@@ -250,7 +250,7 @@ function App() {
     conversationBrain, setConversationBrain,
     semanticContext, setSemanticContext,
     brainHintsRef, brainPlanRef,
-    shouldSkipBrainTts, resetBrainRuntimeUi,
+    shouldSkipBrainTts, applyConfidenceSignals, resetBrainRuntimeUi,
   } = useBrainState();
   const reliabilityMonitor = useReliabilityMonitor();
   const lowBandwidthMode = !!settings.lowBandwidthMode;
@@ -810,14 +810,17 @@ function App() {
         setLiveTranslation(data.translated_text || '');
         setClarifyMessage(data.clarify_message || 'Clarification requested');
         setClarifyVisible(true);
-      } else if (data.low_confidence && data.confidence_message) {
-        setConfidenceWarningVisible(true);
-        setConfidenceWarningMessage(data.confidence_message);
-        setStatus(data.confidence_message);
       } else {
-        setStatus(brainUpdate?.message || 'Text translated');
-        if (settings.ttsVoice === 'browser' && data.translated_text && liveTarget !== 'ht') {
-          browserTtsSpeak(data.translated_text, liveTarget, settings.ttsSpeed ?? 1.0);
+        applyConfidenceSignals(data);
+        if (data.low_confidence && data.confidence_message) {
+          setStatus(data.confidence_message);
+        } else if (data.needs_confirmation) {
+          setStatus(data.confidence_message || 'Human confirmation recommended');
+        } else {
+          setStatus(brainUpdate?.message || 'Text translated');
+          if (settings.ttsVoice === 'browser' && data.translated_text && liveTarget !== 'ht') {
+            browserTtsSpeak(data.translated_text, liveTarget, settings.ttsSpeed ?? 1.0);
+          }
         }
       }
     } catch (error) {
@@ -1708,6 +1711,7 @@ function App() {
         setClarifyVisible(true);
         return;
       }
+      applyConfidenceSignals(data);
       setResult(data);
       setStatus(brainUpdate?.message || (data.translated_text ? (data.audio_base64 ? 'Playing...' : 'Audio translated') : 'No clear speech recognized'));
       if (shouldSkipBrainTts(data)) {
@@ -1945,8 +1949,14 @@ function App() {
       if (data.type === 'confidence_warning') {
         setPipelineStage('Verify translation');
         setStatus(data.message || 'Low confidence translation');
-        setConfidenceWarningVisible(true);
-        setConfidenceWarningMessage(data.message || 'Verify this translation with a human before acting on it.');
+        applyConfidenceSignals({
+          low_confidence: true,
+          needs_confirmation: Boolean(data.needs_confirmation),
+          confidence_message: data.message,
+        });
+      }
+      if (data.type === 'checkpoint' || data.type === 'final') {
+        applyConfidenceSignals(data);
       }
       if (data.type === 'stage') {
         setPipelineStage(data.message);
