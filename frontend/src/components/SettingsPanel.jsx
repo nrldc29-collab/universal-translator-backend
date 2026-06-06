@@ -585,6 +585,7 @@ function SectionAdvanced({
             {selfTest.htReverseTranslation !== '-' ? ` · HT→EN: ${selfTest.htReverseTranslation}` : ''}
             {selfTest.htTts !== '-' ? ` · HT TTS: ${selfTest.htTts}` : ''}
             {selfTest.liveText !== '-' ? ` · Live text: ${selfTest.liveText}` : ''}
+            {selfTest.sttOnly !== '-' ? ` · STT-only: ${selfTest.sttOnly}` : ''}
             {selfTest.websocket !== '-' ? ` · WebSocket: ${selfTest.websocket}` : ''}
           </span>
         </div>

@@ -147,7 +147,7 @@ function browserTtsSpeak(text, langCode, speed = 1.0, onEnd = null) {
     onEnd = speed;
     speed = 1.0;
   }
-  if (!window.speechSynthesis || !text || text === browserTtsLastText) {
+  if (!window.speechSynthesis || !text || text === browserTtsLastText || langCode === 'ht') {
     onEnd?.();
     return;
   }
@@ -2086,12 +2086,12 @@ function App() {
                 && settings.ttsVoice !== 'browser';
               const textToSpeak = streamTranslationRef.current;
               if (textToSpeak && !lowBandwidthMode && !backendOwnsTts && !firstAudioSeenRef.current) {
-                fetchTranslationVoice(textToSpeak, targetLanguage, authToken)
+                fetchTranslationVoice(textToSpeak, voiceLang, authToken)
                   .then(async (voice) => {
                     if (voice && await playEmbeddedTranslationAudio(voice)) return;
-                    if (settings.ttsVoice === 'browser' || !BACKEND_TTS_LANGS.has(targetLanguage)) {
+                    if (settings.ttsVoice === 'browser' || !BACKEND_TTS_LANGS.has(voiceLang)) {
                       pauseBrowserSpeechForTts();
-                      browserTtsSpeak(textToSpeak, targetLanguage, settings.ttsSpeed ?? 1.0, () => resumeBrowserSpeechAfterTts());
+                      browserTtsSpeak(textToSpeak, voiceLang, settings.ttsSpeed ?? 1.0, () => resumeBrowserSpeechAfterTts());
                     }
                   })
                   .catch(() => {});

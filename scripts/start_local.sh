@@ -33,6 +33,7 @@ export PRELOAD_MODELS="${PRELOAD_MODELS:-1}"
 export HYBRID_ENABLE_REMOTE="${HYBRID_ENABLE_REMOTE:-0}"
 export PREFER_CLOUD_TTS="${PREFER_CLOUD_TTS:-0}"
 export PARTIAL_TTS_MODE="${PARTIAL_TTS_MODE:-true}"
+export QUOTA_REQUESTS_PER_HOUR="${QUOTA_REQUESTS_PER_HOUR:-500}"
 export MAX_ACTIVE_STREAMS_PER_USER="${MAX_ACTIVE_STREAMS_PER_USER:-5}"
 if [[ "${MAX_ACTIVE_STREAMS_PER_USER}" -lt 5 ]]; then
   export MAX_ACTIVE_STREAMS_PER_USER=5
@@ -126,7 +127,14 @@ fi
 
 if ! port_open "$BACKEND_PORT"; then
   echo "Starting backend on port ${BACKEND_PORT}..."
-  nohup "$PYTHON" -m uvicorn backend.api:app --host 0.0.0.0 --port "$BACKEND_PORT" \
+  nohup env \
+    REQUESTS_PER_MINUTE="${REQUESTS_PER_MINUTE}" \
+    QUOTA_REQUESTS_PER_HOUR="${QUOTA_REQUESTS_PER_HOUR:-500}" \
+    MAX_ACTIVE_STREAMS_PER_USER="${MAX_ACTIVE_STREAMS_PER_USER}" \
+    STT_PROVIDER="${STT_PROVIDER}" \
+    TRANSLATION_BACKEND="${TRANSLATION_BACKEND}" \
+    PARTIAL_TTS_MODE="${PARTIAL_TTS_MODE}" \
+    "$PYTHON" -m uvicorn backend.api:app --host 0.0.0.0 --port "$BACKEND_PORT" \
     >"$ROOT/logs/backend.out.log" 2>"$ROOT/logs/backend.err.log" &
 fi
 

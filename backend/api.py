@@ -983,11 +983,16 @@ async def translate_image(
         ocr_text = pytesseract.image_to_string(Image.open(image_path)) or ""
         if source_language == "auto":
             source_language = detect_language_heuristic(ocr_text)
+        active_source, active_target = resolve_active_languages_in_pair(
+            ocr_text,
+            source_language,
+            target_language,
+        )
         # Translate (no synth), then optional TTS synth
         interim = pipeline.translate_text(
             text=ocr_text,
-            source_language=source_language,
-            target_language=target_language,
+            source_language=active_source,
+            target_language=active_target,
             tone=None,
             synthesize_audio=False,
         )
@@ -996,7 +1001,7 @@ async def translate_image(
         audio_path = None
         audio_b64 = None
         if synthesize_audio and final_text:
-            audio_path = pipeline.tts.synthesize(final_text, f"models/tts/{uuid4()}.wav", language=target_language)
+            audio_path = pipeline.tts.synthesize(final_text, f"models/tts/{uuid4()}.wav", language=active_target)
             try:
                 audio_bytes = Path(audio_path).read_bytes()
                 if len(audio_bytes) >= 100:
@@ -1005,7 +1010,7 @@ async def translate_image(
                 logger.warning("tts_audio_read_failed identity=%s error=%s", identity, exc)
         # Store in memory under virtual speaker CAM
         memory.add("CAM", ocr_text, final_text)
-        speaker_memory.register("CAM", language=source_language)
+        speaker_memory.register("CAM", language=active_source)
         speaker_memory.add_message("CAM", ocr_text)
         # Update profile history
         user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "image", "source": ocr_text, "translated": final_text}]

@@ -26,7 +26,7 @@ const detectLanguage = detectLanguagePair;
 
 // ─── Browser TTS ─────────────────────────────────────────────────────────
 function speakBrowser(text, lang, { onEnd } = {}) {
-  if (!window.speechSynthesis || !text) { onEnd?.(); return () => {}; }
+  if (!window.speechSynthesis || !text || lang === 'ht') { onEnd?.(); return () => {}; }
   window.speechSynthesis.cancel();
   const utt = new SpeechSynthesisUtterance(text);
   utt.lang = BROWSER_TTS_MAP[lang] || 'en-US';
@@ -371,8 +371,9 @@ export function useAutoConversation({
           clearTimeout(audioFallbackTimer);
           clearUtteranceTimeout();
           if (ttsCompleted) return;
+          const activeTarget = frame.target_language || outboundTargetLang;
           const backendOwnsTts = frame.source === 'browser_live_text'
-            && BACKEND_TTS_LANGS.has(outboundTargetLang);
+            && BACKEND_TTS_LANGS.has(activeTarget);
           if (backendOwnsTts) {
             receivedTtsChunks = 0;
             audioFallbackTimer = window.setTimeout(() => {
@@ -382,11 +383,11 @@ export function useAutoConversation({
             }, 2500);
             return;
           }
-          if (text && !BACKEND_TTS_LANGS.has(outboundTargetLang)) {
+          if (text && !BACKEND_TTS_LANGS.has(activeTarget)) {
             clearTimeout(timerRef.current);
             clearTimeout(dir === 'AB' ? ttsTimerBARef.current : ttsTimerRef.current);
             setPhaseR('speaking');
-            speakBrowser(text, outboundTargetLang, {
+            speakBrowser(text, activeTarget, {
               onEnd: () => afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B'),
             });
           }

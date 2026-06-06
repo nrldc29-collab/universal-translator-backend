@@ -20,6 +20,7 @@ const INITIAL = {
   htReverseTranslation: '-',
   htTts: '-',
   liveText: '-',
+  sttOnly: '-',
   websocket: '-',
   message: 'Not run yet',
 };
@@ -97,6 +98,58 @@ function testHtTts(apiUrl, authToken) {
       throw new Error('HT TTS returned empty audio');
     }
     return 'ok';
+  });
+}
+
+function testSttOnlySocket(wsAudioUrl, authToken) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(withAuthToken(wsAudioUrl, authToken));
+    let started = false;
+    const timeout = window.setTimeout(() => {
+      socket.close();
+      reject(new Error('stt_only socket timed out'));
+    }, 15000);
+
+    socket.onmessage = (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (data.type === 'error') {
+        window.clearTimeout(timeout);
+        socket.close();
+        reject(new Error(data.message || 'stt_only error'));
+        return;
+      }
+      if (data.type === 'ready' && !started) {
+        started = true;
+        socket.send(JSON.stringify({
+          type: 'start',
+          source_language: 'en',
+          target_language: 'ht',
+          speaker_mode: 'auto',
+          speaker: 'auto',
+          device_id: 'self-test-stt-only',
+          stt_only: true,
+          mime_type: 'audio/webm;codecs=opus',
+        }));
+        return;
+      }
+      if (data.type === 'listening') {
+        const msg = String(data.message || '').toLowerCase();
+        if (msg.includes('transcription')) {
+          window.clearTimeout(timeout);
+          socket.close();
+          resolve('ok');
+        }
+      }
+    };
+    socket.onerror = () => {
+      window.clearTimeout(timeout);
+      reject(new Error('stt_only socket failed'));
+    };
   });
 }
 
@@ -179,6 +232,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
         htReverseTranslation: '-',
         htTts: '-',
         liveText: '-',
+        sttOnly: '-',
         websocket: '-',
         message,
       });
@@ -193,6 +247,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       htReverseTranslation: 'checking',
       htTts: 'checking',
       liveText: 'checking',
+      sttOnly: 'checking',
       websocket: 'checking',
       message: 'Running checks...',
     });
@@ -205,6 +260,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       htReverseTranslation: '-',
       htTts: '-',
       liveText: '-',
+      sttOnly: '-',
       websocket: '-',
       message: 'Self-test passed',
     };
@@ -296,6 +352,13 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       }
 
       try {
+        next.sttOnly = await testSttOnlySocket(wsAudioUrl, authToken);
+      } catch (error) {
+        next.sttOnly = 'failed';
+        failures.push(error.message || 'stt_only socket test failed');
+      }
+
+      try {
         next.liveText = await testLiveTextSocket(wsAudioUrl, authToken);
       } catch (error) {
         next.liveText = 'failed';
@@ -307,6 +370,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       next.htReverseTranslation = 'failed';
       next.htTts = 'failed';
       next.liveText = 'failed';
+      next.sttOnly = 'failed';
       next.websocket = 'failed';
     }
 
