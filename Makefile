@@ -66,5 +66,5 @@ release-ready: validate verify-all preflight-deploy
 	@echo "Release-ready: all local and production preflight checks passed."
 
 smoke-production:
-	@test -n "$(URL)" || (echo "Usage: make smoke-production URL=https://YOUR-SERVICE.up.railway.app" >&2; exit 1)
-	$(PYTHON) scripts/smoke_local.py "$(URL)"
+	@test -n "$(URL)" || (echo "Usage: make smoke-production URL=https://YOUR-SERVICE.up.railway.app [USERS=user:pass]" >&2; exit 1)
+	USERS="$(USERS)" $(PYTHON) scripts/smoke_local.py "$(URL)"

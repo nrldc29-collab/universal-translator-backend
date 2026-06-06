@@ -158,8 +158,36 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Build Railway Docker image
         run: docker build -f Dockerfile -t anai-translator:ci .
+      - name: Smoke test production container
+        run: |
+          JWT=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+          docker run -d --name anai-smoke -p 18000:8000 \
+            -e ENVIRONMENT=production \
+            -e JWT_SECRET="$JWT" \
+            -e USERS=smoke:smokepass \
+            -e ALLOWED_ORIGINS=http://127.0.0.1:18000 \
+            anai-translator:ci
+          ready=0
+          for i in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:18000/health | python -c "import sys,json; d=json.load(sys.stdin); sys.exit(0 if d.get('ready') else 1)"; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker logs anai-smoke | tail -200
+            docker rm -f anai-smoke
+            exit 1
+          fi
+          python -m pip install websockets
+          USERS=smoke:smokepass python scripts/smoke_local.py http://127.0.0.1:18000
+          docker rm -f anai-smoke
