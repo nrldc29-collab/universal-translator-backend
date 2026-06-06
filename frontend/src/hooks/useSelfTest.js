@@ -11,7 +11,7 @@
 
 import { useCallback, useState } from 'react';
 
-import { authHeaders, responseErrorMessage, withAuthToken } from '../utils';
+import { authHeaders, htTranslationHasGlossaryTerms, responseErrorMessage, withAuthToken } from '../utils';
 
 const INITIAL = {
   status: 'idle',
@@ -152,8 +152,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
           },
           'HT translation test',
         );
-        const lower = htText.toLowerCase();
-        if (!('èd' in lower || 'ed' in lower || 'bezwen' in lower)) {
+        if (!htTranslationHasGlossaryTerms(htText)) {
           throw new Error(`HT translation missing expected glossary terms: ${htText}`);
         }
         next.htTranslation = htText;

@@ -1926,7 +1926,10 @@ function App() {
         setLiveTranslation(data.text);
         setPipelineStage('Translation ready');
         const voiceLang = speechLastLiveTargetRef.current || targetLanguage;
-        if (data.final && data.text && !lowBandwidthMode) {
+        const backendOwnsTts = data.source === 'browser_live_text'
+          && BACKEND_TTS_LANGS.has(voiceLang)
+          && settings.ttsVoice !== 'browser';
+        if (data.final && data.text && !lowBandwidthMode && !backendOwnsTts) {
           window.setTimeout(async () => {
             if (ttsPlayingRef.current || ttsQueueRef.current.length > 0) return;
             const voice = await fetchTranslationVoice(data.text, voiceLang, authToken);
@@ -1940,7 +1943,7 @@ function App() {
         // has no voice for this language (avoids needing Google TTS API key)
         const useBrowserTts = settings.ttsVoice === 'browser' ||
           (settings.partialTts !== false && !BACKEND_TTS_LANGS.has(voiceLang));
-        if (useBrowserTts && data.text && !data.final && !ttsPlayingRef.current) {
+        if (useBrowserTts && data.text && !data.final && !ttsPlayingRef.current && data.source !== 'browser_live_text') {
           browserTtsSpeak(data.text, voiceLang, settings.ttsSpeed ?? 1.0);
         }
       }
@@ -1973,12 +1976,8 @@ function App() {
       }
       if (data.type === 'tts_audio_chunk') {
         if (data.partial) {
-          // If already playing, skip this chunk -- interrupting mid-word causes choppiness.
-          // When idle, play immediately for the smoothest experience.
-          if (!ttsPlayingRef.current) {
-            ensureAudioUnlocked().catch((e) => console.warn('partial TTS unlock failed:', e));
-            enqueueTtsChunk(data.audio_base64, data.mime_type);
-          }
+          ensureAudioUnlocked().catch((e) => console.warn('partial TTS unlock failed:', e));
+          enqueueTtsChunk(data.audio_base64, data.mime_type);
           return;
         }
         if (shouldSkipBrainTts(data)) {
@@ -2034,6 +2033,7 @@ function App() {
               // Nothing played — update UI to reflect completion
               setPlaying(false);
               setTtsPlaying(false);
+              resumeBrowserSpeechAfterTts();
               if (shouldKeepContinuousStream(socket)) {
                 setPipelineStage('Listening');
                 setStatus('Listening for the next speaker...');
@@ -2050,6 +2050,7 @@ function App() {
                 debugLog('All chunks played');
                 setPlaying(false);
                 setTtsPlaying(false);
+                resumeBrowserSpeechAfterTts();
                 if (shouldKeepContinuousStream(socket)) {
                   setPipelineStage('Listening');
                   setStatus('Listening for the next speaker...');
@@ -2125,6 +2126,12 @@ function App() {
         if (data.translated_text) {
           streamTranslationRef.current = data.translated_text;
           setLiveTranslation(data.translated_text);
+        }
+        if (data.source === 'browser_live_text') {
+          speechFinalTextRef.current = '';
+          speechInterimTextRef.current = '';
+          speechLastSentTextRef.current = '';
+          setPartialTranscript('');
         }
         if (data.session) {
           applySharedSession(data.session);

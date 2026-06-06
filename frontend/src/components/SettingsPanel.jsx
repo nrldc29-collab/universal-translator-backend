@@ -580,7 +580,8 @@ function SectionAdvanced({
           {selfTest.status === 'online' ? <Check size={13} /> : <AlertTriangle size={13} />}
           <span>
             {selfTest.message}
-            {selfTest.translation !== '-' ? ` · Translation: ${selfTest.translation}` : ''}
+            {selfTest.translation !== '-' ? ` · ES: ${selfTest.translation}` : ''}
+            {selfTest.htTranslation !== '-' ? ` · HT: ${selfTest.htTranslation}` : ''}
             {selfTest.websocket !== '-' ? ` · WebSocket: ${selfTest.websocket}` : ''}
           </span>
         </div>

@@ -563,6 +563,8 @@ async def websocket_audio_translation(
         refined = refine_translation(text_value, raw_translation, memory.get_context(), speaker_memory.get_context(live_speaker))
         if not refined:
             return
+        if payload_revision != live_text_revision:
+            return
 
         if refined != last_sent_translation:
             last_sent_translation = refined
@@ -587,6 +589,8 @@ async def websocket_audio_translation(
 
         async def emit_live_tts(live_tts_to_speak: str, *, partial: bool) -> bool:
             nonlocal partial_tts_text, last_partial_tts_at, partial_tts_active
+            if payload_revision != live_text_revision:
+                return False
             if not live_tts_to_speak or not is_speakable_live_delta(live_tts_to_speak):
                 return False
             live_tts_path = None
@@ -672,6 +676,51 @@ async def websocket_audio_translation(
             phrase_accumulation_start = 0.0
             if tts_playback_text:
                 await emit_live_tts(tts_playback_text, partial=False)
+            if payload_revision != live_text_revision:
+                return
+            memory.add(live_speaker, text_value, refined, {"source": "browser_live_text"})
+            speaker_memory.add_message(live_speaker, text_value)
+            shared_session = session_registry.record_turn(
+                session_id,
+                identity,
+                live_speaker,
+                text_value,
+                refined,
+                {},
+                device_id=device_id,
+                speaker_label=live_speaker_label,
+            )
+            result = TranslationResult(
+                source_text=text_value,
+                improved_text=text_value,
+                translated_text=refined,
+                audio_output_path=None,
+            )
+            await websocket.send_json({"type": "session_sync", "session": shared_session})
+            await websocket.send_json({
+                "type": "final",
+                "speaker": live_speaker,
+                "speaker_label": live_speaker_label,
+                "speaker_index": speaker_index,
+                "device_id": device_id,
+                "detection": speaker_detection,
+                "source": "browser_live_text",
+                "translated_by": "UT",
+                "clarify": False,
+                "session": shared_session,
+                **result.__dict__,
+            })
+            complete_decision = conversation_brain.end_turn(live_speaker)
+            await websocket.send_json({
+                "type": "turn",
+                "speaker": live_speaker,
+                "speaker_label": live_speaker_label,
+                "allowed": complete_decision.allowed,
+                "reason": complete_decision.reason,
+                "behavior": complete_decision.behavior,
+                "active_speaker": complete_decision.active_speaker,
+                "playback_owner": complete_decision.playback_owner,
+            })
             return
 
         live_tts_delta = live_translation_delta(partial_tts_text, refined)

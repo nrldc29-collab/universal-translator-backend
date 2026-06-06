@@ -974,3 +974,8 @@ export function buildTranslatePayload({
   if (googleTtsApiKey) body.google_tts_api_key = googleTtsApiKey;
   return body;
 }
+
+export function htTranslationHasGlossaryTerms(text) {
+  const lower = String(text || '').toLowerCase();
+  return lower.includes('èd') || lower.includes('ed') || lower.includes('bezwen');
+}

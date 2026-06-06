@@ -505,6 +505,7 @@ async def _ws_live_text_ht(base_url: str, token: str) -> list[str]:
             }))
             saw_translation = False
             saw_final_tts = False
+            saw_final = False
             for _ in range(40):
                 message = json.loads(await asyncio.wait_for(ws.recv(), timeout=30))
                 if message.get("type") == "error":
@@ -513,11 +514,16 @@ async def _ws_live_text_ht(base_url: str, token: str) -> list[str]:
                     text = str(message.get("text") or "").lower()
                     if "èd" in text or "ed" in text or "bezwen" in text:
                         saw_translation = True
+                if message.get("type") == "final" and message.get("source") == "browser_live_text":
+                    saw_final = True
                 if message.get("type") == "tts_end" and not message.get("partial"):
                     saw_final_tts = True
+                if saw_final and saw_final_tts:
                     break
             if not saw_translation:
                 return ["ws/live_text en->ht returned no Creole translation"]
+            if not saw_final:
+                return ["ws/live_text en->ht missing final turn frame"]
             if not saw_final_tts:
                 return ["ws/live_text en->ht missing final tts_end"]
     except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError) as exc:

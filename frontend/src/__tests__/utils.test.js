@@ -9,6 +9,7 @@ import {
   isFatalStreamError,
   speechRecognitionLanguage,
   detectLanguagePair,
+  htTranslationHasGlossaryTerms,
   audioFileExtension,
   withAuthToken,
   summarizeLatencyHistory,
@@ -229,6 +230,23 @@ describe('detectLanguagePair', () => {
 
   it('keeps last language on ambiguous short text', () => {
     expect(detectLanguagePair('ok', 'en', 'ht', 'ht')).toBe('ht');
+  });
+});
+
+// ---------- htTranslationHasGlossaryTerms ----------
+
+describe('htTranslationHasGlossaryTerms', () => {
+  it('matches Creole glossary output', () => {
+    expect(htTranslationHasGlossaryTerms('Mwen bezwen èd')).toBe(true);
+    expect(htTranslationHasGlossaryTerms('Mwen bezwen ed')).toBe(true);
+  });
+
+  it('rejects unrelated text', () => {
+    expect(htTranslationHasGlossaryTerms('Bonjou')).toBe(false);
+  });
+
+  it('does not treat string indices as glossary hits', () => {
+    expect(htTranslationHasGlossaryTerms('abc')).toBe(false);
   });
 });
 
