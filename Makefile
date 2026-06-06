@@ -37,7 +37,7 @@ test-translator:
 
 verify-bundled-live: frontend-build
 	@echo "Starting bundled backend (SERVE_FRONTEND_DIST=1) on port 8001..."
-	@SERVE_FRONTEND_DIST=1 BACKEND_PORT=8001 PARTIAL_TTS_MODE=1 REQUESTS_PER_MINUTE=120 MAX_ACTIVE_STREAMS_PER_USER=5 $(PYTHON) -m uvicorn backend.api:app --host 127.0.0.1 --port 8001 >logs/bundled-backend.log 2>&1 & echo $$! >logs/bundled-backend.pid
+	@SERVE_FRONTEND_DIST=1 BACKEND_PORT=8001 PARTIAL_TTS_MODE=1 REQUESTS_PER_MINUTE=120 QUOTA_REQUESTS_PER_HOUR=500 MAX_ACTIVE_STREAMS_PER_USER=5 $(PYTHON) -m uvicorn backend.api:app --host 127.0.0.1 --port 8001 >logs/bundled-backend.log 2>&1 & echo $$! >logs/bundled-backend.pid
 	@for i in $$(seq 1 60); do curl -sf http://127.0.0.1:8001/health >/dev/null 2>&1 && break; sleep 2; done
 	$(PYTHON) scripts/smoke_local.py http://127.0.0.1:8001 || (kill $$(cat logs/bundled-backend.pid) 2>/dev/null; exit 1)
 	@kill $$(cat logs/bundled-backend.pid) 2>/dev/null || true

@@ -24,6 +24,8 @@ Build a local pipeline that can:
 - Convert translated text into natural speech
 - Run locally or on your own server without API dependency
 
+The default product path is **English ↔ Haitian Creole (EN↔HT)**: first-run UI defaults to `en → ht`, backend Whisper auto-detects which side was spoken, and translation direction flips automatically.
+
 The **NAIA Assistant** (bundled in `naia/`) provides an in-app conversational AI that can rephrase translations, explain idioms, and answer language questions. It is optional — the translator works fully without it, and the backend returns HTTP 503 for assistant endpoints when the naia kernel is unavailable.
 
 ## Architecture
@@ -341,7 +343,7 @@ ws://127.0.0.1:8000/ws/audio
 Audio WebSocket flow:
 
 ```text
-Client JSON: {"type":"start","source_language":"en","target_language":"es"}
+Client JSON: {"type":"start","source_language":"en","target_language":"ht"}
 Client binary: WebM audio chunks
 Server: Silero VAD checks incoming chunks
 Server JSON: {"type":"vad","speech_detected":true}

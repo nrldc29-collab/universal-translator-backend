@@ -342,6 +342,8 @@ def check_self_test_bundle(base_url: str) -> list[str]:
         if status != 200:
             continue
         if re.search(r"Run Self Test|Self Test|runSelfTest", bundle_body):
+            if not re.search(r"conv-waveform|neo-mode-btn", bundle_body):
+                errors.append("frontend bundle is missing conversation mode UI")
             return errors
     errors.append("frontend bundle is missing the browser self-test UI")
     return errors

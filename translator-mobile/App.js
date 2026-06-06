@@ -324,7 +324,9 @@ export default function App() {
     setResult, isPlayingTtsRef, setIsPlayingTts,
   });
 
+  const activeSourceLabel = TARGET_LANGUAGES.find((language) => language.code === sourceLanguage)?.label || sourceLanguage.toUpperCase();
   const activeTargetLabel = TARGET_LANGUAGES.find((language) => language.code === targetLanguage)?.label || targetLanguage.toUpperCase();
+  const heroDirection = `${activeSourceLabel} ↔ ${activeTargetLabel}`;
   const primaryActionLabel = isStreaming ? "Stop Live Voice" : "Start Live Voice";
   const primaryActionDisabled = !isConnected || isPlayingTts;
 
@@ -351,7 +353,7 @@ export default function App() {
         </View>
         <Text style={styles.heroKicker}>{isConnected ? "Backend linked" : "Connect backend"}</Text>
         <Text style={styles.heroTitle}>{isStreaming ? "Listening live" : isPlayingTts ? "Speaking translation" : "Ready to interpret"}</Text>
-        <Text style={styles.heroSubtitle}>English → {activeTargetLabel}</Text>
+        <Text style={styles.heroSubtitle}>{heroDirection}</Text>
         <ActionButton
           title={primaryActionLabel}
           onPress={toggleStreaming}

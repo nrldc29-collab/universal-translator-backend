@@ -1835,6 +1835,8 @@ async def websocket_streaming_stt_translation(
                 "final": True,
                 "confidence": assessment["confidence"],
                 "low_confidence": assessment["low_confidence"],
+                "source_language": active_src,
+                "target_language": active_tgt,
             }
             if live_text_source:
                 live_payload["source"] = "browser_live_text"
@@ -1917,6 +1919,8 @@ async def websocket_streaming_stt_translation(
             "speaker_index": speaker_index,
             "device_id": device_id,
             "detection": speaker_detection,
+            "source_language": active_src,
+            "target_language": active_tgt,
             "semantic_context": semantic_context,
             "cip_decision": cip_decision,
             "cip_analysis": cip.get("analysis") if isinstance(cip, dict) else None,
