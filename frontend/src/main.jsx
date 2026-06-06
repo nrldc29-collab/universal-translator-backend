@@ -532,7 +532,7 @@ function App() {
     streamStartedAtRef, streamRecordingStartedAtRef, firstAudioSeenRef,
     streamReconnectRef, streamSafetyTimeoutRef, resumeAfterTtsRef,
   } = useStreamRefs();
-  const { streamHeartbeatRef, clearStreamHeartbeat, markStreamPong, startStreamHeartbeat } = useStreamHeartbeat({ socketRef, setConnectionStatus, setPipelineStage, setStatus });
+  const { streamHeartbeatRef, clearStreamHeartbeat, markStreamPong, startStreamHeartbeat } = useStreamHeartbeat({ socketRef, setPipelineStage, setStatus });
   const { holdToTalkTimerRef, holdToTalkActiveRef, holdToTalkReleasePendingRef, ignoreNextMicClickRef } = useHoldToTalk();
   const { audioSendQueueRef, sendAudioPacket, queueAudioPacket, flushAudioSendQueue, drainQueue: drainAudioSendQueue } = useAudioSendQueue({ debugLog });
   const { requestWakeLock, releaseWakeLock } = useWakeLock();
@@ -727,17 +727,32 @@ function App() {
     setStatus('Translating text...');
     resetBrainRuntimeUi();
     try {
-      const response = await fetch(`${liveApiUrl}/translate/text`, {
-        method: 'POST',
-        headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify(buildTranslatePayload({
-          text: textToSend,
-          sourceLanguage, targetLanguage, sessionId,
-          deviceId: INITIAL_DEVICE_ID, speakerName: INITIAL_SPEAKER_NAME, speakerMode,
-          translationMode: settings.translationMode, translationProvider: settings.translationProvider,
-          googleTtsApiKey: settings.googleTtsApiKey || undefined,
-        })),
+      let activeAuthToken = await ensureAuthToken();
+      if (!activeAuthToken) {
+        setStatus('Login required');
+        return;
+      }
+      const payload = buildTranslatePayload({
+        text: textToSend,
+        sourceLanguage, targetLanguage, sessionId,
+        deviceId: INITIAL_DEVICE_ID, speakerName: INITIAL_SPEAKER_NAME, speakerMode,
+        translationMode: settings.translationMode, translationProvider: settings.translationProvider,
+        googleTtsApiKey: settings.googleTtsApiKey || undefined,
       });
+      let response = await fetch(`${liveApiUrl}/translate/text`, {
+        method: 'POST',
+        headers: authHeaders(activeAuthToken, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload),
+      });
+      if (response.status === 401) {
+        activeAuthToken = await ensureAuthToken({ force: true });
+        if (!activeAuthToken) throw new Error('Login required');
+        response = await fetch(`${liveApiUrl}/translate/text`, {
+          method: 'POST',
+          headers: authHeaders(activeAuthToken, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify(payload),
+        });
+      }
       if (!response.ok) throw new Error(await responseErrorMessage(response, 'Text translation failed'));
       const data = await response.json();
       const brainUpdate = applyBrainPayload(data, 'text');
@@ -1675,7 +1690,6 @@ function App() {
         setPipelineStage('Safety reset');
       }, 15000);
       streamFinalizePendingRef.current = false;
-      setConnectionStatus('online');
       setStreaming(true);
       setInstantListening(false);
       setResult(null);

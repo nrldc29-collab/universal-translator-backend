@@ -6,10 +6,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 SKIP_SETUP=0
+RESTART=0
 
 for arg in "$@"; do
   case "$arg" in
     --skip-setup) SKIP_SETUP=1 ;;
+    --restart) RESTART=1 ;;
   esac
 done
 
@@ -56,6 +58,24 @@ finally:
 PY
 }
 
+kill_port() {
+  local port="$1"
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k "${port}/tcp" >/dev/null 2>&1 || true
+  elif command -v lsof >/dev/null 2>&1; then
+    local pids
+    pids="$(lsof -t -i:"${port}" 2>/dev/null || true)"
+    if [[ -n "$pids" ]]; then
+      kill -9 $pids 2>/dev/null || true
+    fi
+  fi
+  sleep 1
+}
+
+backend_health_ok() {
+  curl -sf "http://127.0.0.1:${BACKEND_PORT}/health" >/dev/null 2>&1
+}
+
 wait_ready() {
   for _ in $(seq 1 120); do
     if curl -sf "http://127.0.0.1:${BACKEND_PORT}/health" | "$PYTHON" -c "import json,sys; sys.exit(0 if json.load(sys.stdin).get('ready') else 1)" 2>/dev/null; then
@@ -66,15 +86,42 @@ wait_ready() {
   return 1
 }
 
+if [[ "$RESTART" -eq 1 ]]; then
+  echo "Restart requested — stopping listeners on ${BACKEND_PORT} and ${FRONTEND_PORT}..."
+  kill_port "$BACKEND_PORT"
+  kill_port "$FRONTEND_PORT"
+fi
+
 if [[ "$SKIP_SETUP" -eq 0 ]]; then
   echo "Running local model setup (first run downloads models)..."
-  "$PYTHON" "$ROOT/scripts/setup_models.py"
+  if ! "$PYTHON" "$ROOT/scripts/setup_models.py"; then
+    echo "Model setup failed. Fix errors above or rerun with --skip-setup if models are already present." >&2
+    exit 1
+  fi
+fi
+
+if port_open "$BACKEND_PORT"; then
+  if [[ "$RESTART" -eq 1 ]] || ! backend_health_ok; then
+    echo "Replacing stale backend listener on port ${BACKEND_PORT}..."
+    kill_port "$BACKEND_PORT"
+  else
+    echo "Backend already listening on port ${BACKEND_PORT}"
+  fi
 fi
 
 if ! port_open "$BACKEND_PORT"; then
   echo "Starting backend on port ${BACKEND_PORT}..."
   nohup "$PYTHON" -m uvicorn backend.api:app --host 0.0.0.0 --port "$BACKEND_PORT" \
     >"$ROOT/logs/backend.out.log" 2>"$ROOT/logs/backend.err.log" &
+fi
+
+if port_open "$FRONTEND_PORT"; then
+  if [[ "$RESTART" -eq 1 ]]; then
+    echo "Replacing frontend listener on port ${FRONTEND_PORT}..."
+    kill_port "$FRONTEND_PORT"
+  else
+    echo "Frontend already listening on port ${FRONTEND_PORT}"
+  fi
 fi
 
 if ! port_open "$FRONTEND_PORT"; then

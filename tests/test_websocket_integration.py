@@ -122,9 +122,19 @@ class TestWsTranslate:
 
 
 class TestWsAudio:
-    def test_audio_socket_accepts_connection(self, client):
+    def test_audio_socket_rejects_when_not_ready(self, app_module, client, monkeypatch):
+        monkeypatch.setitem(app_module.runtime_state, "ready", False)
         with client.websocket_connect("/ws/audio") as ws:
-            ws.close()
+            payload = ws.receive_json()
+        assert payload["type"] == "error"
+        assert payload.get("warming") is True
+        assert "LIVE" in payload["message"]
+
+    def test_audio_socket_accepts_when_ready(self, app_module, client, monkeypatch):
+        monkeypatch.setitem(app_module.runtime_state, "ready", True)
+        with client.websocket_connect("/ws/audio") as ws:
+            payload = ws.receive_json()
+        assert payload["type"] == "ready"
 
 
 # ---------------------------------------------------------------------------

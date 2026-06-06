@@ -34,8 +34,14 @@ export function useAuth({ apiUrl, onStatus }) {
     onStatus?.('Logged out');
   }
 
-  async function ensureAuthToken() {
-    if (authToken) return authToken;
+  function clearAuthToken() {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    setAuthToken('');
+  }
+
+  async function ensureAuthToken({ force = false } = {}) {
+    if (authToken && !force) return authToken;
+    if (force) clearAuthToken();
     if (!username.trim() || !password.trim()) return '';
     if (!loginPromiseRef.current) {
       loginPromiseRef.current = login()

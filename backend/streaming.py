@@ -28,6 +28,7 @@ from backend.confidence import (
     clarification_for,
 )
 from backend.communication_brain import detect_domains
+from backend.api_health import runtime_state
 from backend.glossary import get_session_glossary, glossary_coverage_score, glossary_blocks_clarification
 from backend.config import (
     get_client_vad_mode,
@@ -1170,6 +1171,14 @@ async def websocket_audio_translation(
                     continue
 
                 if message_type == "start":
+                    if not runtime_state.get("ready"):
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Models still loading. Wait for LIVE.",
+                            "recoverable": True,
+                            "warming": True,
+                        })
+                        continue
                     previous_session_id = session_id
                     previous_speaker = speaker
                     previous_device_id = device_id
@@ -1704,6 +1713,14 @@ async def websocket_streaming_stt_translation(
                     continue
 
                 if msg_type in {"config", "start"}:
+                    if not runtime_state.get("ready"):
+                        await send_json({
+                            "type": "error",
+                            "message": "Models still loading. Wait for LIVE.",
+                            "recoverable": True,
+                            "warming": True,
+                        })
+                        continue
                     previous_source_language = source_language
                     source_language = data.get("source_language", source_language)
                     target_language = data.get("target_language", target_language)

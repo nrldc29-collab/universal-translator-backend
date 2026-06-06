@@ -24,7 +24,7 @@ export function useConnectionStatus({ apiUrl, pollIntervalMs, onLanguages, onOff
         const data = await r.json();
         if (cancelled) return;
         if (data.ready === false) {
-          setConnectionStatus(Array.isArray(data.blockers) && data.blockers.length ? 'warming' : 'checking');
+          setConnectionStatus('warming');
           return;
         }
         setConnectionStatus('online');

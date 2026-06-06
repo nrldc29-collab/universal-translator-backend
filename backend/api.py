@@ -1278,6 +1278,17 @@ async def websocket_audio(websocket: WebSocket):
     if not ok:
         logger.warning("audio_websocket_auth_rejected identity=%s", identity)
         return
+    if not runtime_state.get("ready"):
+        await websocket.accept()
+        await websocket.send_json({
+            "type": "error",
+            "message": "Models still loading. Wait for LIVE.",
+            "recoverable": True,
+            "warming": True,
+        })
+        await websocket.close(code=1008, reason="Backend warming")
+        logger.info("audio_websocket_warming_rejected identity=%s", identity)
+        return
     metrics["websocket_connections"] += 1
     logger.info("audio_websocket_connected identity=%s", identity)
     try:
@@ -1315,6 +1326,18 @@ async def websocket_audio_streaming(websocket: WebSocket):
 
     if get_stt_provider() != "streaming":
         await websocket.close(code=1008, reason="STT provider is not in streaming mode")
+        return
+
+    if not runtime_state.get("ready"):
+        await websocket.accept()
+        await websocket.send_json({
+            "type": "error",
+            "message": "Models still loading. Wait for LIVE.",
+            "recoverable": True,
+            "warming": True,
+        })
+        await websocket.close(code=1008, reason="Backend warming")
+        logger.info("streaming_stt_websocket_warming_rejected identity=%s", identity)
         return
 
     metrics["websocket_connections"] += 1

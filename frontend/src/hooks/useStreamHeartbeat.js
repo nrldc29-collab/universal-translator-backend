@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { STREAM_HEARTBEAT_MS, STREAM_HEARTBEAT_MAX_MISSES } from '../utils';
 
-export function useStreamHeartbeat({ socketRef, setConnectionStatus, setPipelineStage, setStatus }) {
+export function useStreamHeartbeat({ socketRef, setPipelineStage, setStatus }) {
   const streamHeartbeatRef = useRef({ timer: null, missed: 0 });
 
   function clearStreamHeartbeat() {
@@ -13,7 +13,6 @@ export function useStreamHeartbeat({ socketRef, setConnectionStatus, setPipeline
 
   function markStreamPong() {
     streamHeartbeatRef.current.missed = 0;
-    setConnectionStatus('online');
   }
 
   function startStreamHeartbeat(socket) {
