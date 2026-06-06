@@ -66,8 +66,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-railway.txt ./requirements.txt
-RUN python -m pip install --no-cache-dir --upgrade pip && \
-    python -m pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir uv && \
+    UV_HTTP_TIMEOUT=600 uv pip install --system --no-cache \
+    --index-strategy unsafe-best-match \
+    -r requirements.txt
 
 COPY backend backend/
 COPY llm llm/

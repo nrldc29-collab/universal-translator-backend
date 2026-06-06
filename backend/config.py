@@ -193,7 +193,10 @@ def get_allowed_origin_regex() -> str:
 
 
 def get_backend_host() -> str:
-    return os.getenv("BACKEND_HOST", "127.0.0.1")
+    host = os.getenv("BACKEND_HOST", "").strip()
+    if is_production() and (not host or host in {"127.0.0.1", "localhost"}):
+        return "0.0.0.0"
+    return host or "127.0.0.1"
 
 
 def get_backend_port() -> int:

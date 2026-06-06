@@ -93,3 +93,10 @@ def test_production_defaults_preload_off_when_unset(monkeypatch):
     monkeypatch.delenv("PRELOAD_MODELS", raising=False)
 
     assert config.get_preload_models() is False
+
+
+def test_production_binds_all_interfaces_when_host_loopback(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("BACKEND_HOST", "127.0.0.1")
+
+    assert config.get_backend_host() == "0.0.0.0"
