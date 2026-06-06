@@ -562,6 +562,13 @@ async def websocket_audio_translation(
             speaker_memory.register(live_speaker, language=live_source_language or detect_language_heuristic(text_value))
         refined = refine_translation(text_value, raw_translation, memory.get_context(), speaker_memory.get_context(live_speaker))
         if not refined:
+            if payload_revision == live_text_revision:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Translation empty",
+                    "recoverable": True,
+                    "source": "browser_live_text",
+                })
             return
         if payload_revision != live_text_revision:
             return
@@ -1299,7 +1306,7 @@ async def websocket_audio_translation(
                     if previous_device_id:
                         session_registry.disconnect(previous_session_id, previous_speaker, identity, previous_device_id)
                     if session_registry.active_stream_count(identity) >= get_max_active_streams_per_user():
-                        await websocket.send_json({"type": "error", "message": "Too many active streams for this user."})
+                        await websocket.send_json({"type": "error", "message": "Too many active streams for this user.", "recoverable": True})
                         continue
                     if speaker_mode == "auto":
                         speaker_profile = session_registry.resolve_auto_speaker(
@@ -1487,13 +1494,13 @@ async def websocket_audio_translation(
 
     except WebSocketDisconnect:
         observability.increment("websocket_disconnects_total")
-        session_registry.disconnect_session(session_id, identity)
+        session_registry.disconnect(session_id, speaker, identity, device_id)
         return
     except (RuntimeError, ValueError, ConnectionError, TimeoutError):
         observability.increment("websocket_errors_total")
         raise
     finally:
-        session_registry.disconnect_session(session_id, identity)
+        session_registry.disconnect(session_id, speaker, identity, device_id)
         if partial_task is not None:
             partial_task.cancel()
             with suppress(asyncio.CancelledError, Exception):
@@ -1909,6 +1916,9 @@ async def websocket_streaming_stt_translation(
                             "warming": True,
                         })
                         continue
+                    previous_session_id = session_id
+                    previous_speaker = speaker
+                    previous_device_id = device_id
                     previous_source_language = source_language
                     source_language = data.get("source_language", source_language)
                     target_language = data.get("target_language", target_language)
@@ -1916,6 +1926,11 @@ async def websocket_streaming_stt_translation(
                     session_id = data.get("session_id", session_id)
                     device_id = data.get("device_id", device_id)
                     requested_speaker_label = data.get("speaker_name") or data.get("speaker_label")
+                    if previous_device_id:
+                        session_registry.disconnect(previous_session_id, previous_speaker, identity, previous_device_id)
+                    if session_registry.active_stream_count(identity) >= get_max_active_streams_per_user():
+                        await send_json({"type": "error", "message": "Too many active streams for this user.", "recoverable": True})
+                        continue
                     if speaker_mode == "auto":
                         speaker_profile = session_registry.resolve_auto_speaker(
                             session_id,
@@ -2046,4 +2061,4 @@ async def websocket_streaming_stt_translation(
         raise
     finally:
         await close_provider()
-        session_registry.disconnect_session(session_id, identity)
+        session_registry.disconnect(session_id, speaker, identity, device_id)

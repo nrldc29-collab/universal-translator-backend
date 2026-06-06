@@ -2034,8 +2034,12 @@ function App() {
           setTtsChunksBuffer((chunks) => {
             if (chunks.length === 0) {
               debugLog('No TTS chunks to play');
+              const voiceLang = speechLastLiveTargetRef.current || targetLanguage;
+              const backendOwnsTts = data.source === 'browser_live_text'
+                && BACKEND_TTS_LANGS.has(voiceLang)
+                && settings.ttsVoice !== 'browser';
               const textToSpeak = streamTranslationRef.current;
-              if (textToSpeak && !lowBandwidthMode) {
+              if (textToSpeak && !lowBandwidthMode && !backendOwnsTts) {
                 fetchTranslationVoice(textToSpeak, targetLanguage, authToken)
                   .then(async (voice) => {
                     if (voice && await playEmbeddedTranslationAudio(voice)) return;

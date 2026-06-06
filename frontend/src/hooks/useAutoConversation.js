@@ -380,6 +380,10 @@ export function useAutoConversation({
         },
         onTtsChunk(b64) {
           if (!activeRef.current) return;
+          if (recogRef.current) {
+            try { recogRef.current.abort(); } catch {}
+            recogRef.current = null;
+          }
           receivedTtsChunks += 1;
           clearTimeout(audioFallbackTimer);
           chunkBuf.current.push(b64);
@@ -416,6 +420,20 @@ export function useAutoConversation({
             activeRef.current = false;
             setActive(false);
             setSockStat('disconnected');
+            return;
+          }
+          const message = String(err?.message || '');
+          if (message.includes('Too many active streams')) {
+            onStatus?.('Stream limit — reconnecting conversation...');
+            window.setTimeout(() => {
+              if (activeRef.current) restartSockets();
+            }, 500);
+            return;
+          }
+          if (err?.source === 'browser_live_text' && err?.recoverable) {
+            clearTimeout(audioFallbackTimer);
+            ttsCompleted = true;
+            afterTts(liveTextRef.current, '', dir === 'AB' ? 'A' : 'B');
           }
         },
         setFinalSource(t) { finalSource = t; },
@@ -474,7 +492,9 @@ export function useAutoConversation({
     sockABRef.current?.destroy(); sockABRef.current = null;
     sockBARef.current?.destroy(); sockBARef.current = null;
     setSockStat('disconnected');
-    openSockets();
+    window.setTimeout(() => {
+      if (activeRef.current) openSockets();
+    }, 400);
   }
 
   // ── Speech recognition ────────────────────────────────────────────────
@@ -500,6 +520,7 @@ export function useAutoConversation({
     setPhaseR('listening');
 
     rec.onresult = (ev) => {
+      if (lockedRef.current || phaseRef.current === 'speaking' || phaseRef.current === 'processing') return;
       let final = '', interim = '';
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         // Check all alternatives for language patterns

@@ -336,7 +336,7 @@ def get_stt_queue_max_depth() -> int:
 
 
 def get_max_active_streams_per_user() -> int:
-    return _to_int("MAX_ACTIVE_STREAMS_PER_USER", 2, minimum=1)
+    return _to_int("MAX_ACTIVE_STREAMS_PER_USER", 4, minimum=1)
 
 
 
@@ -377,7 +377,7 @@ def get_google_tts_api_key() -> str:
 
 
 def get_prefer_cloud_tts() -> bool:
-    return _to_bool("PREFER_CLOUD_TTS", True)
+    return _to_bool("PREFER_CLOUD_TTS", False)
 
 
 def google_tts_diagnostics() -> dict:
