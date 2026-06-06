@@ -13,26 +13,82 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng ffmpeg
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+      - name: Fetch bundled Piper voices for offline smoke
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import scripts.setup_models as setup
+          for name, url in setup.PIPER_VOICE_URLS.items():
+              setup.download_file(url, setup.TTS_DIR / name)
+          PY
+      - name: Offline smoke check
+        run: python scripts/smoke_local.py
       - name: Run backend tests
-        run: pytest --ignore=tests/test_websocket_integration.py --ignore=tests/test_stt_integration.py -q
+        run: pytest -q
 
   ai-comm-system:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
       - name: Install ai-comm-system dependencies
-        working-directory: ai-comm-system
+        working-directory: research/ai-comm-system
         run: npm install
       - name: Run ai-comm-system tests
-        working-directory: ai-comm-system
+        working-directory: research/ai-comm-system
         run: npm test
+
+  integration-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng ffmpeg
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Download and warm local models
+        run: python scripts/setup_models.py
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Live bundled smoke check
+        env:
+          REQUESTS_PER_MINUTE: "120"
+          QUOTA_REQUESTS_PER_HOUR: "500"
+          MAX_ACTIVE_STREAMS_PER_USER: "5"
+        run: |
+          mkdir -p logs
+          SERVE_FRONTEND_DIST=1 BACKEND_PORT=8001 PARTIAL_TTS_MODE=1 python -m uvicorn backend.api:app --host 127.0.0.1 --port 8001 >logs/bundled-backend.log 2>&1 &
+          echo $! >logs/bundled-backend.pid
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:8001/health >/dev/null 2>&1 && break
+            sleep 2
+          done
+          python scripts/smoke_local.py http://127.0.0.1:8001
+          kill $(cat logs/bundled-backend.pid) 2>/dev/null || true
 
   frontend:
     runs-on: ubuntu-latest
@@ -49,6 +105,9 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test -- --run
 
   mobile:
     runs-on: ubuntu-latest

@@ -133,6 +133,22 @@ def is_speakable_live_delta(text: str) -> bool:
     return len(normalized) >= 2 and bool(re.search(r"\w", normalized))
 
 
+def looks_like_container_audio(data: bytes) -> bool:
+    """True when bytes look like WebM/WAV/MP4 container audio, not raw PCM16."""
+
+    if len(data) < 4:
+        return False
+    if data[:4] == b"\x1aE\xdf\xa3":
+        return True
+    if data[:4] == b"RIFF":
+        return True
+    if len(data) >= 8 and data[4:8] == b"ftyp":
+        return True
+    if data[:4] == b"OggS":
+        return True
+    return False
+
+
 def audio_suffix_for_mime(mime_type: str | None) -> str:
     """Map a MIME type to a sensible audio file suffix."""
 
@@ -209,6 +225,7 @@ __all__ = [
     "folded_live_text",
     "live_translation_delta",
     "is_speakable_live_delta",
+    "looks_like_container_audio",
     "audio_suffix_for_mime",
     "extract_client_voice_active",
     "parse_provider_event",

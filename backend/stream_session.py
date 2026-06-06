@@ -31,7 +31,7 @@ class StreamSessionState:
 
     # ── Language / speaker identity ────────────────────────────────────────
     source_language: str = "en"
-    target_language: str = "es"
+    target_language: str = "ht"
     speaker: str = "speaker"
     speaker_label: str = "Person 1"
     speaker_index: int = 1

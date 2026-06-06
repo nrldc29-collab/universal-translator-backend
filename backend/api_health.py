@@ -21,6 +21,7 @@ from backend.config import (
     get_stt_provider_url,
     get_stt_provider_ws_url,
 )
+from backend.model_readiness import evaluate_preload_result
 from backend.security import WEBSOCKET_AUTH_RELEASE
 
 
@@ -93,19 +94,31 @@ def runtime_payload(include_details: bool = False) -> dict:
         "release": RELEASE_ID,
         "uptime_seconds": round(time() - runtime_state["started_at"], 2),
     }
+    readiness = runtime_state.get("readiness")
+    if readiness and not runtime_state["ready"]:
+        payload["blockers"] = readiness.get("blockers") or []
+        payload["warnings"] = readiness.get("warnings") or []
+        if payload["blockers"]:
+            payload["status"] = "degraded"
     if include_details:
         stt_provider = stt_provider_health_snapshot()
+        preload = runtime_state.get("models", {}).get("preloaded")
+        readiness = runtime_state.get("readiness") or evaluate_preload_result(preload if isinstance(preload, dict) else None)
+        ready = bool(runtime_state["ready"]) and bool(readiness.get("ready", True))
         payload.update(
             {
                 "models": runtime_state["models"],
+                "readiness": readiness,
                 "voice_warmup": runtime_state.get("voice_warmup"),
                 "websocket_auth_release": WEBSOCKET_AUTH_RELEASE,
                 "stt_provider": stt_provider,
             }
         )
         if stt_provider["mode"] == "streaming" and not stt_provider.get("reachable"):
-            payload["ready"] = False
-            payload["status"] = "degraded" if runtime_state["ready"] else "warming"
+            ready = False
+        payload["ready"] = ready
+        if not ready:
+            payload["status"] = "degraded" if runtime_state.get("ready") else "warming"
     return payload
 
 

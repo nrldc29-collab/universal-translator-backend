@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   X, Languages, Volume2, Mic, Zap, Monitor, Lock, Bell, Settings2, Info,
   ChevronRight, ChevronDown, Sun, Moon, Contrast, Type, Eye, EyeOff,
-  Trash2, Shield, Music, Bug, Server, Key, Check, AlertTriangle,
+  Trash2, Shield, Music, Bug, Server, Key, Check, AlertTriangle, Activity,
 } from 'lucide-react';
 import { TARGET_LANGUAGE_OPTIONS } from '../utils';
 
@@ -37,6 +37,10 @@ export default function SettingsPanel({
   onClearSession,
   diagnostics,
   apiUrl,
+  selfTest,
+  runSelfTest,
+  connectionStatus,
+  onRequestMicPermission,
 }) {
   const [activeSection, setActiveSection] = useState('language');
   const [micDevices, setMicDevices] = useState([]);
@@ -71,7 +75,14 @@ export default function SettingsPanel({
     try {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
       const json = await res.json().catch(() => ({}));
-      setBackendTestResult({ ok: res.ok, msg: res.ok ? `Connected — ${json.status || 'ok'}` : `HTTP ${res.status}` });
+      setBackendTestResult({
+        ok: res.ok && json.ready !== false,
+        msg: res.ok
+          ? (json.ready === false
+            ? `Connected but not LIVE — ${(json.blockers || []).join(', ') || 'models still loading'}`
+            : `Connected — LIVE`)
+          : `HTTP ${res.status}`,
+      });
     } catch (err) {
       setBackendTestResult({ ok: false, msg: err?.message || 'Unreachable' });
     } finally {
@@ -129,7 +140,12 @@ export default function SettingsPanel({
               <SectionLanguage settings={settings} updateSetting={updateSetting} />
             )}
             {activeSection === 'audio' && (
-              <SectionAudio settings={settings} updateSetting={updateSetting} micDevices={micDevices} />
+              <SectionAudio
+                settings={settings}
+                updateSetting={updateSetting}
+                micDevices={micDevices}
+                onRequestMicPermission={onRequestMicPermission}
+              />
             )}
             {activeSection === 'translation' && (
               <SectionTranslation settings={settings} updateSetting={updateSetting} />
@@ -156,6 +172,9 @@ export default function SettingsPanel({
                 backendTestResult={backendTestResult}
                 onTestBackend={testBackendUrl}
                 apiUrl={apiUrl}
+                selfTest={selfTest}
+                runSelfTest={runSelfTest}
+                connectionStatus={connectionStatus}
               />
             )}
             {activeSection === 'about' && (
@@ -209,7 +228,7 @@ function SectionLanguage({ settings, updateSetting }) {
 }
 
 /* ─── Section: Audio ──────────────────────────────────────────────── */
-function SectionAudio({ settings, updateSetting, micDevices }) {
+function SectionAudio({ settings, updateSetting, micDevices, onRequestMicPermission }) {
   return (
     <div className="sp-section">
       <h2 className="sp-section-title">Audio Settings</h2>
@@ -272,6 +291,11 @@ function SectionAudio({ settings, updateSetting, micDevices }) {
         <div className="sp-info-box warning">
           <AlertTriangle size={13} />
           <span>Grant microphone permission to list available devices.</span>
+          {onRequestMicPermission && (
+            <button type="button" className="sp-test-btn" onClick={() => onRequestMicPermission()}>
+              Grant Microphone Access
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -485,7 +509,17 @@ function SectionAdvanced({
   apiKeyVisible, setApiKeyVisible,
   testingBackend, backendTestResult, onTestBackend,
   apiUrl,
+  selfTest,
+  runSelfTest,
+  connectionStatus,
 }) {
+  const selfTestReady = connectionStatus === 'online';
+  const selfTestHint = connectionStatus === 'warming'
+    ? 'Wait for LIVE in the header before running checks'
+    : connectionStatus === 'offline'
+      ? 'Start the backend before running checks'
+      : 'Quick translation + audio WebSocket check';
+
   return (
     <div className="sp-section">
       <h2 className="sp-section-title">Advanced Settings</h2>
@@ -525,6 +559,35 @@ function SectionAdvanced({
         <div className={`sp-info-box ${backendTestResult.ok ? '' : 'warning'}`}>
           {backendTestResult.ok ? <Check size={13} /> : <AlertTriangle size={13} />}
           <span>{backendTestResult.msg}</span>
+        </div>
+      )}
+
+      <div className="sp-divider-label">Self Test</div>
+
+      <SettingRow label="Run Self Test" hint={selfTestHint} icon={<Activity size={15} />}>
+        <button
+          type="button"
+          className="sp-test-btn"
+          onClick={() => runSelfTest?.()}
+          disabled={!runSelfTest || !selfTestReady || selfTest?.status === 'running'}
+        >
+          {selfTest?.status === 'running' ? 'Running…' : 'Run Self Test'}
+        </button>
+      </SettingRow>
+
+      {selfTest && selfTest.status !== 'idle' && (
+        <div className={`sp-info-box ${selfTest.status === 'online' ? '' : 'warning'}`}>
+          {selfTest.status === 'online' ? <Check size={13} /> : <AlertTriangle size={13} />}
+          <span>
+            {selfTest.message}
+            {selfTest.translation !== '-' ? ` · ES: ${selfTest.translation}` : ''}
+            {selfTest.htTranslation !== '-' ? ` · HT: ${selfTest.htTranslation}` : ''}
+            {selfTest.htReverseTranslation !== '-' ? ` · HT→EN: ${selfTest.htReverseTranslation}` : ''}
+            {selfTest.htTts !== '-' ? ` · HT TTS: ${selfTest.htTts}` : ''}
+            {selfTest.liveText !== '-' ? ` · Live text: ${selfTest.liveText}` : ''}
+            {selfTest.sttOnly !== '-' ? ` · STT-only: ${selfTest.sttOnly}` : ''}
+            {selfTest.websocket !== '-' ? ` · WebSocket: ${selfTest.websocket}` : ''}
+          </span>
         </div>
       )}
 

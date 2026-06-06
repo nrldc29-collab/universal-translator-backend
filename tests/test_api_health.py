@@ -142,11 +142,13 @@ def test_snapshot_bad_json_body_still_marks_reachable():
 def test_runtime_payload_includes_stt_key_with_details():
     with patch("backend.api_health.get_stt_provider", return_value="local"), \
          patch("backend.api_health.get_stt_provider_url", return_value="http://localhost:8000"), \
-         patch("backend.api_health.get_stt_provider_ws_url", return_value="ws://localhost:8000"):
+         patch("backend.api_health.get_stt_provider_ws_url", return_value="ws://localhost:8000"), \
+         patch("backend.api_health.evaluate_preload_result", return_value={"ready": True, "blockers": [], "warnings": []}):
         payload = runtime_payload(include_details=True)
 
     assert "stt_provider" in payload
     assert "models" in payload
+    assert "readiness" in payload
     assert "websocket_auth_release" in payload
 
 
@@ -168,14 +170,25 @@ def test_runtime_payload_degraded_when_streaming_unreachable():
 
 def test_runtime_payload_ready_reflects_runtime_state():
     original = runtime_state.get("ready")
+    original_readiness = runtime_state.get("readiness")
     try:
         runtime_state["ready"] = True
+        runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": []}
         payload = runtime_payload()
         assert payload.get("ready") is True
 
         runtime_state["ready"] = False
+        runtime_state["readiness"] = {
+            "ready": False,
+            "blockers": ["translation_preload_failed"],
+            "warnings": [],
+        }
         payload = runtime_payload()
         assert payload.get("ready") is False
+        assert payload.get("blockers") == ["translation_preload_failed"]
+        assert payload.get("status") == "degraded"
     finally:
         if original is not None:
             runtime_state["ready"] = original
+        if original_readiness is not None:
+            runtime_state["readiness"] = original_readiness

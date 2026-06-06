@@ -13,6 +13,7 @@ from backend.streaming_helpers import (
     folded_live_text,
     live_translation_delta,
     is_speakable_live_delta,
+    looks_like_container_audio,
     audio_suffix_for_mime,
     extract_client_voice_active,
     parse_provider_event,
@@ -173,6 +174,23 @@ def test_is_speakable_live_delta_requires_word_char():
 def test_is_speakable_live_delta_requires_min_length():
     assert is_speakable_live_delta("a") is False
     assert is_speakable_live_delta("ab") is True
+
+
+# ---------------------------------------------------------------------------
+# looks_like_container_audio
+# ---------------------------------------------------------------------------
+
+def test_looks_like_container_audio_webm():
+    assert looks_like_container_audio(b"\x1aE\xdf\xa3") is True
+
+
+def test_looks_like_container_audio_wav():
+    assert looks_like_container_audio(b"RIFFxxxxWAVE") is True
+
+
+def test_looks_like_container_audio_pcm16_false():
+    assert looks_like_container_audio(b"\x00\x01\x02\x03") is False
+    assert looks_like_container_audio(b"") is False
 
 
 # ---------------------------------------------------------------------------

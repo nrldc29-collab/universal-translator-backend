@@ -34,8 +34,8 @@ defaults lives in `backend/config.py`.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `REQUESTS_PER_MINUTE` | `20` | Per-identity request ceiling. |
-| `QUOTA_REQUESTS_PER_HOUR` | `120` | Hourly ceiling per identity. |
+| `REQUESTS_PER_MINUTE` | `120` | Per-identity request ceiling. |
+| `QUOTA_REQUESTS_PER_HOUR` | `500` | Hourly ceiling per identity (conversation mode uses 3 WebSockets). |
 | `FREE_DAILY_AUDIO_MINUTES` | `10` | Audio quota for free-tier users. |
 | `SESSION_MINUTES` | `480` | JWT lifetime. |
 | `SESSION_TTL_SECONDS` | `1800` | In-memory session retention. |
@@ -89,7 +89,7 @@ defaults lives in `backend/config.py`.
 | `PARTIAL_TTS_MODE` | `1` | `1` enables partial TTS playback. |
 | `NEAR_ZERO_LATENCY_MODE` | `1` | Aggressive partial emit + caching. |
 | `STREAM_BUFFER_MAX_MB` | `12` | Per-socket buffer cap. |
-| `MAX_ACTIVE_STREAMS_PER_USER` | `2` | Per-identity concurrency cap. |
+| `MAX_ACTIVE_STREAMS_PER_USER` | `5` | Per-identity concurrency cap (EN↔HT conversation uses 3: 2× live_text + 1× stt_only). |
 | `PIPELINE_STEP_TIMEOUT_SECONDS` | `10` | Cut off slow STT/translation/TTS calls. |
 | `STREAM_HOT_PATH_LOGGING` | `0` | Verbose per-frame logging. |
 

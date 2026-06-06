@@ -4,7 +4,7 @@ import * as FileSystem from "expo-file-system";
 let recording = null;
 let onChunkCallback = null;
 let streamingInterval = null;
-const CHUNK_INTERVAL = 140;
+const CHUNK_INTERVAL = 450;
 
 export const startAudioStream = async (onChunk, onError) => {
   try {

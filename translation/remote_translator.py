@@ -17,7 +17,7 @@ class RemoteTranslator:
         if not text.strip():
             return ""
         source = source_language or "en"
-        target = target_language or "es"
+        target = target_language or "ht"
         if source == target:
             return text
         query = urlencode({

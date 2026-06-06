@@ -152,14 +152,28 @@ function ConversationHistory({ turns, onClear }) {
 export default function ConversationMode({
   wsAudioUrl, authToken, withAuthToken,
   sourceLanguage, targetLanguage,
+  sessionId, deviceId,
   sourceLanguageLabel, targetLanguageLabel,
+  connectionStatus = 'checking',
+  onStatus,
 }) {
+  const backendReady = connectionStatus === 'online';
   const {
     active, phase, detectedLang, turns,
     liveText, liveTranslation,
     sockStatus, micLevel,
     start, stop, clearTurns,
-  } = useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, targetLanguage, withAuthToken });
+  } = useAutoConversation({
+    wsAudioUrl,
+    authToken,
+    sourceLanguage,
+    targetLanguage,
+    sessionId,
+    deviceId,
+    withAuthToken,
+    backendReady,
+    onStatus,
+  });
 
   useEffect(() => () => stop(), []);
 
@@ -170,7 +184,7 @@ export default function ConversationMode({
   const isSpeaking   = phase==='speaking';
 
   const statusCfg = {
-    idle:       { text: active?'Starting…':'Tap to start', color:'#475569' },
+    idle:       { text: !backendReady ? 'Wait for LIVE' : active ? 'Starting…' : 'Tap to start', color:'#475569' },
     ready:      { text: 'Ready…',         color:'#34d399' },
     listening:  { text: 'Listening…',    color:'#34d399' },
     processing: { text: 'Translating…',  color:'#fbbf24' },
@@ -223,6 +237,7 @@ export default function ConversationMode({
           type="button"
           className={`conv-mic-btn ${active ? 'active' : ''} ${isListening ? 'listening' : ''}`}
           onClick={active ? stop : start}
+          disabled={!active && !backendReady}
           aria-label={active ? 'Stop conversation' : 'Start auto conversation'}
         >
           {active ? '⏹' : '🎤'}

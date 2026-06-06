@@ -1,5 +1,7 @@
 import re
-from typing import List
+from typing import Any, List
+
+from backend.config import get_confidence_warning_threshold, get_high_stakes_confidence_threshold
 
 
 AMBIGUOUS_SENSES = {
@@ -89,3 +91,57 @@ def clarification_for(text: str, ambiguities: List[str]) -> str:
             return f"When you say '{word}', do you mean {', '.join(senses)}?"
         return f"What meaning of '{word}' did you intend?"
     return "I may have misunderstood. Could you repeat or rephrase that?"
+
+
+def confidence_warning_message(confidence: float, *, high_stakes: bool = False, domains: list[str] | None = None) -> str:
+    domain_label = ""
+    if domains:
+        domain_label = f" ({domains[0].replace('_', ' ')})"
+    pct = int(round(confidence * 100))
+    if high_stakes:
+        return (
+            f"Low confidence ({pct}%){domain_label}. "
+            "Verify with a human interpreter before acting on this translation."
+        )
+    return (
+        f"Moderate confidence ({pct}%). "
+        "Double-check important details before relying on this translation."
+    )
+
+
+def assess_translation_confidence(
+    source_text: str,
+    translated_text: str,
+    *,
+    stt_confidence: float | None = None,
+    domains: dict[str, Any] | None = None,
+    glossary_coverage: float = 1.0,
+) -> dict[str, Any]:
+    stt_conf = estimate_stt_confidence(source_text) if stt_confidence is None else max(0.0, min(1.0, float(stt_confidence)))
+    tr_conf = estimate_translation_confidence(source_text, translated_text)
+    amb = ambiguity_score(source_text)
+    engine = ConfidenceEngine()
+    score = engine.evaluate(stt_conf, tr_conf, amb)
+    if glossary_coverage < 1.0:
+        score = max(0.0, score - (1.0 - glossary_coverage) * 0.12)
+
+    high_stakes = list((domains or {}).get("high_stakes") or [])
+    risk_level = (domains or {}).get("risk_level") or "normal"
+    threshold = get_high_stakes_confidence_threshold() if high_stakes else get_confidence_warning_threshold()
+    low_confidence = score < threshold
+    needs_confirmation = bool(high_stakes) and score < max(threshold, 0.82)
+
+    return {
+        "confidence": round(score, 4),
+        "stt_confidence": round(stt_conf, 4),
+        "translation_confidence": round(tr_conf, 4),
+        "confidence_threshold": round(threshold, 4),
+        "low_confidence": low_confidence,
+        "needs_confirmation": needs_confirmation,
+        "risk_level": risk_level,
+        "high_stakes": high_stakes,
+        "glossary_coverage": round(glossary_coverage, 4),
+        "confidence_message": confidence_warning_message(score, high_stakes=needs_confirmation, domains=high_stakes)
+        if low_confidence
+        else "",
+    }

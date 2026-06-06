@@ -28,7 +28,15 @@ from slowapi.errors import RateLimitExceeded
 from backend.conversation import ConversationBrain
 from backend.memory import ConversationMemory
 from backend.refine import refine_translation
-from backend.speakers import SpeakerMemory, detect_language_heuristic
+from backend.speakers import (
+    SpeakerMemory,
+    detect_language_heuristic,
+    detect_language_in_pair,
+    language_pair_has_ht,
+    opposite_language_in_pair,
+    resolve_active_languages_in_pair,
+    resolve_whisper_language,
+)
 from backend.config import (
     LANGUAGES,
     get_allowed_origin_regex,
@@ -46,6 +54,7 @@ from backend.config import (
     get_stt_provider_ws_url,
     get_translation_backend,
     get_translation_device,
+    get_hybrid_enable_remote,
     get_vad_force_final_seconds,
     get_vad_silent_checks,
     get_whisper_compute_type,
@@ -62,9 +71,12 @@ from backend.security import WEBSOCKET_AUTH_RELEASE, authenticate_http, authenti
 from backend.sessions import session_registry
 from backend.streaming import websocket_audio_translation, websocket_text_translation
 from speech import SileroVoiceActivityDetector
-from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
+from backend.confidence import ConfidenceEngine, assess_translation_confidence, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
+from backend.communication_brain import detect_domains
+from backend.glossary import get_session_glossary, glossary_coverage_score, glossary_blocks_clarification
 from backend.cip_client import call_cip_brain, cip_health_snapshot, cip_settings
-from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, is_cip_clarification
+from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, is_cip_clarification, resolve_translation_text
+from backend.model_readiness import evaluate_preload_result
 from backend import assistant as naia_assistant
 try:
     import pytesseract  # type: ignore
@@ -169,9 +181,20 @@ async def lifespan(app_instance: FastAPI):
     }
     runtime_state["warming"] = get_preload_models()
     if get_preload_models():
-        runtime_state["models"]["preloaded"] = await run_in_threadpool(pipeline.preload)
+        preload_result = await run_in_threadpool(pipeline.preload)
+        runtime_state["models"]["preloaded"] = preload_result
+        readiness = evaluate_preload_result(preload_result)
+        runtime_state["readiness"] = readiness
+        runtime_state["ready"] = readiness["ready"]
+        if not readiness["ready"]:
+            logger.warning(
+                "Startup readiness incomplete — blockers: %s",
+                ", ".join(readiness.get("blockers") or ["unknown"]),
+            )
+    else:
+        runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": ["preload_skipped"]}
+        runtime_state["ready"] = True
     runtime_state["warming"] = False
-    runtime_state["ready"] = True
     runtime_state["voice_warmup"] = {"status": "queued", "started_at": time()}
     voice_warmup_task = asyncio.create_task(_warm_voice_cache("startup"))
     try:
@@ -296,19 +319,34 @@ def diagnostics(request: Request):
     if hasattr(pipeline, 'ailang_pipeline') and pipeline.ailang_pipeline:
         ailang_health = pipeline.ailang_pipeline.get_health_status()
     
-    # Translation health: show fallback chain and remote translator reachability
+    # Translation health: show fallback chain and optional remote probe
     import os as _os
-    _hybrid_marian_fallback = _os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "0") == "1"
+    _backend = get_translation_backend()
+    _hybrid_marian_fallback = _os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "1") != "0"
+    _remote_enabled = get_hybrid_enable_remote()
+    if _backend == "marian":
+        _fallback_chain = ["marian"]
+    elif _backend == "lightweight":
+        _fallback_chain = ["lightweight"]
+    elif _backend == "hybrid":
+        _fallback_chain = ["lightweight"]
+        if _hybrid_marian_fallback:
+            _fallback_chain.append("marian")
+        if _remote_enabled:
+            _fallback_chain.append("remote_google")
+    else:
+        _fallback_chain = [_backend]
     _remote_ok: bool | None = None
     _remote_error: str | None = None
-    try:
-        from translation.remote_translator import RemoteTranslator as _RT
-        _r = _RT(timeout_seconds=2.0)
-        _probe = _r.translate("hello", "en", "es")
-        _remote_ok = bool(_probe and not _probe.startswith("[en->es]"))
-    except Exception as _exc:
-        _remote_ok = False
-        _remote_error = type(_exc).__name__
+    if _remote_enabled:
+        try:
+            from translation.remote_translator import RemoteTranslator as _RT
+            _r = _RT(timeout_seconds=2.0)
+            _probe = _r.translate("hello", "en", "es")
+            _remote_ok = bool(_probe and not _probe.startswith("[en->es]"))
+        except Exception as _exc:
+            _remote_ok = False
+            _remote_error = type(_exc).__name__
 
     from backend.store import get_quota_store as _gqs, get_user_store as _gus
     _qs = _gqs()
@@ -332,8 +370,9 @@ def diagnostics(request: Request):
             "runtime": runtime_state["models"].get("translation_runtime"),
             "backend": runtime_state["models"].get("translation_backend"),
             "device": runtime_state["models"].get("translation_device"),
-            "fallback_chain": ["lightweight", "remote_google", "marian" if _hybrid_marian_fallback else None],
+            "fallback_chain": _fallback_chain,
             "marian_fallback_enabled": _hybrid_marian_fallback,
+            "remote_fallback_enabled": _remote_enabled,
             "remote_translator_reachable": _remote_ok,
             "remote_translator_error": _remote_error,
             "tts_google_configured": bool(get_google_tts_api_key()),
@@ -541,7 +580,14 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
     usage_limiter.track(identity, "http_requests")
     usage_limiter.track(identity, "text_translations")
     request.source_language = _normalize_language(request.source_language, "en")
-    request.target_language = _normalize_language(request.target_language, "es")
+    request.target_language = _normalize_language(request.target_language, "ht")
+    active_source, active_target = resolve_active_languages_in_pair(
+        request.text,
+        request.source_language,
+        request.target_language,
+    )
+    request.source_language = active_source
+    request.target_language = active_target
     logger.info(
         "text_translation identity=%s source=%s target=%s mode=%s provider=%s",
         identity, request.source_language, request.target_language,
@@ -620,19 +666,49 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
             semantic_context=semantic_context,
         )
         cip_clarify = is_cip_clarification(cip)
-        final_text = "" if cip_clarify else choose_translation(cip, refined_text)
+        session_key = request.session_id or identity
+        session_glossary = get_session_glossary(session_key)
+        if cip_clarify and glossary_blocks_clarification(
+            request.text,
+            interim.translated_text or refined_text,
+            session_glossary,
+            request.source_language,
+            request.target_language,
+        ):
+            cip_clarify = False
+        final_text = resolve_translation_text(cip_clarify, cip, refined_text)
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
             semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"
         # Confidence/clarify for text path
         tr_conf = estimate_translation_confidence(request.text, final_text)
         cip_conf = get_cip_confidence(cip)
-        conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
+        domains = detect_domains(request.text)
+        glossary_cov = glossary_coverage_score(
+            request.text,
+            final_text,
+            session_glossary,
+            request.source_language,
+            request.target_language,
+        )
+        assessment = assess_translation_confidence(
+            request.text,
+            final_text,
+            stt_confidence=stt_conf,
+            domains=domains,
+            glossary_coverage=glossary_cov,
+        )
+        conf_score = cip_conf if cip_conf is not None else assessment["confidence"]
         audio_path = None
         audio_payload = None
         if request.synthesize_audio and final_text and not cip_clarify:
-            audio_payload = _cached_tts_payload(final_text, request.target_language, audio_response_format, google_api_key=_google_key)
-            audio_path = audio_payload["audio_output_path"]
+            try:
+                audio_payload = _cached_tts_payload(final_text, request.target_language, audio_response_format, google_api_key=_google_key)
+                audio_path = audio_payload["audio_output_path"]
+            except (RuntimeError, OSError, ValueError) as exc:
+                logger.warning("text_translation_tts_failed identity=%s error=%s", identity, exc)
+                audio_payload = None
+                audio_path = None
         result = type(interim)(
             source_text=request.text,
             improved_text=interim.improved_text,
@@ -656,6 +732,13 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         if interim.ailang_metadata:
             response_dict["ailang_metadata"] = interim.ailang_metadata
         
+        if assessment["low_confidence"] and not response_dict.get("clarify"):
+            response_dict["low_confidence"] = True
+            response_dict["confidence"] = assessment["confidence"]
+            response_dict["confidence_threshold"] = assessment["confidence_threshold"]
+            response_dict["needs_confirmation"] = assessment["needs_confirmation"]
+            response_dict["confidence_message"] = assessment["confidence_message"]
+            response_dict["high_stakes_domains"] = assessment["high_stakes"]
         if conf_score < 0.4 and not response_dict.get("clarify"):
             response_dict["clarify"] = True
             response_dict["clarify_message"] = clarification_for(request.text, detect_ambiguities(request.text))
@@ -688,6 +771,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 request.source_language,
                 request.target_language,
                 request.speaker_name,
+                connected=False,
             )
             shared_session = session_registry.record_turn(
                 request.session_id,
@@ -724,7 +808,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
 async def translate_audio(
     audio: UploadFile = File(...),
     source_language: str = Form("en"),
-    target_language: str = Form("es"),
+    target_language: str = Form("ht"),
     synthesize_audio: bool = Form(True),
     identity: str = Depends(authenticate_http),
 ):
@@ -732,7 +816,7 @@ async def translate_audio(
     metrics["http_requests"] += 1
     usage_limiter.track(identity, "http_requests")
     source_language = _normalize_language(source_language, "en")
-    target_language = _normalize_language(target_language, "es")
+    target_language = _normalize_language(target_language, "ht")
     logger.info("audio_translation identity=%s source=%s target=%s", identity, source_language, target_language)
     max_bytes = get_max_audio_mb() * 1024 * 1024
     audio_bytes = await _read_limited_upload(audio, max_bytes)
@@ -752,18 +836,28 @@ async def translate_audio(
     audio_path.write_bytes(audio_bytes)
 
     try:
-        source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), source_language)
+        stt_language = resolve_whisper_language(source_language, target_language)
+        source_text = await run_in_threadpool(pipeline.stt.transcribe, str(audio_path), stt_language)
+        active_source_language = source_language
+        active_target_language = target_language
+        if language_pair_has_ht(source_language, target_language) and source_text.strip():
+            active_source_language = detect_language_in_pair(source_text, source_language, target_language)
+            active_target_language = opposite_language_in_pair(
+                active_source_language,
+                source_language,
+                target_language,
+            )
         # Default single-speaker flow: lock language for 'A'
         speaker_id = "A"
         if not speaker_memory.get_language(speaker_id):
             auto_lang = detect_language_heuristic(source_text)
-            speaker_memory.register(speaker_id, language=source_language or auto_lang)
+            speaker_memory.register(speaker_id, language=active_source_language or auto_lang)
         # Translate (no synth), then refine, then synthesize if requested
         interim = await run_in_threadpool(
             pipeline.translate_text,
             source_text,
-            source_language,
-            target_language,
+            active_source_language,
+            active_target_language,
             None,
             False,
             f"models/tts/{uuid4()}.wav",
@@ -781,10 +875,10 @@ async def translate_audio(
         }
         cip = call_cip_brain(
             source_text,
-            target_language,
+            active_target_language,
             identity,
             fallback_translation=refined_text,
-            source_language=source_language,
+            source_language=active_source_language,
             stt_confidence=stt_conf,
             translation_confidence=tr_conf,
             context=memory_context,
@@ -792,7 +886,17 @@ async def translate_audio(
             semantic_context=semantic_context,
         )
         cip_clarify = is_cip_clarification(cip)
-        final_text = "" if cip_clarify else choose_translation(cip, refined_text)
+        audio_session_key = session_id or identity
+        audio_glossary = get_session_glossary(audio_session_key)
+        if cip_clarify and glossary_blocks_clarification(
+            source_text,
+            interim.translated_text or refined_text,
+            audio_glossary,
+            active_source_language,
+            active_target_language,
+        ):
+            cip_clarify = False
+        final_text = resolve_translation_text(cip_clarify, cip, refined_text)
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
             semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"
@@ -802,7 +906,11 @@ async def translate_audio(
         conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
         audio_path = None
         if synthesize_audio and final_text and conf_score >= 0.4 and not cip_clarify:
-            audio_path = await run_in_threadpool(pipeline.tts.synthesize, final_text, f"models/tts/{uuid4()}.wav", target_language)
+            try:
+                audio_path = await run_in_threadpool(pipeline.tts.synthesize, final_text, f"models/tts/{uuid4()}.wav", active_target_language)
+            except (RuntimeError, OSError, ValueError) as exc:
+                logger.warning("audio_translation_tts_failed identity=%s error=%s", identity, exc)
+                audio_path = None
         result = type(interim)(
             source_text=source_text,
             improved_text=interim.improved_text,
@@ -822,7 +930,7 @@ async def translate_audio(
             speaker_memory.add_message(speaker_id, source_text)
             # Update profile: languages, history
             langs = set(user_profile.get("preferred_languages") or [])
-            langs.update([source_language, target_language])
+            langs.update([active_source_language, active_target_language])
             user_profile["preferred_languages"] = [l for l in langs if l]
             user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "audio", "source": source_text, "translated": result.translated_text}]
             profiles.save(identity, user_profile)
@@ -852,14 +960,14 @@ async def translate_audio(
 async def translate_image(
     image: UploadFile = File(...),
     source_language: str = Form("auto"),
-    target_language: str = Form("es"),
+    target_language: str = Form("ht"),
     synthesize_audio: bool = Form(False),
     identity: str = Depends(authenticate_http),
 ):
     metrics["http_requests"] += 1
     usage_limiter.track(identity, "http_requests")
     source_language = _normalize_language(source_language, "auto", allow_auto=True)
-    target_language = _normalize_language(target_language, "es")
+    target_language = _normalize_language(target_language, "ht")
     logger.info("image_translation identity=%s target=%s", identity, target_language)
     if not _HAS_PYTESSERACT:
         raise HTTPException(status_code=503, detail="OCR unavailable on server. Install Tesseract to enable.")
@@ -875,11 +983,16 @@ async def translate_image(
         ocr_text = pytesseract.image_to_string(Image.open(image_path)) or ""
         if source_language == "auto":
             source_language = detect_language_heuristic(ocr_text)
+        active_source, active_target = resolve_active_languages_in_pair(
+            ocr_text,
+            source_language,
+            target_language,
+        )
         # Translate (no synth), then optional TTS synth
         interim = pipeline.translate_text(
             text=ocr_text,
-            source_language=source_language,
-            target_language=target_language,
+            source_language=active_source,
+            target_language=active_target,
             tone=None,
             synthesize_audio=False,
         )
@@ -888,7 +1001,7 @@ async def translate_image(
         audio_path = None
         audio_b64 = None
         if synthesize_audio and final_text:
-            audio_path = pipeline.tts.synthesize(final_text, f"models/tts/{uuid4()}.wav", language=target_language)
+            audio_path = pipeline.tts.synthesize(final_text, f"models/tts/{uuid4()}.wav", language=active_target)
             try:
                 audio_bytes = Path(audio_path).read_bytes()
                 if len(audio_bytes) >= 100:
@@ -897,7 +1010,7 @@ async def translate_image(
                 logger.warning("tts_audio_read_failed identity=%s error=%s", identity, exc)
         # Store in memory under virtual speaker CAM
         memory.add("CAM", ocr_text, final_text)
-        speaker_memory.register("CAM", language=source_language)
+        speaker_memory.register("CAM", language=active_source)
         speaker_memory.add_message("CAM", ocr_text)
         # Update profile history
         user_profile["history"] = (user_profile.get("history") or [])[-48:] + [{"type": "image", "source": ocr_text, "translated": final_text}]
@@ -1204,6 +1317,17 @@ async def websocket_audio(websocket: WebSocket):
     if not ok:
         logger.warning("audio_websocket_auth_rejected identity=%s", identity)
         return
+    if not runtime_state.get("ready"):
+        await websocket.accept()
+        await websocket.send_json({
+            "type": "error",
+            "message": "Models still loading. Wait for LIVE.",
+            "recoverable": True,
+            "warming": True,
+        })
+        await websocket.close(code=1008, reason="Backend warming")
+        logger.info("audio_websocket_warming_rejected identity=%s", identity)
+        return
     metrics["websocket_connections"] += 1
     logger.info("audio_websocket_connected identity=%s", identity)
     try:
@@ -1241,6 +1365,18 @@ async def websocket_audio_streaming(websocket: WebSocket):
 
     if get_stt_provider() != "streaming":
         await websocket.close(code=1008, reason="STT provider is not in streaming mode")
+        return
+
+    if not runtime_state.get("ready"):
+        await websocket.accept()
+        await websocket.send_json({
+            "type": "error",
+            "message": "Models still loading. Wait for LIVE.",
+            "recoverable": True,
+            "warming": True,
+        })
+        await websocket.close(code=1008, reason="Backend warming")
+        logger.info("streaming_stt_websocket_warming_rejected identity=%s", identity)
         return
 
     metrics["websocket_connections"] += 1

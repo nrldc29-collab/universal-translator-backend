@@ -92,7 +92,17 @@ ExecStart=/usr/bin/docker run --rm \\
   -e USE_GPU=0 \\
   -e WHISPER_DEVICE=cpu \\
   -e WHISPER_COMPUTE_TYPE=int8 \\
-  -e WHISPER_MODEL_SIZE=tiny \\
+  -e WHISPER_MODEL_SIZE=small \\
+  -e PRELOAD_MODELS=1 \\
+  -e TRANSLATION_BACKEND=marian \\
+  -e TRANSLATION_DEVICE=cpu \\
+  -e HYBRID_ENABLE_MARIAN_FALLBACK=1 \\
+  -e HYBRID_ENABLE_REMOTE=0 \\
+  -e PREFER_CLOUD_TTS=0 \\
+  -e STT_PROVIDER=local \\
+  -e MAX_ACTIVE_STREAMS_PER_USER=5 \\
+  -e REQUESTS_PER_MINUTE=120 \\
+  -e QUOTA_REQUESTS_PER_HOUR=500 \\
   -e STT_MAX_CONCURRENCY=1 \\
   -v $DEPLOY_DIR/models:/app/models \\
   anai-translator-backend:latest
@@ -113,13 +123,18 @@ echo -e "${GREEN}✓ Systemd service created and started${NC}"
 echo ""
 
 echo -e "${YELLOW}Step 6: Wait for backend to be ready${NC}"
-for i in {1..30}; do
-  if curl -f http://127.0.0.1:$PORT/health 2>/dev/null > /dev/null; then
-    echo -e "${GREEN}✓ Backend is healthy${NC}"
+for i in {1..90}; do
+  HEALTH=$(curl -s http://127.0.0.1:$PORT/health 2>/dev/null || echo "")
+  if echo "$HEALTH" | grep -q '"ready":true'; then
+    echo -e "${GREEN}✓ Backend is ready (models loaded)${NC}"
     break
   fi
-  echo "  Waiting... ($i/30)"
-  sleep 2
+  if echo "$HEALTH" | grep -q '"status"'; then
+    echo "  Warming up models... ($i/90)"
+  else
+    echo "  Waiting for health endpoint... ($i/90)"
+  fi
+  sleep 5
 done
 
 echo ""

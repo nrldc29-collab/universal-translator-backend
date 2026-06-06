@@ -24,6 +24,8 @@ Build a local pipeline that can:
 - Convert translated text into natural speech
 - Run locally or on your own server without API dependency
 
+The default product path is **English ↔ Haitian Creole (EN↔HT)**: first-run UI defaults to `en → ht`, backend Whisper auto-detects which side was spoken, and translation direction flips automatically.
+
 The **NAIA Assistant** (bundled in `naia/`) provides an in-app conversational AI that can rephrase translations, explain idioms, and answer language questions. It is optional — the translator works fully without it, and the backend returns HTTP 503 for assistant endpoints when the naia kernel is unavailable.
 
 ## Architecture
@@ -83,6 +85,28 @@ MarianTranslator
       ↓
 PiperTextToSpeech
 ```
+
+## Quick Start (recommended)
+
+After cloning, the fastest path to a working local stack:
+
+```bash
+cp .env.example .env
+pip install -r requirements.txt
+make setup-models          # downloads Piper voices; requires espeak-ng or espeak for HT TTS on all platforms
+make start-local           # add --restart if port 8000 is stale
+```
+
+Wait for **LIVE** in the app header, then verify:
+
+```bash
+make verify-local-live
+make verify-bundled-live   # optional: bundled frontend + full smoke
+```
+
+Windows: `.\Start-Translator.ps1` then `.\Test-Translator.ps1`.
+
+Browser self-test: **Settings → Advanced → Run Self Test** (available when LIVE).
 
 ## Setup Instructions
 
@@ -202,13 +226,13 @@ npm run dev
 Translate text:
 
 ```bash
-python -m backend.cli --text "Hello, how are you?" --source en --target es
+python -m backend.cli --text "Hello, how are you?" --source en --target ht
 ```
 
 Translate audio and generate speech:
 
 ```bash
-python -m backend.cli --audio input.wav --source en --target es --output models/output.wav
+python -m backend.cli --audio input.wav --source en --target ht --output models/output.wav
 ```
 
 ## Run API Server
@@ -225,7 +249,21 @@ http://127.0.0.1:8000/docs
 
 ## Validation
 
-Run backend checks:
+Offline stack check (no server):
+
+```bash
+make verify-local
+```
+
+Live checks (backend must be running and LIVE):
+
+```bash
+make verify-local-live
+make verify-bundled-live
+bash scripts/test_translator.sh http://127.0.0.1:8000
+```
+
+Run backend unit tests:
 
 ```bash
 pytest
@@ -305,7 +343,7 @@ ws://127.0.0.1:8000/ws/audio
 Audio WebSocket flow:
 
 ```text
-Client JSON: {"type":"start","source_language":"en","target_language":"es"}
+Client JSON: {"type":"start","source_language":"en","target_language":"ht"}
 Client binary: WebM audio chunks
 Server: Silero VAD checks incoming chunks
 Server JSON: {"type":"vad","speech_detected":true}
@@ -394,23 +432,29 @@ The frontend queues audio chunks and plays them as soon as they arrive, so the u
 
 ## Step 9: Full Duplex Conversation
 
-The app supports two active speaker directions:
+The app supports two-person **Auto Conversation** mode (EN↔HT and other pairs):
 
 ```text
-Speaker A → System → Speaker B
-Speaker B → System → Speaker A
+Speaker A (en) → live_text socket → translation → TTS
+Speaker B (ht) → live_text socket → translation → TTS
+Shared mic     → stt_only socket  → Whisper STT → client routes by detected language
 ```
 
-Frontend duplex controls:
+Frontend conversation controls:
+
+- **Auto Conversation:** one shared microphone; backend Whisper transcribes via a dedicated `stt_only` WebSocket.
+- **Two translation sockets:** `conv-ab` (Person 1, source→target) and `conv-ba` (Person 2, target→source) carry `live_text` + TTS for each direction.
+- **Language detection:** the client and backend both detect which side of the pair was spoken and flip translation direction for EN↔HT pairs.
+
+Legacy duplex controls (separate A/B mic streams) remain available for non-HT pairs that use browser speech recognition:
 
 - **Speaker A → Speaker B:** uses the selected source language as A and target language as B.
 - **Speaker B → Speaker A:** reverses the selected languages.
-- **Both streams can be active:** each speaker gets an independent microphone WebSocket stream.
 
 Backend duplex behavior:
 
-- Each audio WebSocket sends a `speaker` field.
-- The same `/ws/audio` pipeline handles both directions.
+- Each WebSocket sends `speaker`, `device_id`, and optional `stt_only: true`.
+- The same `/ws/audio` pipeline handles audio streaming, `live_text`, and transcription-only modes.
 - Every result is tagged with the speaker:
 
 ```json
@@ -652,8 +696,8 @@ API keys are still supported for service-to-service access with `API_KEYS`, but 
 Set request and audio quotas:
 
 ```bash
-QUOTA_REQUESTS_PER_HOUR=120
-REQUESTS_PER_MINUTE=20
+QUOTA_REQUESTS_PER_HOUR=500
+REQUESTS_PER_MINUTE=120
 FREE_DAILY_AUDIO_MINUTES=10
 MAX_AUDIO_MB=25
 MAX_AUDIO_SECONDS=300
@@ -1188,7 +1232,7 @@ VAD_RECENT_CHUNKS=3
 VAD_SILENT_CHECKS=1
 MIN_SPEECH_BYTES=18000
 SPEECH_MERGE_MS=300
-MAX_ACTIVE_STREAMS_PER_USER=2
+MAX_ACTIVE_STREAMS_PER_USER=5
 STT_MAX_CONCURRENCY=1
 STT_QUEUE_MAX_DEPTH=8
 ```
@@ -1306,8 +1350,9 @@ The app now guides users to:
 
 1. Pick source and target languages.
 2. Use `Stream Audio` for one-speaker live translation.
-3. Use `Start A Mic` and `Start B Mic` for two-person conversation.
-4. Place each device close to its speaker for accuracy.
+3. Use **Auto Conversation** for two-person EN↔HT (one mic, three WebSockets).
+4. Use `Start A Mic` and `Start B Mic` for legacy two-device duplex on other language pairs.
+5. Place each device close to its speaker for accuracy.
 
 ### Mobile compatibility
 

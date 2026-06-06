@@ -13,7 +13,7 @@ class TestStreamSessionStateDefaults:
     def test_default_languages(self):
         state = StreamSessionState()
         assert state.source_language == "en"
-        assert state.target_language == "es"
+        assert state.target_language == "ht"
 
     def test_default_speaker_identity(self):
         state = StreamSessionState()

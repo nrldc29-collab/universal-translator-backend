@@ -8,11 +8,16 @@ import {
   languageName,
   isFatalStreamError,
   speechRecognitionLanguage,
+  detectLanguagePair,
+  htTranslationHasGlossaryTerms,
+  htToEnTranslationLooksValid,
+  languagePairNeedsBackendStt,
   audioFileExtension,
   withAuthToken,
   summarizeLatencyHistory,
   base64ToArrayBuffer,
   buildTranslatePayload,
+  readPersistedTargetLanguage,
   TARGET_LANGUAGE_OPTIONS,
 } from '../utils';
 
@@ -182,6 +187,10 @@ describe('isFatalStreamError', () => {
     expect(isFatalStreamError('buffer limit reached')).toBe(true);
   });
 
+  it('matches warming messages', () => {
+    expect(isFatalStreamError('Models still loading. Wait for LIVE.')).toBe(true);
+  });
+
   it('returns false for non-fatal messages', () => {
     expect(isFatalStreamError('connection closed')).toBe(false);
     expect(isFatalStreamError('')).toBe(false);
@@ -210,6 +219,62 @@ describe('speechRecognitionLanguage', () => {
   it('defaults to en-US for falsy input', () => {
     expect(speechRecognitionLanguage('')).toBe('en-US');
     expect(speechRecognitionLanguage(null)).toBe('en-US');
+  });
+});
+
+describe('detectLanguagePair', () => {
+  it('detects Haitian Creole in an EN↔HT pair', () => {
+    expect(detectLanguagePair('mwen bezwen èd', 'en', 'ht', 'en')).toBe('ht');
+  });
+
+  it('detects English in an EN↔HT pair', () => {
+    expect(detectLanguagePair('I need help today', 'en', 'ht', 'ht')).toBe('en');
+  });
+
+  it('keeps last language on ambiguous short text', () => {
+    expect(detectLanguagePair('bezwen èd', 'en', 'ht', 'en')).toBe('ht');
+  });
+});
+
+// ---------- languagePairNeedsBackendStt ----------
+
+describe('languagePairNeedsBackendStt', () => {
+  it('returns true when Haitian Creole is in the pair', () => {
+    expect(languagePairNeedsBackendStt('en', 'ht')).toBe(true);
+    expect(languagePairNeedsBackendStt('ht', 'en')).toBe(true);
+  });
+
+  it('returns false for non-HT pairs', () => {
+    expect(languagePairNeedsBackendStt('en', 'es')).toBe(false);
+  });
+});
+
+// ---------- htToEnTranslationLooksValid ----------
+
+describe('htToEnTranslationLooksValid', () => {
+  it('accepts help/need translations', () => {
+    expect(htToEnTranslationLooksValid('I need help')).toBe(true);
+  });
+
+  it('rejects unrelated text', () => {
+    expect(htToEnTranslationLooksValid('Bonjou')).toBe(false);
+  });
+});
+
+// ---------- htTranslationHasGlossaryTerms ----------
+
+describe('htTranslationHasGlossaryTerms', () => {
+  it('matches Creole glossary output', () => {
+    expect(htTranslationHasGlossaryTerms('Mwen bezwen èd')).toBe(true);
+    expect(htTranslationHasGlossaryTerms('Mwen bezwen ed')).toBe(true);
+  });
+
+  it('rejects unrelated text', () => {
+    expect(htTranslationHasGlossaryTerms('Bonjou')).toBe(false);
+  });
+
+  it('does not treat string indices as glossary hits', () => {
+    expect(htTranslationHasGlossaryTerms('abc')).toBe(false);
   });
 });
 
@@ -333,6 +398,14 @@ describe('buildTranslatePayload', () => {
 
   it('produces a plain serialisable object', () => {
     expect(() => JSON.stringify(buildTranslatePayload(base))).not.toThrow();
+  });
+});
+
+// ---------- readPersistedTargetLanguage ----------
+
+describe('readPersistedTargetLanguage', () => {
+  it('defaults to Haitian Creole for EN↔HT first-run users', () => {
+    expect(readPersistedTargetLanguage()).toBe('ht');
   });
 });
 

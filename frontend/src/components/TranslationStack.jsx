@@ -47,6 +47,9 @@ export default function TranslationStack({
   // clarification
   clarifyVisible,
   clarifyMessage,
+  confidenceWarningVisible,
+  confidenceWarningMessage,
+  setConfidenceWarningVisible,
   result,
   setClarifyVisible,
   setPipelineStage,
@@ -59,6 +62,7 @@ export default function TranslationStack({
   enableTypingAnimation = true,
   isTranslationActive = false,
   // text-input translate
+  textTranslateReady = true,
   onTextTranslate,
 }) {
   const [typingComplete, setTypingComplete] = useState(false);
@@ -69,11 +73,11 @@ export default function TranslationStack({
 
   const handleTextSubmit = useCallback(() => {
     const trimmed = textInputValue.trim();
-    if (!trimmed || !onTextTranslate) return;
+    if (!trimmed || !onTextTranslate || !textTranslateReady) return;
     onTextTranslate(trimmed);
     setTextInputValue('');
     setTextInputMode(false);
-  }, [textInputValue, onTextTranslate]);
+  }, [textInputValue, onTextTranslate, textTranslateReady]);
 
   const handleTextKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -127,7 +131,7 @@ export default function TranslationStack({
             <button
               type="button"
               className="text-input-submit"
-              disabled={!textInputValue.trim()}
+              disabled={!textTranslateReady || !textInputValue.trim()}
               onClick={handleTextSubmit}
             >
               <ArrowRight size={13} strokeWidth={2.5} />
@@ -277,6 +281,21 @@ export default function TranslationStack({
           </button>
         )}
       </article>
+
+      {confidenceWarningVisible && confidenceWarningMessage && (
+        <div className="confidence-warning-pill" role="status">
+          <span className="confidence-warning-text">{confidenceWarningMessage}</span>
+          <div className="clarify-pill-actions">
+            <button
+              type="button"
+              className="clarify-no"
+              onClick={() => setConfidenceWarningVisible(false)}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {clarifyVisible && clarifyMessage && (
         <div className="clarify-pill" role="alert">

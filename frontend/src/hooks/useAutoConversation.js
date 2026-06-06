@@ -12,55 +12,21 @@
  */
 import { useRef, useState, useCallback, useEffect } from 'react';
 
+import { BACKEND_TTS_LANGS, detectLanguagePair, speechRecognitionLanguage, languagePairNeedsBackendStt, createAudioRecorder, preferredAudioMimeType } from '../utils';
+
 // ─── Language config ─────────────────────────────────────────────────────
 const BROWSER_TTS_MAP = {
   en:'en-US', es:'es-MX', fr:'fr-FR', de:'de-DE', it:'it-IT',
   pt:'pt-BR', ru:'ru-RU', zh:'zh-CN', ja:'ja-JP', ko:'ko-KR',
-  ar:'ar-SA', hi:'hi-IN', ht:'fr-HT', nl:'nl-NL',
+  ar:'ar-SA', hi:'hi-IN', ht:'ht-HT', nl:'nl-NL',
 };
-const PIPER_LANGS = new Set(['en','es']);
 
 // ─── Language detection ──────────────────────────────────────────────────
-const LANG_PATTERNS = {
-  es:/\b(el|la|los|las|un|una|que|es|en|de|y|no|lo|le|su|por|con|para|como|pero|más|este|bien|hola|gracias|cómo|qué|estás|soy|quiero|puedo|tiene|hace|usted|también|cuando|porque|donde|nosotros|ellos|aquí|allí)\b/i,
-  fr:/\b(le|la|les|un|une|des|de|du|et|est|pas|je|tu|il|nous|avec|pour|sur|dans|mais|merci|bonjour|oui|non|très|bien|voilà|c'est|j'ai|vous|ils|mon|ma|ici|là|aussi|quand|comment|pourquoi|où)\b/i,
-  de:/\b(der|die|das|ein|eine|und|ist|nicht|ich|du|er|sie|wir|mit|auf|zu|von|im|dem|auch|aber|wenn|bitte|danke|ja|nein|gut|hallo|können|haben|sein|noch|schon|nur|mehr|sehr|was|wer|wo|wie)\b/i,
-  pt:/\b(o|a|os|as|um|uma|de|em|que|é|não|com|para|por|mas|seu|sua|você|também|muito|bem|obrigado|olá|como|está|posso|tenho|fazer|ter|ser|aqui|lá|agora|então|já|só)\b/i,
-  it:/\b(il|la|i|le|un|una|di|e|è|non|con|per|ma|si|mi|ti|lo|che|come|sono|ho|ha|grazie|ciao|sì|no|bene|dove|anche|già|solo|quando|perché|quello|questa|loro|noi)\b/i,
-  nl:/\b(de|het|een|van|en|is|niet|ik|je|hij|ze|we|met|voor|op|in|maar|ook|aan|bij|hallo|dank|ja|nee|goed|hoe|wat|wie|waar|wanneer|dit|dat|mijn|jouw)\b/i,
-  ru:/[а-яёА-ЯЁ]{3,}/,
-  ht:/\b(mwen|ou|li|nou|yo|se|pa|nan|ak|pou|ki|sa|gen|ka|ap|te|la|wi|non|mèsi|bonjou|sak|kijan|kote|jan|poukisa)\b/i,
-};
-
-function detectLanguage(text, langA, langB, lastLang) {
-  if (!text || text.trim().length < 2) return lastLang || langA;
-  // Script-range checks first (definitive)
-  const checks = [
-    [/[一-鿿぀-ゟ゠-ヿ]/, ['zh','ja']],
-    [/[가-힯]/,           ['ko']],
-    [/[؀-ۿ]/,            ['ar']],
-    [/[Ѐ-ӿ]/,            ['ru']],
-    [/[ऀ-ॿ]/,            ['hi']],
-  ];
-  for (const [rx, langs] of checks) {
-    if (rx.test(text)) {
-      for (const l of langs) {
-        if (langA === l) return langA;
-        if (langB === l) return langB;
-      }
-    }
-  }
-  // Score both with word patterns
-  const sA = LANG_PATTERNS[langA] ? (text.match(LANG_PATTERNS[langA]) || []).length : 0;
-  const sB = LANG_PATTERNS[langB] ? (text.match(LANG_PATTERNS[langB]) || []).length : 0;
-  if (sA > sB) return langA;
-  if (sB > sA) return langB;
-  return lastLang || langA; // tie -> keep last speaker
-}
+const detectLanguage = detectLanguagePair;
 
 // ─── Browser TTS ─────────────────────────────────────────────────────────
 function speakBrowser(text, lang, { onEnd } = {}) {
-  if (!window.speechSynthesis || !text) { onEnd?.(); return () => {}; }
+  if (!window.speechSynthesis || !text || lang === 'ht') { onEnd?.(); return () => {}; }
   window.speechSynthesis.cancel();
   const utt = new SpeechSynthesisUtterance(text);
   utt.lang = BROWSER_TTS_MAP[lang] || 'en-US';
@@ -152,37 +118,84 @@ function createMicAnalyser(stream) {
 }
 
 // ─── WebSocket with exponential backoff ──────────────────────────────────
-function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
+function createTranslationSocket(urlFn, srcLang, tgtLang, handlers, socketMeta = {}) {
   let ws = null;
   let ready = false;
   let queue = [];
   let retryCount = 0;
   let closed = false;
   let retryTimer = null;
+  const {
+    sessionId = 'default',
+    deviceId = null,
+    speaker = 'auto',
+    speakerLabel = 'Auto',
+  } = socketMeta;
+
+  function buildStartPayload() {
+    return {
+      type: 'start',
+      source_language: srcLang,
+      target_language: tgtLang,
+      session_id: sessionId,
+      device_id: deviceId,
+      speaker_mode: 'manual',
+      speaker,
+      speaker_label: speakerLabel,
+    };
+  }
+
+  function buildLiveTextPayload(text, isFinal) {
+    return {
+      type: 'live_text',
+      text,
+      final: isFinal,
+      session_id: sessionId,
+      device_id: deviceId,
+      source_language: srcLang,
+      target_language: tgtLang,
+      speaker,
+      speaker_label: speakerLabel,
+      speaker_mode: 'manual',
+    };
+  }
 
   function connect() {
     if (closed) return;
     ws = new WebSocket(urlFn());
     ws.onopen = () => {
       retryCount = 0;
-      ws.send(JSON.stringify({
-        type:'start', source_language:srcLang, target_language:tgtLang,
-        speaker_mode:'manual', speaker:'auto', speaker_label:'Auto',
-      }));
-      ready = true;
-      queue.splice(0).forEach(m => ws.send(m));
-      handlers.onReady?.();
     };
     ws.onmessage = ({ data }) => {
       try {
         const d = JSON.parse(data);
-        if (d.type === 'live_translation' || d.type === 'partial_translation') handlers.onTranslation?.(d.text, false);
-        if (d.type === 'final' || d.type === 'translation')  handlers.onTranslation?.(d.translated_text || d.text || '', true);
-        if (d.type === 'tts_audio_chunk' && !d.partial)      handlers.onTtsChunk?.(d.audio_base64, d.mime_type);
-        if (d.type === 'tts_end' && !d.partial)              handlers.onTtsEnd?.();
+        if (d.type === 'ready') {
+          ws.send(JSON.stringify(buildStartPayload()));
+          ready = true;
+          queue.splice(0).forEach((m) => ws.send(m));
+          handlers.onReady?.();
+          return;
+        }
+        if (d.type === 'error') {
+          handlers.onError?.(d);
+          if (d.warming) {
+            closed = true;
+            ws.close();
+          }
+          return;
+        }
+        if (d.type === 'live_translation') {
+          handlers.onTranslation?.(d.text, Boolean(d.final), d);
+        } else if (d.type === 'partial_translation') {
+          handlers.onTranslation?.(d.text, false, d);
+        } else if (d.type === 'final') {
+          handlers.onFinal?.(d);
+        }
+        if (d.type === 'tts_audio_chunk' && d.audio_base64) handlers.onTtsChunk?.(d.audio_base64, d.mime_type, d);
+        if (d.type === 'tts_end' && !d.partial) handlers.onTtsEnd?.(d);
       } catch {}
     };
-    ws.onerror = () => { ready = false; };
+    ws.onerror = () => { ready = false; handlers.onError?.({ message: 'WebSocket error' }); };
     ws.onclose = () => {
       ready = false;
       if (!closed) {
@@ -194,11 +207,7 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
   }
 
   function send(text, isFinal = true) {
-    const msg = JSON.stringify({
-      type:'live_text', text, final:isFinal,
-      source_language:srcLang, target_language:tgtLang,
-      speaker:'auto', speaker_label:'Auto', speaker_mode:'manual',
-    });
+    const msg = JSON.stringify(buildLiveTextPayload(text, isFinal));
     if (ready && ws?.readyState === WebSocket.OPEN) ws.send(msg);
     else queue.push(msg);
   }
@@ -216,7 +225,17 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
 }
 
 // ─── Main hook ────────────────────────────────────────────────────────────
-export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, targetLanguage, withAuthToken }) {
+export function useAutoConversation({
+  wsAudioUrl,
+  authToken,
+  sourceLanguage,
+  targetLanguage,
+  sessionId = 'default',
+  deviceId = 'conversation',
+  withAuthToken,
+  backendReady = true,
+  onStatus,
+}) {
   const [active, setActive]       = useState(false);
   const [phase, setPhase]         = useState('idle'); // idle|listening|ready|processing|speaking
   const [detectedLang, setDetLang]= useState(null);
@@ -240,20 +259,36 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
   const liveTextRef    = useRef('');   // ref copy of liveText to avoid stale closures
   const srcRef         = useRef(sourceLanguage);
   const tgtRef         = useRef(targetLanguage);
+  const sessionRef     = useRef(sessionId);
+  const deviceRef      = useRef(deviceId);
   const ttsTimerRef    = useRef(null);
   const ttsTimerBARef  = useRef(null);
   const utteranceIdRef = useRef(0); // incremented per utterance to invalidate stale handlers
+  const utteranceTimeoutRef = useRef(null);
   const ttsChunksAB    = useRef([]);
   const ttsChunksBA    = useRef([]);
   const playingDirRef  = useRef(null); // which direction is currently playing TTS
+  const micStreamRef   = useRef(null);
+  const sttSockRef     = useRef(null);
+  const sttRecorderRef = useRef(null);
+  const backendSttActiveRef = useRef(false);
 
   useEffect(() => { srcRef.current = sourceLanguage; }, [sourceLanguage]);
   useEffect(() => { tgtRef.current = targetLanguage; }, [targetLanguage]);
+  useEffect(() => { sessionRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { deviceRef.current = deviceId; }, [deviceId]);
 
-  // Re-open sockets when languages change (while active)
+  // Re-open sockets when languages or auth change (while active)
   useEffect(() => {
     if (activeRef.current) restartSockets();
-  }, [sourceLanguage, targetLanguage]);
+  }, [sourceLanguage, targetLanguage, authToken]);
+
+  function clearUtteranceTimeout() {
+    if (utteranceTimeoutRef.current) {
+      clearTimeout(utteranceTimeoutRef.current);
+      utteranceTimeoutRef.current = null;
+    }
+  }
 
   function setPhaseR(p) { phaseRef.current = p; setPhase(p); }
   function buildUrl() {
@@ -288,6 +323,8 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
       setTurns(prev => [...prev, {
         speaker,
         speaker_label: speaker === 'A' ? 'Person 1' : 'Person 2',
+        srcLang: speaker === 'A' ? srcRef.current : tgtRef.current,
+        tgtLang: speaker === 'A' ? tgtRef.current : srcRef.current,
         source_text: sourceText,
         translated_text: translatedText,
         conversationSpeaker: speaker,
@@ -316,20 +353,54 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
     const src = srcRef.current;
     const tgt = tgtRef.current;
 
-    function makeTtsHandler(dir) {
+    function makeTtsHandler(dir, outboundTargetLang) {
       const chunkBuf = dir === 'AB' ? ttsChunksAB : ttsChunksBA;
       const timerRef = dir === 'AB' ? ttsTimerRef : ttsTimerBARef;
       let finalTranslation = '';
       let finalSource = '';
+      let receivedTtsChunks = 0;
+      let ttsCompleted = false;
+      let audioFallbackTimer = null;
 
       return {
-        onTranslation(text, isFinal) {
+        onTranslation(text, isFinal, frame = {}) {
           if (!activeRef.current) return;
           setLiveTrans(text);
-          if (isFinal) finalTranslation = text;
+          if (!isFinal) return;
+          finalTranslation = text;
+          clearTimeout(audioFallbackTimer);
+          clearUtteranceTimeout();
+          if (ttsCompleted) return;
+          const activeTarget = frame.target_language || outboundTargetLang;
+          const backendOwnsTts = frame.source === 'browser_live_text'
+            && BACKEND_TTS_LANGS.has(activeTarget);
+          if (backendOwnsTts) {
+            receivedTtsChunks = 0;
+            audioFallbackTimer = window.setTimeout(() => {
+              if (!activeRef.current || receivedTtsChunks > 0 || ttsCompleted) return;
+              onStatus?.('Voice playback timed out');
+              afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B');
+            }, 2500);
+            return;
+          }
+          if (text && !BACKEND_TTS_LANGS.has(activeTarget)) {
+            clearTimeout(timerRef.current);
+            clearTimeout(dir === 'AB' ? ttsTimerBARef.current : ttsTimerRef.current);
+            setPhaseR('speaking');
+            speakBrowser(text, activeTarget, {
+              onEnd: () => afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B'),
+            });
+          }
         },
         onTtsChunk(b64) {
           if (!activeRef.current) return;
+          if (recogRef.current) {
+            try { recogRef.current.abort(); } catch {}
+            recogRef.current = null;
+          }
+          receivedTtsChunks += 1;
+          clearTimeout(audioFallbackTimer);
+          clearUtteranceTimeout();
           chunkBuf.current.push(b64);
           if (playingDirRef.current === null) {
             playingDirRef.current = dir;
@@ -340,6 +411,9 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
         },
         onTtsEnd() {
           if (!activeRef.current) return;
+          ttsCompleted = true;
+          clearUtteranceTimeout();
+          clearTimeout(audioFallbackTimer);
           clearTimeout(timerRef.current);
           timerRef.current = setTimeout(async () => {
             if (!activeRef.current) return;
@@ -351,19 +425,70 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
             afterTts(liveTextRef.current, finalTranslation, spk);
           }, 150);
         },
+        onFinal(data) {
+          if (!activeRef.current || data?.source !== 'browser_live_text') return;
+          if (data.translated_text) finalTranslation = data.translated_text;
+        },
         onReady() { setSockStat('connected'); },
         onReconnecting(n) { setSockStat(n > 1 ? 'reconnecting' : 'connected'); },
+        onError(err) {
+          if (!activeRef.current) return;
+          if (err?.warming) {
+            onStatus?.('Models still loading — wait for LIVE');
+            lockedRef.current = false;
+            setPhaseR('idle');
+            activeRef.current = false;
+            setActive(false);
+            setSockStat('disconnected');
+            return;
+          }
+          const message = String(err?.message || '');
+          if (message.includes('Too many active streams')) {
+            onStatus?.('Stream limit — reconnecting conversation...');
+            window.setTimeout(() => {
+              if (activeRef.current) restartSockets();
+            }, 800);
+            return;
+          }
+          if (err?.source === 'browser_live_text' && err?.recoverable) {
+            clearTimeout(audioFallbackTimer);
+            ttsCompleted = true;
+            const msg = String(err?.message || '');
+            if (/translation failed/i.test(msg)) {
+              onStatus?.(msg);
+            }
+            afterTts(liveTextRef.current, '', dir === 'AB' ? 'A' : 'B');
+          }
+        },
         setFinalSource(t) { finalSource = t; },
         getFinalTranslation() { return finalTranslation; },
-        reset() { finalTranslation = ''; finalSource = ''; },
+        reset() {
+          finalTranslation = '';
+          finalSource = '';
+          receivedTtsChunks = 0;
+          ttsCompleted = false;
+          clearTimeout(audioFallbackTimer);
+        },
       };
     }
 
-    const handlerAB = makeTtsHandler('AB');
-    const handlerBA = makeTtsHandler('BA');
+    const handlerAB = makeTtsHandler('AB', tgt);
+    const handlerBA = makeTtsHandler('BA', src);
+    const sessionKey = sessionRef.current;
+    const baseDevice = deviceRef.current;
 
-    sockABRef.current = createTranslationSocket(() => buildUrl(), src, tgt, handlerAB);
-    sockBARef.current = createTranslationSocket(() => buildUrl(), tgt, src, handlerBA);
+    sockABRef.current = createTranslationSocket(() => buildUrl(), src, tgt, handlerAB, {
+      sessionId: sessionKey,
+      deviceId: `${baseDevice}-conv-ab`,
+      speaker: 'A',
+      speakerLabel: 'Person 1',
+    });
+    sockBARef.current = createTranslationSocket(() => buildUrl(), tgt, src, handlerBA, {
+      sessionId: sessionKey,
+      deviceId: `${baseDevice}-conv-ba`,
+      speaker: 'B',
+      speakerLabel: 'Person 2',
+    });
 
     // Store handlers for use in handleUtterance
     sockABRef.current._handler = handlerAB;
@@ -388,24 +513,150 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
   }
 
   function restartSockets() {
+    clearUtteranceTimeout();
+    clearTimeout(ttsTimerRef.current);
+    clearTimeout(ttsTimerBARef.current);
+    utteranceIdRef.current += 1;
+    lockedRef.current = false;
+    stopBackendStt();
     sockABRef.current?.destroy(); sockABRef.current = null;
     sockBARef.current?.destroy(); sockBARef.current = null;
     setSockStat('disconnected');
-    openSockets();
+    window.setTimeout(() => {
+      if (!activeRef.current) return;
+      openSockets();
+      if (languagePairNeedsBackendStt(srcRef.current, tgtRef.current)) {
+        startBackendSttListening();
+      } else {
+        startRecognition();
+      }
+    }, 600);
+  }
+
+  function stopMicStream() {
+    micStreamRef.current?.getTracks().forEach((track) => track.stop());
+    micStreamRef.current = null;
+  }
+
+  function stopBackendStt() {
+    backendSttActiveRef.current = false;
+    if (sttRecorderRef.current?.state === 'recording') {
+      try { sttRecorderRef.current.stop(); } catch {}
+    }
+    sttRecorderRef.current = null;
+    if (sttSockRef.current) {
+      sttSockRef.current.onclose = null;
+      try { sttSockRef.current.close(); } catch {}
+      sttSockRef.current = null;
+    }
+  }
+
+  function openBackendSttSocket() {
+    if (sttSockRef.current?.readyState === WebSocket.OPEN
+      || sttSockRef.current?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+    const ws = new WebSocket(buildUrl());
+    sttSockRef.current = ws;
+    ws.binaryType = 'arraybuffer';
+    ws.onmessage = ({ data }) => {
+      try {
+        const d = JSON.parse(data);
+        if (d.type === 'ready') {
+          ws.send(JSON.stringify({
+            type: 'start',
+            source_language: srcRef.current,
+            target_language: tgtRef.current,
+            session_id: sessionRef.current,
+            device_id: `${deviceRef.current}-conv-stt`,
+            speaker_mode: 'auto',
+            speaker: 'auto',
+            stt_only: true,
+            mime_type: preferredAudioMimeType(),
+          }));
+          return;
+        }
+        if (d.type === 'error') {
+          if (d.warming) {
+            onStatus?.('Models still loading — wait for LIVE');
+            stop();
+          }
+          return;
+        }
+        if (d.type === 'partial_transcription' && !lockedRef.current && activeRef.current) {
+          const visible = String(d.text || '').trim();
+          if (visible) {
+            setLiveText(visible);
+            liveTextRef.current = visible;
+          }
+          return;
+        }
+        if (d.type === 'stt_only' && d.text && !lockedRef.current && activeRef.current) {
+          handleUtterance(String(d.text).trim());
+        }
+      } catch {}
+    };
+    ws.onclose = () => {
+      sttSockRef.current = null;
+      if (activeRef.current && backendSttActiveRef.current) {
+        window.setTimeout(() => {
+          if (activeRef.current && backendSttActiveRef.current) openBackendSttSocket();
+        }, 500);
+      }
+    };
+  }
+
+  function startBackendSttListening() {
+    if (!activeRef.current || lockedRef.current || !micStreamRef.current) return;
+    backendSttActiveRef.current = true;
+    setPhaseR('listening');
+    openBackendSttSocket();
+    if (sttRecorderRef.current?.state === 'recording') return;
+    try {
+      const recorder = createAudioRecorder(micStreamRef.current);
+      sttRecorderRef.current = recorder;
+      recorder.ondataavailable = async (event) => {
+        if (!backendSttActiveRef.current || lockedRef.current) return;
+        const ws = sttSockRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN || event.data.size <= 0) return;
+        const buffer = await event.data.arrayBuffer();
+        ws.send(JSON.stringify({
+          type: 'chunk_meta',
+          sent_at_ms: Date.now(),
+          bytes: buffer.byteLength,
+          mime_type: recorder.mimeType || preferredAudioMimeType(),
+          audio_level: analyserRef.current?.getLevel?.() || 0,
+          voice_active: true,
+        }));
+        ws.send(buffer);
+      };
+      recorder.start(250);
+    } catch {
+      onStatus?.('Backend speech recognition unavailable');
+      setPhaseR('idle');
+    }
   }
 
   // ── Speech recognition ────────────────────────────────────────────────
   function startRecognition() {
     if (!activeRef.current || lockedRef.current) return;
+    if (languagePairNeedsBackendStt(srcRef.current, tgtRef.current)) {
+      startBackendSttListening();
+      return;
+    }
     if (recogRef.current) { try { recogRef.current.abort(); } catch {} recogRef.current = null; }
 
     const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Rec) { setPhaseR('idle'); return; }
+    if (!Rec) {
+      onStatus?.('Speech recognition unavailable in this browser');
+      setPhaseR('idle');
+      return;
+    }
 
     const rec = new Rec();
     // Alternate language hints to improve detection of both speakers
     const useAltLang = lastLangRef.current === srcRef.current;
-    rec.lang = BROWSER_TTS_MAP[useAltLang ? tgtRef.current : srcRef.current] || 'en-US';
+    rec.lang = speechRecognitionLanguage(useAltLang ? tgtRef.current : srcRef.current);
     rec.interimResults = true;
     rec.continuous = false;
     rec.maxAlternatives = 3; // get alternatives for better detection
@@ -413,6 +664,7 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
     setPhaseR('listening');
 
     rec.onresult = (ev) => {
+      if (lockedRef.current || phaseRef.current === 'speaking' || phaseRef.current === 'processing') return;
       let final = '', interim = '';
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         // Check all alternatives for language patterns
@@ -450,6 +702,9 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
   function handleUtterance(text) {
     if (!activeRef.current || lockedRef.current) return;
     if (recogRef.current) { try { recogRef.current.stop(); } catch {} recogRef.current = null; }
+    if (sttRecorderRef.current?.state === 'recording') {
+      try { sttRecorderRef.current.stop(); } catch {}
+    }
 
     const src = srcRef.current;
     const tgt = tgtRef.current;
@@ -473,57 +728,35 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
     const sock = speaker === 'A' ? sockABRef.current : sockBARef.current;
     sock?._handler?.reset();
 
-    // Timeout safety: restart if no response in 9s
+    // Timeout safety: restart if no response in 15s
+    clearUtteranceTimeout();
     clearTimeout(ttsTimerRef.current);
     clearTimeout(ttsTimerBARef.current);
     const capturedUtteranceId = utteranceIdRef.current;
-    ttsTimerRef.current = setTimeout(() => {
+    utteranceTimeoutRef.current = setTimeout(() => {
       if (activeRef.current && utteranceIdRef.current === capturedUtteranceId &&
           (phaseRef.current === 'processing' || phaseRef.current === 'speaking')) {
-        utteranceIdRef.current++; // invalidate any pending handler
+        utteranceIdRef.current++;
         afterTts(text, '', speaker);
       }
-    }, 9000);
+    }, 15000);
 
     if (sock) {
       sock.send(text, true);
     } else {
-      // Socket not ready — browser TTS fallback
-      setPhaseR('speaking');
-      speakBrowser(text, detTgt, {
-        onEnd: () => afterTts(text, '(offline)', speaker)
-      });
-    }
-
-    // For browser-TTS target languages: backend sends translation text, we speak it
-    // The onTranslation handler in makeTtsHandler will call speakBrowser when isFinal
-    // For PIPER_LANGS: tts_audio_chunk arrives and we play via AudioContext
-    if (!PIPER_LANGS.has(detTgt)) {
-      // Override the handler to use browser TTS when final translation arrives
-      const handler = sock?._handler;
-      if (handler) {
-        const origOnTrans = handler.onTranslation.bind(handler);
-        handler.onTranslation = (translatedText, isFinal) => {
-          if (!activeRef.current) return;
-          setLiveTrans(translatedText);
-          if (isFinal && translatedText) {
-            clearTimeout(ttsTimerRef.current);
-            clearTimeout(ttsTimerBARef.current);
-            setPhaseR('speaking');
-            speakBrowser(translatedText, detTgt, {
-              onEnd: () => afterTts(text, translatedText, speaker)
-            });
-            // Restore original handler for next turn
-            handler.onTranslation = origOnTrans;
-          }
-        };
-      }
+      onStatus?.('Translation socket not ready');
+      lockedRef.current = false;
+      afterTts(text, '', speaker);
     }
   }
 
   // ── Public API ──────────────────────────────────────────────────────────
   const start = useCallback(async () => {
     if (activeRef.current) return;
+    if (!backendReady) {
+      onStatus?.('Models still loading — wait for LIVE');
+      return;
+    }
     activeRef.current = true;
     lockedRef.current = false;
     setActive(true);
@@ -539,15 +772,20 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
     playerRef.current = createAudioPlayer();
     window.speechSynthesis?.getVoices(); // preload
 
-    // Try to get mic stream for level meter
+    // Mic stream for level meter and optional backend STT
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
       startMicLevelPoll(stream);
-    } catch {}
+    } catch {
+      onStatus?.('Microphone access denied');
+      stop();
+      return;
+    }
 
     openSockets();
     setTimeout(() => { if (activeRef.current) startRecognition(); }, 500);
-  }, []);
+  }, [backendReady, onStatus]);
 
   const stop = useCallback(() => {
     activeRef.current = false;
@@ -556,18 +794,28 @@ export function useAutoConversation({ wsAudioUrl, authToken, sourceLanguage, tar
     setPhaseR('idle');
     setDetLang(null);
     setMicLevel(0);
+    clearUtteranceTimeout();
     clearTimeout(ttsTimerRef.current);
     clearTimeout(ttsTimerBARef.current);
     if (recogRef.current) { try { recogRef.current.abort(); } catch {} recogRef.current = null; }
     sockABRef.current?.destroy(); sockABRef.current = null;
     sockBARef.current?.destroy(); sockBARef.current = null;
+    stopBackendStt();
     playerRef.current?.close(); playerRef.current = null;
     stopMicLevelPoll();
+    stopMicStream();
     window.speechSynthesis?.cancel();
     setSockStat('disconnected');
   }, []);
 
   const clearTurns = useCallback(() => setTurns([]), []);
+
+  useEffect(() => {
+    if (activeRef.current && !backendReady) {
+      onStatus?.('Models still loading — wait for LIVE');
+      stop();
+    }
+  }, [backendReady, onStatus, stop]);
 
   useEffect(() => () => stop(), []);
 

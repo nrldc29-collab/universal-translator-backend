@@ -8,7 +8,7 @@ def _load_dotenv_file() -> None:
     if not env_file.exists():
         return
     try:
-        for raw_line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        for raw_line in env_file.read_text(encoding="utf-8-sig", errors="replace").splitlines():
             line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -84,11 +84,10 @@ def get_whisper_compute_type() -> str:
 
 
 def get_whisper_model_size() -> str:
-    # Optimize for faster partial translations - use tiny model for speed
+    # Default to small for better accent/dialect accuracy; override with WHISPER_MODEL_SIZE.
     if os.getenv("GPU_COST_MODE", "balanced").lower() == "low":
-        return os.getenv("WHISPER_MODEL_SIZE", "tiny")
-    # Use tiny model by default for fastest partial STT
-    return os.getenv("WHISPER_MODEL_SIZE", "tiny")
+        return os.getenv("WHISPER_MODEL_SIZE", "small")
+    return os.getenv("WHISPER_MODEL_SIZE", "small")
 
 
 def get_whisper_cpu_threads() -> int:
@@ -108,7 +107,19 @@ def get_whisper_beam_size() -> int:
 
 
 def get_translation_backend() -> str:
-    return os.getenv("TRANSLATION_BACKEND", "hybrid").lower()
+    return os.getenv("TRANSLATION_BACKEND", "marian").lower()
+
+
+def get_hybrid_enable_remote() -> bool:
+    return _to_bool("HYBRID_ENABLE_REMOTE", False)
+
+
+def get_confidence_warning_threshold() -> float:
+    return _to_float("CONFIDENCE_WARNING_THRESHOLD", 0.72, minimum=0.0, maximum=1.0)
+
+
+def get_high_stakes_confidence_threshold() -> float:
+    return _to_float("HIGH_STAKES_CONFIDENCE_THRESHOLD", 0.78, minimum=0.0, maximum=1.0)
 
 
 def get_translation_device() -> str:
@@ -192,7 +203,7 @@ def get_api_keys() -> set[str]:
 
 
 def get_quota_limit() -> int:
-    return _to_int("QUOTA_REQUESTS_PER_HOUR", 120, minimum=1)
+    return _to_int("QUOTA_REQUESTS_PER_HOUR", 500, minimum=1)
 
 
 def get_jwt_secret() -> str:
@@ -224,7 +235,7 @@ def get_user_tiers() -> dict[str, str]:
 
 
 def get_requests_per_minute() -> int:
-    return _to_int("REQUESTS_PER_MINUTE", 20, minimum=1)
+    return _to_int("REQUESTS_PER_MINUTE", 120, minimum=1)
 
 
 def get_max_audio_mb() -> int:
@@ -260,7 +271,7 @@ def get_partial_translation_min_words() -> int:
 
 
 def get_partial_tts_mode() -> bool:
-    return _to_bool("PARTIAL_TTS_MODE", False)
+    return _to_bool("PARTIAL_TTS_MODE", True)
 
 
 def get_vad_recent_chunks() -> int:
@@ -325,7 +336,8 @@ def get_stt_queue_max_depth() -> int:
 
 
 def get_max_active_streams_per_user() -> int:
-    return _to_int("MAX_ACTIVE_STREAMS_PER_USER", 2, minimum=1)
+    # Conversation mode (2× live_text + 1× stt_only) needs 3; allow reconnect headroom.
+    return max(5, _to_int("MAX_ACTIVE_STREAMS_PER_USER", 5, minimum=1))
 
 
 
@@ -366,7 +378,7 @@ def get_google_tts_api_key() -> str:
 
 
 def get_prefer_cloud_tts() -> bool:
-    return _to_bool("PREFER_CLOUD_TTS", True)
+    return _to_bool("PREFER_CLOUD_TTS", False)
 
 
 def google_tts_diagnostics() -> dict:

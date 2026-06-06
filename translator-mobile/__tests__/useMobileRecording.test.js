@@ -5,7 +5,7 @@ describe('useMobileRecording', () => {
   const mockProps = {
     isConnected: true,
     sourceLanguage: 'en',
-    targetLanguage: 'es',
+    targetLanguage: 'ht',
     wsUrl: 'http://localhost:8000',
     token: 'test-token',
     recording: null,

@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { authHeaders } from '../utils';
+import { useEffect, useRef, useState } from 'react';
 
 const TOKEN_STORAGE_KEY = 'translator_token';
 
@@ -7,6 +6,7 @@ export function useAuth({ apiUrl, onStatus }) {
   const [authToken, setAuthToken] = useState(() => localStorage.getItem(TOKEN_STORAGE_KEY) || '');
   const [username, setUsername] = useState('demo');
   const [password, setPassword] = useState('demo');
+  const loginPromiseRef = useRef(null);
 
   async function login() {
     const response = await fetch(`${apiUrl}/auth/login`, {
@@ -16,12 +16,16 @@ export function useAuth({ apiUrl, onStatus }) {
     });
     if (!response.ok) {
       onStatus?.('Login failed');
-      return;
+      return '';
     }
     const data = await response.json();
-    localStorage.setItem(TOKEN_STORAGE_KEY, data.access_token);
-    setAuthToken(data.access_token);
-    onStatus?.(`Logged in as ${username}`);
+    const token = data.access_token || '';
+    if (token) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      setAuthToken(token);
+      onStatus?.(`Logged in as ${username}`);
+    }
+    return token;
   }
 
   function logout() {
@@ -30,9 +34,29 @@ export function useAuth({ apiUrl, onStatus }) {
     onStatus?.('Logged out');
   }
 
-  async function ensureAuthToken() {
-    return authToken || '';
+  function clearAuthToken() {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    setAuthToken('');
   }
+
+  async function ensureAuthToken({ force = false } = {}) {
+    if (authToken && !force) return authToken;
+    if (force) clearAuthToken();
+    if (!username.trim() || !password.trim()) return '';
+    if (!loginPromiseRef.current) {
+      loginPromiseRef.current = login()
+        .catch(() => '')
+        .finally(() => {
+          loginPromiseRef.current = null;
+        });
+    }
+    return loginPromiseRef.current;
+  }
+
+  useEffect(() => {
+    if (authToken || !username.trim() || !password.trim()) return;
+    ensureAuthToken().catch(() => {});
+  }, [apiUrl]);
 
   return {
     authToken,

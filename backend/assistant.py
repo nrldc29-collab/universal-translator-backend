@@ -126,7 +126,7 @@ async def chat(
 
             {
               "source_language": "en",
-              "target_language": "es",
+              "target_language": "ht",
               "source_text":    "Hello, how are you?",
               "translated_text": "Hola, ¿cómo estás?",
             }

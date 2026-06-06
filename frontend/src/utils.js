@@ -47,6 +47,48 @@ export function configuredUrl(value) {
   return value;
 }
 
+/** Languages the local backend can synthesize offline (Piper voices + eSpeak). */
+export const BACKEND_TTS_LANGS = new Set([
+  'en', 'es', 'ht', 'fr', 'de', 'it', 'pt', 'nl', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi',
+]);
+
+const LANG_DETECT_PATTERNS = {
+  es: /\b(el|la|los|las|un|una|que|es|en|de|y|no|lo|le|su|por|con|para|como|pero|más|este|bien|hola|gracias|cómo|qué|estás|soy|quiero|puedo|tiene|hace|usted|también|cuando|porque|donde|nosotros|ellos|aquí|allí)\b/i,
+  fr: /\b(le|la|les|un|une|des|de|du|et|est|pas|je|tu|il|nous|avec|pour|sur|dans|mais|merci|bonjour|oui|non|très|bien|voilà|c'est|j'ai|vous|ils|mon|ma|ici|là|aussi|quand|comment|pourquoi|où)\b/i,
+  de: /\b(der|die|das|ein|eine|und|ist|nicht|ich|du|er|sie|wir|mit|auf|zu|von|im|dem|auch|aber|wenn|bitte|danke|ja|nein|gut|hallo|können|haben|sein|noch|schon|nur|mehr|sehr|was|wer|wo|wie)\b/i,
+  pt: /\b(o|a|os|as|um|uma|de|em|que|é|não|com|para|por|mas|seu|sua|você|também|muito|bem|obrigado|olá|como|está|posso|tenho|fazer|ter|ser|aqui|lá|agora|então|já|só)\b/i,
+  it: /\b(il|la|i|le|un|una|di|e|è|non|con|per|ma|si|mi|ti|lo|che|come|sono|ho|ha|grazie|ciao|sì|no|bene|dove|anche|già|solo|quando|perché|quello|questa|loro|noi)\b/i,
+  nl: /\b(de|het|een|van|en|is|niet|ik|je|hij|ze|we|met|voor|op|in|maar|ook|aan|bij|hallo|dank|ja|nee|goed|hoe|wat|wie|waar|wanneer|dit|dat|mijn|jouw)\b/i,
+  ru: /[а-яёА-ЯЁ]{3,}/,
+  ht: /\b(mwen|ou|li|nou|yo|se|pa|nan|ak|pou|ki|sa|gen|ka|ap|te|la|wi|non|mesi|mèsi|bonjou|sak|kijan|kote|jan|poukisa|bezwen|ed|èd)\b/i,
+  en: /\b(the|and|is|are|was|were|have|has|had|you|your|what|where|when|why|how|hello|thanks|please|need|help|going|today)\b/i,
+};
+
+/** Guess which side of a language pair the spoken text belongs to (for EN↔HT solo assist). */
+export function detectLanguagePair(text, langA, langB, lastLang) {
+  if (!text || text.trim().length < 2) return lastLang || langA;
+  const checks = [
+    [/[一-鿿぀-ゟ゠-ヿ]/, ['zh', 'ja']],
+    [/[가-힯]/, ['ko']],
+    [/[؀-ۿ]/, ['ar']],
+    [/[Ѐ-ӿ]/, ['ru']],
+    [/[ऀ-ॿ]/, ['hi']],
+  ];
+  for (const [rx, langs] of checks) {
+    if (rx.test(text)) {
+      for (const lang of langs) {
+        if (langA === lang) return langA;
+        if (langB === lang) return langB;
+      }
+    }
+  }
+  const scoreA = LANG_DETECT_PATTERNS[langA] ? (text.match(LANG_DETECT_PATTERNS[langA]) || []).length : 0;
+  const scoreB = LANG_DETECT_PATTERNS[langB] ? (text.match(LANG_DETECT_PATTERNS[langB]) || []).length : 0;
+  if (scoreA > scoreB) return langA;
+  if (scoreB > scoreA) return langB;
+  return lastLang || langA;
+}
+
 // ---------- Session/device identifiers ----------
 
 export function normalizeSessionId(value) {
@@ -68,7 +110,7 @@ export function readInitialSessionId() {
 export const TARGET_LANGUAGE_OPTIONS = [
   { code: 'en', label: 'English', native: 'English', flag: '🇺🇸', dir: 'ltr', group: 'european', popularity: 1, family: 'Indo-European', speakers: '1.5B', difficulty: 1, script: 'Latin', currency: '$', ttsVoice: 'en-US-Neural2', units: 'imperial', keyboard: 'QWERTY', cultural: 'Direct communication, personal space valued', dateFormat: 'MDY', nameOrder: 'firstLast' },
   { code: 'es', label: 'Spanish', native: 'Español', flag: '🇪🇸', dir: 'ltr', group: 'european', popularity: 2, family: 'Indo-European', speakers: '550M', difficulty: 2, script: 'Latin', currency: '€', ttsVoice: 'es-ES-Neural2', units: 'metric', keyboard: 'QWERTY', cultural: 'Formal address with usted, close physical contact', dateFormat: 'DMY', nameOrder: 'firstLast' },
-  { code: 'ht', label: 'Haitian Creole', native: 'Kreyòl Ayisyen', flag: '🇭🇹', dir: 'ltr', group: 'caribbean', popularity: 12, family: 'Creole', speakers: '12M', difficulty: 3, script: 'Latin', currency: 'HTG', ttsVoice: 'fr-HT-Standard', units: 'metric', keyboard: 'QWERTY', cultural: 'French-influenced, warm hospitality', dateFormat: 'DMY', nameOrder: 'firstLast' },
+  { code: 'ht', label: 'Haitian Creole', native: 'Kreyòl Ayisyen', flag: '🇭🇹', dir: 'ltr', group: 'caribbean', popularity: 12, family: 'Creole', speakers: '12M', difficulty: 3, script: 'Latin', currency: 'HTG', ttsVoice: 'ht-HT-Standard', units: 'metric', keyboard: 'QWERTY', cultural: 'French-influenced, warm hospitality', dateFormat: 'DMY', nameOrder: 'firstLast' },
   { code: 'fr', label: 'French', native: 'Français', flag: '🇫🇷', dir: 'ltr', group: 'european', popularity: 5, family: 'Indo-European', speakers: '300M', difficulty: 3, script: 'Latin', currency: '€', ttsVoice: 'fr-FR-Neural2', units: 'metric', keyboard: 'AZERTY', cultural: 'Formal vous, appreciation of art and cuisine', dateFormat: 'DMY', nameOrder: 'firstLast', variants: ['fr-CA', 'fr-BE'] },
   { code: 'de', label: 'German', native: 'Deutsch', flag: '🇩🇪', dir: 'ltr', group: 'european', popularity: 6, family: 'Indo-European', speakers: '230M', difficulty: 4, script: 'Latin', currency: '€', ttsVoice: 'de-DE-Neural2', units: 'metric', keyboard: 'QWERTZ', cultural: 'Punctual, formal Sie, direct communication', dateFormat: 'DMY', nameOrder: 'firstLast', variants: ['de-AT', 'de-CH'] },
   { code: 'it', label: 'Italian', native: 'Italiano', flag: '🇮🇹', dir: 'ltr', group: 'european', popularity: 7, family: 'Indo-European', speakers: '70M', difficulty: 3, script: 'Latin', currency: '€', ttsVoice: 'it-IT-Neural2', units: 'metric', keyboard: 'QWERTY', cultural: 'Formal Lei, emphasis on family and food', dateFormat: 'DMY', nameOrder: 'firstLast', variants: ['it-CH'] },
@@ -394,7 +436,7 @@ export function readPersistedTargetLanguage() {
     const stored = localStorage.getItem('targetLanguage');
     if (stored && TARGET_LANGUAGE_OPTIONS.some((o) => o.code === stored)) return stored;
   } catch {}
-  return 'es';
+  return 'ht';
 }
 
 export function readPersistedSourceLanguage() {
@@ -528,6 +570,13 @@ export function audioFileExtension(mimeType) {
 }
 
 // ---------- Speech recognition ----------
+
+export function languagePairNeedsBackendStt(sourceLanguage, targetLanguage) {
+  const normalize = (code) => String(code || '').toLowerCase().split(/[-_]/)[0];
+  const source = normalize(sourceLanguage);
+  const target = normalize(targetLanguage);
+  return source === 'ht' || target === 'ht';
+}
 
 export function speechRecognitionConstructor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -883,7 +932,7 @@ export function activePacketMs({ lowBandwidthMode, streamPacketMs, experimentalI
 }
 
 export function isFatalStreamError(message = '') {
-  return /quota|too many active|not authorized|unauthorized|forbidden|exceeds|buffer limit/i.test(String(message || ''));
+  return /quota|too many active|not authorized|unauthorized|forbidden|exceeds|buffer limit|models still loading|wait for live/i.test(String(message || ''));
 }
 
 export function logAudioStream(stream, debugLog) {
@@ -931,4 +980,14 @@ export function buildTranslatePayload({
   if (translationProvider) body.translation_provider = translationProvider;
   if (googleTtsApiKey) body.google_tts_api_key = googleTtsApiKey;
   return body;
+}
+
+export function htTranslationHasGlossaryTerms(text) {
+  const lower = String(text || '').toLowerCase();
+  return lower.includes('èd') || lower.includes('ed') || lower.includes('bezwen');
+}
+
+export function htToEnTranslationLooksValid(text) {
+  const lower = String(text || '').toLowerCase();
+  return /\bhelp\b/.test(lower) || /\bneed\b/.test(lower);
 }

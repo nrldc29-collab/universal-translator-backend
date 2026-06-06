@@ -17,6 +17,12 @@ def test_numeric_env_values_are_clamped(monkeypatch):
     assert config.get_cip_confidence_threshold() == 1.0
 
 
+def test_quota_default_supports_conversation_mode(monkeypatch):
+    monkeypatch.delenv("QUOTA_REQUESTS_PER_HOUR", raising=False)
+
+    assert config.get_quota_limit() == 500
+
+
 def test_boolean_env_parsing(monkeypatch):
     monkeypatch.setenv("PARTIAL_TTS_MODE", "off")
     monkeypatch.setenv("PRELOAD_MODELS", "yes")

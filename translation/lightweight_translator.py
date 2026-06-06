@@ -24,6 +24,19 @@ class LightweightTranslator:
                 "i need help": "necesito ayuda",
                 "where is the bathroom": "d\u00f3nde est\u00e1 el ba\u00f1o",
             },
+            ("en", "ht"): {
+                "hello": "bonjou",
+                "thank you": "mèsi",
+                "i need help": "mwen bezwen èd",
+                "good morning": "bonjou",
+                "how are you": "kijan ou ye",
+            },
+            ("ht", "en"): {
+                "bonjou": "hello",
+                "mesi": "thank you",
+                "mwen bezwen ed": "i need help",
+                "kijan ou ye": "how are you",
+            },
             ("es", "en"): {
                 "hola": "hello",
                 "hola mundo": "hello world",
@@ -41,7 +54,7 @@ class LightweightTranslator:
         if not text.strip():
             return ""
         source = source_language or "en"
-        target = target_language or "es"
+        target = target_language or "ht"
         phrase = self._phrases.get((source, target), {}).get(_normalize_text(text))
         if phrase:
             return phrase

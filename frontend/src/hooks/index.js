@@ -1,7 +1,6 @@
 export { useAuth } from './useAuth';
 export { useTtsQueue } from './useTtsQueue';
 export { useBrainState } from './useBrainState';
-export { useDuplexState } from './useDuplexState';
 export { usePersistentAudio } from './usePersistentAudio';
 export { usePipelineState } from './usePipelineState';
 export { useLatencyStats } from './useLatencyStats';

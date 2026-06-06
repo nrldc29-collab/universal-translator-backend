@@ -149,9 +149,8 @@ export function useMobileRecording({
 
         const response = await fetch(`${wsUrl}/translate/audio`, {
           method: "POST",
-          headers: { 
-            Authorization: `Bearer ${token}`, 
-            "Content-Type": "multipart/form-data",
+          headers: {
+            Authorization: `Bearer ${token}`,
           },
           body: form,
           signal: controller.signal,

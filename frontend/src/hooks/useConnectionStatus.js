@@ -8,13 +8,12 @@ export function useConnectionStatus({ apiUrl, pollIntervalMs, onLanguages, onOff
       .then((r) => r.json())
       .then((data) => {
         onLanguages?.(data.languages);
-        setConnectionStatus('online');
       })
       .catch(() => {
         onOffline?.();
         setConnectionStatus('offline');
       });
-  }, []);
+  }, [apiUrl, onLanguages, onOffline]);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,7 +21,13 @@ export function useConnectionStatus({ apiUrl, pollIntervalMs, onLanguages, onOff
       try {
         const r = await fetch(`${apiUrl}/health`, { cache: 'no-store' });
         if (!r.ok) throw new Error('health check failed');
-        if (!cancelled) setConnectionStatus('online');
+        const data = await r.json();
+        if (cancelled) return;
+        if (data.ready === false) {
+          setConnectionStatus('warming');
+          return;
+        }
+        setConnectionStatus('online');
       } catch {
         if (!cancelled) setConnectionStatus('offline');
       }
@@ -33,7 +38,7 @@ export function useConnectionStatus({ apiUrl, pollIntervalMs, onLanguages, onOff
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [apiUrl, pollIntervalMs]);
 
   return { connectionStatus, setConnectionStatus };
 }

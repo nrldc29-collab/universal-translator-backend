@@ -34,6 +34,13 @@ def client(app_module):
     return TestClient(app_module.app)
 
 
+@pytest.fixture(autouse=True)
+def _cleanup_session_registry(app_module):
+    app_module.session_registry.cleanup()
+    yield
+    app_module.session_registry.cleanup()
+
+
 # ---------------------------------------------------------------------------
 # /ws/ping
 # ---------------------------------------------------------------------------
@@ -113,7 +120,7 @@ class TestWsTranslate:
             ws.send_json({"text": "bonjour"})
             reply = ws.receive_json()
         assert reply["type"] == "translation"
-        assert reply["translated_text"] == "[es] bonjour"
+        assert reply["translated_text"] == "[ht] bonjour"
 
 
 # ---------------------------------------------------------------------------
@@ -122,9 +129,69 @@ class TestWsTranslate:
 
 
 class TestWsAudio:
-    def test_audio_socket_accepts_connection(self, client):
+    def test_audio_socket_rejects_when_not_ready(self, app_module, client, monkeypatch):
+        monkeypatch.setitem(app_module.runtime_state, "ready", False)
         with client.websocket_connect("/ws/audio") as ws:
-            ws.close()
+            payload = ws.receive_json()
+        assert payload["type"] == "error"
+        assert payload.get("warming") is True
+        assert "LIVE" in payload["message"]
+
+    def test_audio_socket_accepts_when_ready(self, app_module, client, monkeypatch):
+        monkeypatch.setitem(app_module.runtime_state, "ready", True)
+        with client.websocket_connect("/ws/audio") as ws:
+            payload = ws.receive_json()
+        assert payload["type"] == "ready"
+
+    def test_audio_ping_pong_when_ready(self, app_module, client, monkeypatch):
+        monkeypatch.setitem(app_module.runtime_state, "ready", True)
+        with client.websocket_connect("/ws/audio") as ws:
+            ws.receive_json()
+            ws.send_json({"type": "ping"})
+            payload = ws.receive_json()
+        assert payload["type"] == "pong"
+
+    def test_stream_limit_blocks_extra_device(self, app_module, client, monkeypatch):
+        monkeypatch.setitem(app_module.runtime_state, "ready", True)
+        monkeypatch.setattr("backend.streaming.get_max_active_streams_per_user", lambda: 2)
+        app_module.session_registry.cleanup()
+        open_sockets = []
+
+        def start_device(device_id: str):
+            ws = client.websocket_connect("/ws/audio").__enter__()
+            open_sockets.append(ws)
+            ws.receive_json()
+            ws.send_json(
+                {
+                    "type": "start",
+                    "session_id": "limit-test",
+                    "device_id": device_id,
+                    "speaker_mode": "auto",
+                    "source_language": "en",
+                    "target_language": "es",
+                    "mime_type": "audio/webm;codecs=opus",
+                }
+            )
+            for _ in range(15):
+                payload = ws.receive_json()
+                if payload.get("type") == "error":
+                    return payload
+                if payload.get("type") == "listening":
+                    return payload
+            raise AssertionError(f"timed out waiting for listening/error for {device_id}")
+
+        try:
+            first = start_device("device-1")
+            assert first["type"] == "listening"
+            second = start_device("device-2")
+            assert second["type"] == "listening"
+            third = start_device("device-3")
+            assert third["type"] == "error"
+            assert "Too many active streams" in third["message"]
+        finally:
+            for ws in open_sockets:
+                ws.close()
+            app_module.session_registry.cleanup()
 
 
 # ---------------------------------------------------------------------------

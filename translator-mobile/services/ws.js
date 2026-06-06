@@ -115,7 +115,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
       reconnectAttempts = 0; // Reset on successful connection
       const connectionTime = Date.now() - connectionStartTime;
       debugLog(`WebSocket connected in ${connectionTime}ms:`, url);
-      currentSetStatus?.("Connected");
+      currentSetStatus?.("Handshaking...");
       startHeartbeat();
     };
     

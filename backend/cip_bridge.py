@@ -20,6 +20,14 @@ def choose_translation(cip: dict | None, fallback_text: str) -> str:
     return get_cip_translation(cip) or fallback_text
 
 
+def resolve_translation_text(cip_clarify: bool, cip: dict | None, fallback_text: str) -> str:
+    """Keep Marian/NLLB output when CIP asks to clarify instead of blanking translation."""
+    text = choose_translation(cip, fallback_text)
+    if cip_clarify and not str(text or "").strip() and str(fallback_text or "").strip():
+        return str(fallback_text).strip()
+    return str(text or "").strip()
+
+
 def is_cip_clarification(cip: dict | None) -> bool:
     decision = get_cip_decision(cip)
     return bool(decision and decision.get("type") == "clarification")

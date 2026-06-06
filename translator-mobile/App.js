@@ -1,11 +1,10 @@
-﻿import { useEffect, useRef } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import { View, Text, TextInput, ScrollView, Pressable } from "react-native";
 import { Audio } from "expo-av";
 import Constants from "expo-constants";
 import * as Network from "expo-network";
 import { apiToWsUrl, connectWS } from "./services/ws";
 import { startAudioStream, stopAudioStream, playTtsAudio } from "./services/audio-stream";
-import DuplexMode from "./components/DuplexMode";
 import SemanticContext from "./components/SemanticContext";
 import SettingsScreen from "./components/SettingsScreen";
 import AnimatedCard from "./components/AnimatedCard";
@@ -86,6 +85,22 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  const langInitializedRef = useRef(false);
+  const sessionReadyRef = useRef(false);
+  const [sessionReady, setSessionReady] = useState(false);
+
+  useEffect(() => {
+    if (!langInitializedRef.current) {
+      langInitializedRef.current = true;
+      return;
+    }
+    if (isConnectedRef.current && wsControlRef.current?.readyState === WebSocket.OPEN) {
+      sessionReadyRef.current = false;
+      setSessionReady(false);
+      sendSessionStart();
+    }
+  }, [sourceLanguage, targetLanguage]);
+
 
   async function checkNetworkState() {
     try {
@@ -127,29 +142,36 @@ export default function App() {
     wsControlRef.current.updateHandlers(handleMessage, setStatusWithType);
   }
 
+  function sendSessionStart() {
+    wsControlRef.current?.send(JSON.stringify({
+      type: "start",
+      session_id: mobileSessionIdRef.current,
+      device_id: mobileDeviceIdRef.current,
+      speaker: "auto",
+      speaker_mode: "auto",
+      source_language: sourceLanguage,
+      target_language: targetLanguage,
+      mime_type: "audio/m4a",
+    }));
+  }
+
   function setStatusWithType(nextStatus, type = null) {
     setStatus(nextStatus);
     if (type) {
       setStatusType(type);
-    } else if (nextStatus.includes("Connected")) {
-      setStatusType("success");
-      setIsConnected(true);
-      saveRecentUrl(wsUrl);
-      wsControlRef.current?.send(JSON.stringify({
-        type: "start",
-        session_id: mobileSessionIdRef.current,
-        device_id: mobileDeviceIdRef.current,
-        speaker: "auto",
-        speaker_mode: "auto",
-        source_language: sourceLanguage,
-        target_language: targetLanguage,
-      }));
+    } else if (nextStatus.includes("Handshaking")) {
+      setStatusType("connecting");
     } else if (nextStatus.includes("Disconnected") || nextStatus.includes("failed") || nextStatus.includes("error")) {
       setStatusType("error");
       setIsConnected(false);
+      sessionReadyRef.current = false;
+      setSessionReady(false);
       setIsStreaming(false);
     } else if (nextStatus.includes("Reconnecting") || nextStatus.includes("Connecting")) {
       setStatusType("connecting");
+      setIsConnected(false);
+      sessionReadyRef.current = false;
+      setSessionReady(false);
     } else if (nextStatus.includes("Reconnecting in")) {
       setStatusType("warning");
     }
@@ -159,6 +181,33 @@ export default function App() {
     debugLog("Message:", message.type, message);
 
     switch (message.type) {
+      case "ready":
+        setIsConnected(true);
+        saveRecentUrl(wsUrl);
+        sessionReadyRef.current = false;
+        setSessionReady(false);
+        setStatus("Connected — starting session...");
+        setStatusType("connecting");
+        sendSessionStart();
+        break;
+      case "listening":
+        sessionReadyRef.current = true;
+        setSessionReady(true);
+        setStatus(message.message || "Ready for live voice");
+        setStatusType("success");
+        break;
+      case "error":
+        if (message.warming) {
+          setStatus("Models still loading — wait for LIVE");
+          setStatusType("warning");
+          setIsConnected(false);
+          sessionReadyRef.current = false;
+          setSessionReady(false);
+          break;
+        }
+        setStatus(message.message || message.error || "Stream error");
+        setStatusType("error");
+        break;
       case "pong":
         debugLog("Heartbeat pong received");
         break;
@@ -185,10 +234,6 @@ export default function App() {
         break;
       case "tts_audio_chunk":
         handleTtsChunk(message);
-        break;
-      case "error":
-        setStatus(message.message || message.error || "Server error");
-        setStatusType("error");
         break;
       case "tts_start":
         setStatus(`Streaming voice: 0/${message.chunks || "?"}`);
@@ -234,6 +279,8 @@ export default function App() {
     }
     stopTtsPlayback();
     setIsConnected(false);
+    sessionReadyRef.current = false;
+    setSessionReady(false);
     setStatus("Disconnected");
     setStatusType("idle");
   }
@@ -255,8 +302,8 @@ export default function App() {
       return;
     }
 
-    if (!isConnected) {
-      setStatus("Connect to backend first");
+    if (!isConnected || !sessionReadyRef.current) {
+      setStatus(sessionReadyRef.current ? "Connect to backend first" : "Waiting for backend session...");
       setStatusType("error");
       return;
     }
@@ -297,9 +344,11 @@ export default function App() {
     setResult, isPlayingTtsRef, setIsPlayingTts,
   });
 
+  const activeSourceLabel = TARGET_LANGUAGES.find((language) => language.code === sourceLanguage)?.label || sourceLanguage.toUpperCase();
   const activeTargetLabel = TARGET_LANGUAGES.find((language) => language.code === targetLanguage)?.label || targetLanguage.toUpperCase();
+  const heroDirection = `${activeSourceLabel} ↔ ${activeTargetLabel}`;
   const primaryActionLabel = isStreaming ? "Stop Live Voice" : "Start Live Voice";
-  const primaryActionDisabled = !isConnected || isPlayingTts;
+  const primaryActionDisabled = !isConnected || !sessionReady || isPlayingTts;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -324,7 +373,7 @@ export default function App() {
         </View>
         <Text style={styles.heroKicker}>{isConnected ? "Backend linked" : "Connect backend"}</Text>
         <Text style={styles.heroTitle}>{isStreaming ? "Listening live" : isPlayingTts ? "Speaking translation" : "Ready to interpret"}</Text>
-        <Text style={styles.heroSubtitle}>English → {activeTargetLabel}</Text>
+        <Text style={styles.heroSubtitle}>{heroDirection}</Text>
         <ActionButton
           title={primaryActionLabel}
           onPress={toggleStreaming}
@@ -515,18 +564,9 @@ export default function App() {
         />
       ) : (
         <>
-          <DuplexMode
-            isConnected={isConnected}
-            wsControlRef={wsControlRef}
-            sourceLanguage={sourceLanguage}
-            targetLanguage={targetLanguage}
-            onTranscriptUpdate={(speaker, text) => {
-              debugLog(`Speaker ${speaker} transcript:`, text);
-            }}
-            onTranslationUpdate={(speaker, text) => {
-              debugLog(`Speaker ${speaker} translation:`, text);
-            }}
-          />
+          <Text style={[styles.backendStatusText, { marginBottom: 12 }]}>
+            Use Start Live Voice for EN↔HT translation. Conversation duplex UI is not enabled on mobile yet.
+          </Text>
 
           <SemanticContext context={semanticContext} />
 

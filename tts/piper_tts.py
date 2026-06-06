@@ -2,6 +2,7 @@ import base64
 import logging
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -39,6 +40,10 @@ ESPEAK_VOICE_MAP = {
     "ko": "ko",    # Korean
     "ja": "ja",    # Japanese
 }
+
+
+def espeak_binary() -> str | None:
+    return shutil.which("espeak-ng") or shutil.which("espeak")
 
 # Google Cloud Text-to-Speech is faster than local Piper on the Railway CPU
 # instance. Production uses it by default when GOOGLE_TTS_API_KEY is configured,
@@ -202,7 +207,7 @@ class PiperTextToSpeech:
             return False
         if normalized not in GOOGLE_TTS_LANGUAGE_CODES:
             return False
-        return os.getenv("PREFER_CLOUD_TTS", "1").strip().lower() not in {
+        return os.getenv("PREFER_CLOUD_TTS", "0").strip().lower() not in {
             "0",
             "false",
             "no",
@@ -270,8 +275,13 @@ class PiperTextToSpeech:
         # -a 100 = max amplitude. -w writes WAV. -v ht selects Haitian Creole.
         espeak_voice = ESPEAK_VOICE_MAP.get(lang, lang)
         speed_wpm, pitch, amplitude = espeak_flags_from_emotion(emotion_config)
+        binary = espeak_binary()
+        if not binary:
+            raise RuntimeError(
+                "espeak-ng/espeak is not installed; cannot synthesize %s audio" % lang
+            )
         cmd = [
-            "espeak-ng",
+            binary,
             "-v", espeak_voice,
             "-s", str(speed_wpm),
             "-p", str(pitch),
@@ -286,7 +296,7 @@ class PiperTextToSpeech:
                 break
             except FileNotFoundError as exc:
                 raise RuntimeError(
-                    "espeak-ng is not installed; cannot synthesize %s audio" % lang
+                    "espeak-ng/espeak is not installed; cannot synthesize %s audio" % lang
                 ) from exc
             except subprocess.CalledProcessError as exc:
                 stderr = exc.stderr.decode("utf-8", errors="ignore") if exc.stderr else ""

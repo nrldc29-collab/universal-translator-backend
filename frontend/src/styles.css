@@ -3069,6 +3069,12 @@ select:focus-visible {
   animation: connPulse 1s ease-in-out infinite;
 }
 
+.neo-conn-dot.warming {
+  background: #fb923c;
+  box-shadow: 0 0 8px rgba(251,146,60,.55);
+  animation: connPulse 0.9s ease-in-out infinite;
+}
+
 .neo-conn-label {
   font-size: .52rem;
   font-weight: 800;
@@ -4702,6 +4708,24 @@ select:focus-visible {
 
 .clarify-pill-actions .clarify-no:hover {
   background: rgba(255,255,255,.06);
+}
+
+.confidence-warning-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(248,113,113,.32);
+  background: rgba(127,29,29,.28);
+  animation: fadeIn .2s ease both;
+}
+
+.confidence-warning-text {
+  flex: 1;
+  font-size: .76rem;
+  color: rgba(254,202,202,.92);
+  line-height: 1.55;
 }
 
 /* ═══════════════════════════════════════════════════════════

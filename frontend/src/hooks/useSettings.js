@@ -12,7 +12,7 @@ const DEFAULTS = {
   micDeviceId: 'default',
   // Translation
   translationMode: 'fast',
-  partialTts: false,
+  partialTts: true,
   translationProvider: 'hybrid',
   // Display
   theme: 'dark',

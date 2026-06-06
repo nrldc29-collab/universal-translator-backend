@@ -9,7 +9,7 @@ def main():
     parser.add_argument("--text", help="Text to translate.")
     parser.add_argument("--audio", help="Audio file to transcribe and translate.")
     parser.add_argument("--source", default="en", help="Source language code.")
-    parser.add_argument("--target", default="es", help="Target language code.")
+    parser.add_argument("--target", default="ht", help="Target language code.")
     parser.add_argument("--tone", help="Optional tone for the context layer.")
     parser.add_argument("--speak", action="store_true", help="Generate translated speech audio.")
     parser.add_argument("--output", default="models/output.wav", help="Output audio path.")

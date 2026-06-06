@@ -69,6 +69,7 @@ class SessionRegistry:
         source_language: str,
         target_language: str,
         speaker_name: str | None = None,
+        connected: bool = True,
     ) -> dict:
         self.cleanup()
         normalized_device_id = normalize_device_id(device_id)
@@ -109,6 +110,7 @@ class SessionRegistry:
                 speaker_label=speaker_label,
                 speaker_index=speaker_index,
                 detection="device_source",
+                connected=connected,
             )
             return {
                 "speaker": speaker,
@@ -131,6 +133,7 @@ class SessionRegistry:
         speaker_label: str | None = None,
         speaker_index: int | None = None,
         detection: str = "manual",
+        connected: bool = True,
     ) -> dict:
         self.cleanup()
         normalized_device_id = normalize_device_id(device_id) if device_id else None
@@ -164,7 +167,7 @@ class SessionRegistry:
                     "speaker_index": speaker_index,
                     "source_language": source_language,
                     "target_language": target_language,
-                    "connected": True,
+                    "connected": connected,
                     "last_seen": time(),
                     "detection": detection,
                 }
@@ -182,7 +185,7 @@ class SessionRegistry:
                 "device_id": normalized_device_id,
                 "source_language": source_language,
                 "target_language": target_language,
-                "connected": True,
+                "connected": connected,
                 "last_seen": time(),
                 "reconnects": state.get("reconnects", -1) + 1,
                 "detection": detection,
@@ -207,6 +210,21 @@ class SessionRegistry:
             if shared_state and normalized_device_id and normalized_device_id in shared_state.get("devices", {}):
                 shared_state["devices"][normalized_device_id]["connected"] = False
                 shared_state["devices"][normalized_device_id]["last_seen"] = time()
+
+    def disconnect_session(self, session_id: str, identity: str) -> None:
+        """Mark every stream in a session disconnected (e.g. when a WebSocket closes)."""
+        with self._lock:
+            shared_key = self._shared_key(session_id, identity)
+            for state in self.sessions.values():
+                if state.get("session_id") == session_id and state.get("identity") == identity:
+                    state["connected"] = False
+                    state["last_seen"] = time()
+            shared_state = self.shared_sessions.get(shared_key)
+            if shared_state:
+                for device_state in shared_state.get("devices", {}).values():
+                    device_state["connected"] = False
+                    device_state["last_seen"] = time()
+                shared_state["last_seen"] = time()
 
     def snapshot(self) -> dict:
         self.cleanup()

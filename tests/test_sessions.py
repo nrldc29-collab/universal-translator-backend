@@ -109,3 +109,36 @@ class TestSessionRegistry:
         assert len(self.registry.shared_sessions) == 1
         self.registry.cleanup()
         assert len(self.registry.shared_sessions) >= 0
+
+    def test_text_turn_does_not_count_as_active_stream(self):
+        self.registry.resolve_auto_speaker("sess-text", "user1", "device-A", "en", "es", connected=False)
+        assert self.registry.active_stream_count("user1") == 0
+        self.registry.resolve_auto_speaker("sess-live", "user1", "device-B", "en", "es", connected=True)
+        assert self.registry.active_stream_count("user1") == 1
+
+    def test_disconnect_one_device_leaves_sibling_connected(self):
+        self.registry.bind(
+            session_id="sess-dual",
+            speaker="A",
+            identity="user1",
+            source_language="en",
+            target_language="ht",
+            device_id="device-ab",
+            speaker_label="Person 1",
+            connected=True,
+        )
+        self.registry.bind(
+            session_id="sess-dual",
+            speaker="B",
+            identity="user1",
+            source_language="ht",
+            target_language="en",
+            device_id="device-ba",
+            speaker_label="Person 2",
+            connected=True,
+        )
+        assert self.registry.active_stream_count("user1") == 2
+        self.registry.disconnect("sess-dual", "A", "user1", "device-ab")
+        assert self.registry.active_stream_count("user1") == 1
+        self.registry.disconnect_session("sess-dual", "user1")
+        assert self.registry.active_stream_count("user1") == 0

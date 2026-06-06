@@ -6,6 +6,46 @@ def test_detect_language_heuristic_handles_spanish_accents():
     assert detect_language_heuristic("Hola, \u00bfcomo estas?") == "es"
 
 
+def test_detect_language_heuristic_handles_haitian_creole():
+    assert detect_language_heuristic("Mwen bezwen èd") == "ht"
+    assert detect_language_heuristic("Bonjou, kijan ou ye?") == "ht"
+
+
+def test_detect_language_in_pair_en_ht():
+    from backend.speakers import detect_language_in_pair
+
+    assert detect_language_in_pair("Mwen bezwen èd", "en", "ht") == "ht"
+    assert detect_language_in_pair("I need help", "en", "ht") == "en"
+
+
+def test_resolve_whisper_language_auto_for_ht_pair():
+    from backend.speakers import resolve_whisper_language
+
+    assert resolve_whisper_language("en", "ht") is None
+    assert resolve_whisper_language("en", "es") == "en"
+
+
+def test_opposite_language_in_pair_en_ht():
+    from backend.speakers import opposite_language_in_pair
+
+    assert opposite_language_in_pair("ht", "en", "ht") == "en"
+    assert opposite_language_in_pair("en", "en", "ht") == "ht"
+
+
+def test_live_text_direction_en_ht():
+    from backend.speakers import detect_language_in_pair, opposite_language_in_pair, resolve_active_languages_in_pair
+
+    text = "Mwen bezwen èd"
+    pair_src = "en"
+    pair_tgt = "ht"
+    active_src = detect_language_in_pair(text, pair_src, pair_tgt)
+    active_tgt = opposite_language_in_pair(active_src, pair_src, pair_tgt)
+    assert active_src == "ht"
+    assert active_tgt == "en"
+    assert resolve_active_languages_in_pair(text, pair_src, pair_tgt) == ("ht", "en")
+    assert resolve_active_languages_in_pair("I need help", pair_src, pair_tgt) == ("en", "ht")
+
+
 def test_speaker_memory_returns_copy_of_history():
     memory = SpeakerMemory()
     memory.register("phone-1", "en")
