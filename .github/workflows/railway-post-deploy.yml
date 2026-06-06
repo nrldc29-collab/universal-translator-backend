@@ -3,13 +3,17 @@ name: Railway post-deploy
 on:
   deployment_status:
     states: [success]
+  workflow_dispatch:
 
 jobs:
   finish:
     runs-on: ubuntu-latest
     if: >-
-      github.event.deployment_status.state == 'success' &&
-      contains(github.event.deployment.environment, 'production')
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.deployment_status.state == 'success' &&
+        contains(github.event.deployment.environment, 'production')
+      )
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
