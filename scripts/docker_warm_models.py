@@ -10,7 +10,6 @@ REPO_IDS = (
     "Systran/faster-whisper-tiny",
     "Helsinki-NLP/opus-mt-en-ht",
     "Helsinki-NLP/opus-mt-ht-en",
-    "facebook/nllb-200-distilled-600M",
 )
 
 
