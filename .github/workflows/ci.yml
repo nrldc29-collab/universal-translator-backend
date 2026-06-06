@@ -75,6 +75,8 @@ jobs:
         working-directory: frontend
         run: npm run build
       - name: Live bundled smoke check
+        env:
+          REQUESTS_PER_MINUTE: "120"
         run: |
           mkdir -p logs
           SERVE_FRONTEND_DIST=1 BACKEND_PORT=8001 PARTIAL_TTS_MODE=1 python -m uvicorn backend.api:app --host 127.0.0.1 --port 8001 >logs/bundled-backend.log 2>&1 &

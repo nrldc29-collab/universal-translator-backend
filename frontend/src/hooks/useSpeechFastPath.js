@@ -13,6 +13,7 @@ export function useSpeechFastPath() {
   const speechListenAltRef = useRef(false);
   const speechLastDetectedLangRef = useRef('');
   const speechLastLiveTargetRef = useRef('');
+  const speechPausedForTtsRef = useRef(false);
 
   return {
     speechRecognitionRef,
@@ -27,5 +28,6 @@ export function useSpeechFastPath() {
     speechListenAltRef,
     speechLastDetectedLangRef,
     speechLastLiveTargetRef,
+    speechPausedForTtsRef,
   };
 }

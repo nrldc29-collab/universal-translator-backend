@@ -53,6 +53,21 @@ class TestTranslateText:
         payload = response.json()
         assert "hola" in payload["translated_text"].lower()
 
+    def test_translate_ht_to_en(self, client):
+        response = client.post(
+            "/translate/text",
+            json={
+                "text": "M ap byen",
+                "source_language": "ht",
+                "target_language": "en",
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        translated = str(payload.get("translated_text") or "")
+        assert translated.strip()
+        assert not (translated.startswith("[") and "->" in translated[:12])
+
     def test_translate_with_session_does_not_block_streams(self, app_module, client):
         app_module.session_registry.cleanup()
         for session_id in ("smoke-a", "smoke-b", "smoke-c"):

@@ -67,7 +67,7 @@ from backend.confidence import ConfidenceEngine, assess_translation_confidence, 
 from backend.communication_brain import detect_domains
 from backend.glossary import get_session_glossary, glossary_coverage_score, glossary_blocks_clarification
 from backend.cip_client import call_cip_brain, cip_health_snapshot, cip_settings
-from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, is_cip_clarification
+from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, is_cip_clarification, resolve_translation_text
 from backend.model_readiness import evaluate_preload_result
 from backend import assistant as naia_assistant
 try:
@@ -661,7 +661,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
             request.target_language,
         ):
             cip_clarify = False
-        final_text = "" if cip_clarify else choose_translation(cip, refined_text)
+        final_text = resolve_translation_text(cip_clarify, cip, refined_text)
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
             semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"
@@ -871,7 +871,7 @@ async def translate_audio(
             target_language,
         ):
             cip_clarify = False
-        final_text = "" if cip_clarify else choose_translation(cip, refined_text)
+        final_text = resolve_translation_text(cip_clarify, cip, refined_text)
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
             semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"

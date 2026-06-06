@@ -18,7 +18,7 @@ from backend.refine import refine_translation
 from backend.latency import LatencyEngine
 from backend.stream_session import StreamSessionState
 from backend.audio import process_wav_for_stt, compute_rms
-from backend.cip_bridge import choose_translation, get_cip_confidence, get_cip_decision, is_cip_clarification
+from backend.cip_bridge import choose_translation, get_cip_confidence, get_cip_decision, is_cip_clarification, resolve_translation_text
 from backend.confidence import (
     ConfidenceEngine,
     assess_translation_confidence,
@@ -931,7 +931,7 @@ async def websocket_audio_translation(
             cip_response_plan = cip.get("response_plan") if isinstance(cip, dict) and isinstance(cip.get("response_plan"), dict) else {}
             cip_turn_policy = cip_response_plan.get("turn_policy") if isinstance(cip_response_plan.get("turn_policy"), dict) else {}
             cip_client_hints = cip_response_plan.get("client_hints") if isinstance(cip_response_plan.get("client_hints"), dict) else {}
-            translated_text = "" if cip_clarify else choose_translation(cip, translated_text)
+            translated_text = resolve_translation_text(cip_clarify, cip, translated_text)
             # Confidence and ambiguity checks for final
             tr_conf = estimate_translation_confidence(source_text, translated_text)
             cip_conf = get_cip_confidence(cip)
@@ -991,8 +991,9 @@ async def websocket_audio_translation(
                     "client_hints": cip_client_hints,
                     "translated_by": cip.get("translation_source"),
                 })
-            if not cip_clarify:
+            if translated_text.strip():
                 await websocket.send_json({"type": "live_translation", "speaker": speaker, "speaker_label": speaker_label, "text": translated_text})
+            if not cip_clarify:
                 await websocket.send_json({"type": "tts_style", "speaker": speaker, "speaker_label": speaker_label, **tts_pacing})
             observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="translation_done", translated_text=translated_text)
             # If CIP requested clarification, inform client and skip TTS
@@ -1580,7 +1581,7 @@ async def websocket_streaming_stt_translation(
         cip_response_plan = cip.get("response_plan") if isinstance(cip, dict) and isinstance(cip.get("response_plan"), dict) else {}
         cip_turn_policy = cip_response_plan.get("turn_policy") if isinstance(cip_response_plan.get("turn_policy"), dict) else {}
         cip_client_hints = cip_response_plan.get("client_hints") if isinstance(cip_response_plan.get("client_hints"), dict) else {}
-        translated_text = "" if cip_clarify else choose_translation(cip, translated_text)
+        translated_text = resolve_translation_text(cip_clarify, cip, translated_text)
         tr_conf = estimate_translation_confidence(source_text, translated_text)
         cip_conf = get_cip_confidence(cip)
         domains = detect_domains(source_text)
@@ -1625,19 +1626,20 @@ async def websocket_streaming_stt_translation(
                 "message": assessment["confidence_message"],
                 "domains": assessment["high_stakes"],
             })
-        if cip_clarify:
-            await send_json({"type": "clarify", "message": cip_decision.get("message") or "Can you rephrase that?", "stage": "cip_clarification"})
-        elif conf_score < 0.4:
-            await send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
-        else:
+        if translated_text.strip():
             await send_json({
                 "type": "live_translation",
                 "speaker": speaker,
                 "speaker_label": speaker_label,
                 "text": translated_text,
+                "final": True,
                 "confidence": assessment["confidence"],
                 "low_confidence": assessment["low_confidence"],
             })
+        if cip_clarify:
+            await send_json({"type": "clarify", "message": cip_decision.get("message") or "Can you rephrase that?", "stage": "cip_clarification"})
+        elif conf_score < 0.4:
+            await send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
 
         memory.add(speaker, source_text, translated_text, {"cip": cip})
         speaker_memory.add_message(speaker, source_text)

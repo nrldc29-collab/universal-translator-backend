@@ -542,6 +542,7 @@ function App() {
     speechAssistSocketRef, speechAssistRestartTimerRef, speechAssistStopRequestedRef,
     speechLastSentTextRef, speechLastSentAtRef,
     speechListenAltRef, speechLastDetectedLangRef, speechLastLiveTargetRef,
+    speechPausedForTtsRef,
   } = useSpeechFastPath();
   const { voiceWarmupRef, resolveAudioUrl, prefetchAudioUrl, warmVoiceCache } = useVoiceWarmup({
     apiUrl: liveApiUrl,
@@ -1166,9 +1167,44 @@ function App() {
     return true;
   }
 
+  function pauseBrowserSpeechForTts() {
+    if (!speechFastPathActiveRef.current || speechPausedForTtsRef.current) return;
+    speechPausedForTtsRef.current = true;
+    if (speechAssistRestartTimerRef.current) {
+      window.clearTimeout(speechAssistRestartTimerRef.current);
+      speechAssistRestartTimerRef.current = null;
+    }
+    try { speechRecognitionRef.current?.stop?.(); } catch (e) {}
+  }
+
+  function resumeBrowserSpeechAfterTts() {
+    if (!speechFastPathActiveRef.current || !speechPausedForTtsRef.current) return;
+    if (ttsPlayingRef.current || ttsQueueRef.current.length > 0 || appStateRef.current.playing) return;
+    const activeSocket = speechAssistSocketRef.current || socketRef.current;
+    if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN) {
+      speechPausedForTtsRef.current = false;
+      return;
+    }
+    speechPausedForTtsRef.current = false;
+    speechListenAltRef.current = !speechListenAltRef.current;
+    const recognition = speechRecognitionRef.current;
+    if (!recognition) return;
+    recognition.lang = speechRecognitionLanguage(
+      speechListenAltRef.current ? targetLanguage : sourceLanguage,
+    );
+    try {
+      recognition.start();
+      setPipelineStage('Listening');
+      setStatus('Listening live...');
+    } catch (error) {
+      console.warn('speech recognition resume failed:', error);
+    }
+  }
+
   function sendLiveSpeechText(socket, textValue, isFinal = false) {
     const normalized = String(textValue || '').replace(/\s+/g, ' ').trim();
     if (!normalized || !socket || socket.readyState !== WebSocket.OPEN) return false;
+    if (ttsPlayingRef.current || appStateRef.current.playing || speechPausedForTtsRef.current) return false;
     const now = performance.now();
     if (!isFinal && normalized === speechLastSentTextRef.current) return false;
     if (!isFinal && now - speechLastSentAtRef.current < LIVE_SPEECH_TEXT_THROTTLE_MS) return false;
@@ -1331,6 +1367,7 @@ function App() {
 
     recognition.onend = () => {
       if (!speechFastPathActiveRef.current) return;
+      if (speechPausedForTtsRef.current) return;
       if (speechAssistStopRequestedRef.current || socketRef.current !== activeSocket || activeSocket.readyState !== WebSocket.OPEN) {
         speechFastPathActiveRef.current = false;
         speechRecognitionRef.current = null;
@@ -1911,6 +1948,7 @@ function App() {
         if (data.partial) {
           setPlaying(true);
           setPipelineStage('Partial voice...');
+          pauseBrowserSpeechForTts();
           return;
         }
         if (shouldSkipBrainTts(data)) {
@@ -1926,6 +1964,7 @@ function App() {
         audioSendQueueRef.current = [];
         setPlaying(true);
         setPipelineStage(`Streaming voice: 0/${data.chunks}`);
+        pauseBrowserSpeechForTts();
         if (!data.partial && isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING && !shouldKeepContinuousStream(socket)) {
           // Pause mic capture to route audio to speaker reliably on iOS
           resumeAfterTtsRef.current = true;
@@ -2781,6 +2820,9 @@ function App() {
           setPipelineStage('Ready to listen');
           setStatus('Ready to listen');
         }
+      }
+      if (!ttsPlayingRef.current) {
+        resumeBrowserSpeechAfterTts();
       }
       return;
     }

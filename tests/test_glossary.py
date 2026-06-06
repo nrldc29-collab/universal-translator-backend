@@ -95,6 +95,16 @@ def test_glossary_blocks_clarification_for_exact_phrase():
     )
 
 
+def test_glossary_blocks_clarification_ht_en():
+    assert glossary_blocks_clarification(
+        "Mwen bezwen èd",
+        "I need help",
+        DEFAULT_GLOSSARY,
+        "ht",
+        "en",
+    )
+
+
 def test_glossary_blocks_clarification_false_when_missing_target():
     assert not glossary_blocks_clarification(
         "I need help",

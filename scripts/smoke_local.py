@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -29,6 +30,23 @@ def _post_json(url: str, payload: dict, headers: dict | None = None) -> tuple[in
             return exc.code, json.loads(raw) if raw else {}
         except json.JSONDecodeError:
             return exc.code, raw
+
+
+def _post_json_with_retry(
+    url: str,
+    payload: dict,
+    headers: dict | None = None,
+    *,
+    retries: int = 4,
+) -> tuple[int, dict | str]:
+    status = 0
+    response: dict | str = {}
+    for attempt in range(retries):
+        status, response = _post_json(url, payload, headers)
+        if status != 429:
+            return status, response
+        time.sleep(min(8, 1 + attempt * 2))
+    return status, response
 
 
 def _get_json(url: str, headers: dict | None = None, timeout: int = 10) -> tuple[int, dict | str]:
@@ -102,7 +120,7 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
     errors: list[str] = []
     root = base_url.rstrip("/")
 
-    status, payload = _post_json(
+    status, payload = _post_json_with_retry(
         f"{root}/translate/text",
         {
             "text": "hello",
@@ -121,7 +139,7 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
         if translated.startswith("[") and "->" in translated[:12]:
             errors.append(f"translate en->es returned placeholder output: {translated!r}")
 
-    status, payload = _post_json(
+    status, payload = _post_json_with_retry(
         f"{root}/translate/text",
         {
             "text": "I need help",
@@ -138,7 +156,7 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
         if "èd" not in translated.lower() and "ed" not in translated.lower():
             errors.append(f"translate en->ht glossary miss: {translated!r}")
 
-    status, payload = _post_json(
+    status, payload = _post_json_with_retry(
         f"{root}/translate/text",
         {
             "text": "M ap byen",
@@ -157,7 +175,7 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
         elif translated.startswith("[") and "->" in translated[:12]:
             errors.append(f"translate ht->en returned placeholder output: {translated!r}")
 
-    status, payload = _post_json(
+    status, payload = _post_json_with_retry(
         f"{root}/translate/text",
         {
             "text": "hello",

@@ -46,6 +46,8 @@ DEFAULT_GLOSSARY: list[dict[str, str]] = [
     {"source": "passport", "target": "paspò", "lang_pair": "en-ht", "context": "travel"},
     {"source": "I need help", "target": "Necesito ayuda", "lang_pair": "en-es", "context": "general"},
     {"source": "I need help", "target": "Mwen bezwen èd", "lang_pair": "en-ht", "context": "general"},
+    {"source": "Mwen bezwen èd", "target": "I need help", "lang_pair": "ht-en", "context": "general"},
+    {"source": "M ap byen", "target": "I'm fine", "lang_pair": "ht-en", "context": "general"},
 ]
 
 _session_glossaries: dict[str, list[dict[str, Any]]] = {}

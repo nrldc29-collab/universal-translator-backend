@@ -12,7 +12,7 @@
  */
 import { useRef, useState, useCallback, useEffect } from 'react';
 
-import { BACKEND_TTS_LANGS, detectLanguagePair } from '../utils';
+import { BACKEND_TTS_LANGS, detectLanguagePair, speechRecognitionLanguage } from '../utils';
 
 // ─── Language config ─────────────────────────────────────────────────────
 const BROWSER_TTS_MAP = {
@@ -426,12 +426,16 @@ export function useAutoConversation({
     if (recogRef.current) { try { recogRef.current.abort(); } catch {} recogRef.current = null; }
 
     const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Rec) { setPhaseR('idle'); return; }
+    if (!Rec) {
+      onStatus?.('Speech recognition unavailable in this browser');
+      setPhaseR('idle');
+      return;
+    }
 
     const rec = new Rec();
     // Alternate language hints to improve detection of both speakers
     const useAltLang = lastLangRef.current === srcRef.current;
-    rec.lang = BROWSER_TTS_MAP[useAltLang ? tgtRef.current : srcRef.current] || 'en-US';
+    rec.lang = speechRecognitionLanguage(useAltLang ? tgtRef.current : srcRef.current);
     rec.interimResults = true;
     rec.continuous = false;
     rec.maxAlternatives = 3; // get alternatives for better detection

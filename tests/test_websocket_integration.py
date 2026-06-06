@@ -34,6 +34,13 @@ def client(app_module):
     return TestClient(app_module.app)
 
 
+@pytest.fixture(autouse=True)
+def _cleanup_session_registry(app_module):
+    app_module.session_registry.cleanup()
+    yield
+    app_module.session_registry.cleanup()
+
+
 # ---------------------------------------------------------------------------
 # /ws/ping
 # ---------------------------------------------------------------------------

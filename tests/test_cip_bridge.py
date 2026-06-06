@@ -1,4 +1,4 @@
-from backend.cip_bridge import apply_cip_decision, choose_translation, is_cip_clarification
+from backend.cip_bridge import apply_cip_decision, choose_translation, is_cip_clarification, resolve_translation_text
 
 
 def test_empty_cip_translation_uses_ut_fallback():
@@ -24,6 +24,13 @@ def test_cip_clarification_sets_response_flags():
     assert response["clarify"] is True
     assert response["clarify_message"] == "Can you rephrase that?"
     assert response["cip_decision"] == cip["decision"]
+
+
+def test_resolve_translation_text_keeps_fallback_on_clarify():
+    cip = {"translated": "", "decision": {"type": "clarification", "message": "Can you rephrase that?"}}
+
+    assert resolve_translation_text(True, cip, "I need help") == "I need help"
+    assert resolve_translation_text(False, cip, "I need help") == "I need help"
 
 
 def test_cip_translation_marks_translated_by_cip():
