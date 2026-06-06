@@ -19,6 +19,9 @@ import ErrorBanner from "./components/ErrorBanner";
 import SettingsScreen from "./components/SettingsScreen";
 import LanguagePickerModal, { LANGUAGE_OPTIONS } from "./components/LanguagePickerModal";
 import LoadingScreen from "./components/LoadingScreen";
+import Toast from "./components/Toast";
+import HelpTipsModal from "./components/HelpTipsModal";
+import * as Clipboard from "expo-clipboard";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl || "";
 const DEBUG_LOGS = Boolean(__DEV__ || process.env.EXPO_PUBLIC_DEBUG_LOGS === "1");
@@ -307,6 +310,9 @@ export default function App() {
   const [showDebugDetails, setShowDebugDetails] = useState(false);
   const [dismissedError, setDismissedError] = useState("");
   const [languagePicker, setLanguagePicker] = useState(null);
+  const [showHelp, setShowHelp] = useState(false);
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
 
   const toggleStreamingRef = useRef(null);
   const autoConnectStartedRef = useRef(false);
@@ -477,7 +483,48 @@ export default function App() {
   useEffect(() => () => {
     releaseCommandMute();
     if (autoResumeTimerRef.current) clearTimeout(autoResumeTimerRef.current);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
+
+  function showToast(message, variant = "info", durationMs = 2200) {
+    setToast({ message, variant });
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, durationMs);
+  }
+
+  async function copyTranslatedText() {
+    const text = String(translatedText || "").trim();
+    if (!text || text === voiceIntent) {
+      showToast("Nothing to copy yet", "error");
+      return;
+    }
+    await Clipboard.setStringAsync(text);
+    await tapHaptic("success");
+    showToast("Translation copied", "success");
+  }
+
+  async function copySourceText() {
+    const text = String(sourceText || "").trim();
+    if (!text) {
+      showToast("Nothing to copy yet", "error");
+      return;
+    }
+    await Clipboard.setStringAsync(text);
+    await tapHaptic("success");
+    showToast("Original text copied", "success");
+  }
+
+  const contextChipLabel = useMemo(() => {
+    const mood = semanticContext?.conversation_mood || semanticContext?.mood;
+    const intent = semanticContext?.last_intent || semanticContext?.intent;
+    if (mood && intent && mood !== "neutral") return `${intent} · ${mood}`;
+    if (intent && intent !== "statement") return String(intent);
+    if (mood && mood !== "neutral") return String(mood);
+    return "";
+  }, [semanticContext]);
 
   async function checkNetworkState() {
     try {
@@ -1129,6 +1176,8 @@ export default function App() {
         onClose={() => setLanguagePicker(null)}
       />
 
+      <HelpTipsModal visible={showHelp} onClose={() => setShowHelp(false)} />
+
       <WelcomeSetupModal
         visible={showSetup}
         wsUrl={wsUrl}
@@ -1187,6 +1236,14 @@ export default function App() {
               <Text numberOfLines={1} style={styles.brandSubline}>Live voice interpreter</Text>
             </View>
             <View style={styles.topBarActions}>
+              <Pressable
+                onPress={() => setShowHelp(true)}
+                style={styles.settingsBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Open help tips"
+              >
+                <Ionicons name="help-circle-outline" size={20} color="#e2e8f0" />
+              </Pressable>
               <Pressable
                 onPress={() => setShowSettings(true)}
                 style={styles.settingsBtn}
@@ -1249,16 +1306,13 @@ export default function App() {
               <Text style={styles.routeTapHint}>Tap to change</Text>
             </Pressable>
             <Pressable
-              onPress={isConnected ? swapRoute : undefined}
-              disabled={!isConnected}
+              onPress={swapRoute}
               accessibilityRole="button"
               accessibilityLabel="Swap source and target languages"
-              accessibilityState={{ disabled: !isConnected }}
               hitSlop={8}
               style={({ pressed }) => [
                 styles.routeCenter,
-                !isConnected && styles.routeCenterDisabled,
-                pressed && isConnected && styles.routeCenterPressed,
+                pressed && styles.routeCenterPressed,
               ]}
             >
               <Ionicons name="swap-horizontal" size={21} color="#0f172a" />
@@ -1324,8 +1378,21 @@ export default function App() {
             keyboardShouldPersistTaps="handled"
           >
           <View style={[styles.transcriptStack, compactLayout && styles.transcriptStackCompact, tinyLayout && styles.transcriptStackTiny]}>
+            {contextChipLabel ? (
+              <View style={styles.contextChip}>
+                <Ionicons name="sparkles-outline" size={14} color="#67e8f9" />
+                <Text style={styles.contextChipText}>{contextChipLabel}</Text>
+              </View>
+            ) : null}
             <View style={[styles.transcriptLane, compactLayout && styles.transcriptLaneCompact]}>
-              <Text style={styles.laneLabel}>{activeSpeakerLabel} said {routeSource}</Text>
+              <View style={styles.laneHeader}>
+                <Text style={[styles.laneLabel, { flex: 1 }]}>{activeSpeakerLabel} said {routeSource}</Text>
+                {sourceText ? (
+                  <Pressable onPress={copySourceText} style={styles.laneActionBtn} accessibilityRole="button" accessibilityLabel="Copy original text">
+                    <Ionicons name="copy-outline" size={16} color="#cbd5e1" />
+                  </Pressable>
+                ) : null}
+              </View>
               <Text
                 numberOfLines={4}
                 accessibilityLiveRegion="polite"
@@ -1335,7 +1402,14 @@ export default function App() {
               </Text>
             </View>
             <View style={[styles.translationLane, compactLayout && styles.translationLaneCompact]}>
-              <Text style={styles.laneLabel}>{activeListenerLabel} hears {routeTarget}</Text>
+              <View style={styles.laneHeader}>
+                <Text style={[styles.laneLabel, { flex: 1 }]}>{activeListenerLabel} hears {routeTarget}</Text>
+                {translatedText ? (
+                  <Pressable onPress={copyTranslatedText} style={styles.laneActionBtn} accessibilityRole="button" accessibilityLabel="Copy translation">
+                    <Ionicons name="copy-outline" size={16} color="#bbf7d0" />
+                  </Pressable>
+                ) : null}
+              </View>
               <Text
                 numberOfLines={5}
                 accessibilityLiveRegion="polite"
@@ -1396,6 +1470,8 @@ export default function App() {
                 sendRouteConfig(sourceLanguage, targetLanguage, nextBarrierMode);
                 setStatus(nextBarrierMode ? "Two-way mode on" : "One-way mode");
                 setStatusType("success");
+                tapHaptic("light");
+                showToast(nextBarrierMode ? "Two-way conversation enabled" : "One-way translation enabled", "success");
               }}
               active={barrierMode}
               accessibilityLabel={barrierMode ? "Switch to one-way translation" : "Switch to two-way conversation"}
@@ -1411,6 +1487,7 @@ export default function App() {
           </View>
         </View>
       </View>
+      <Toast message={toast?.message} variant={toast?.variant} />
     </SafeAreaView>
   );
 }
