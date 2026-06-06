@@ -45,7 +45,7 @@ function testAudioSocket(wsAudioUrl, authToken) {
   });
 }
 
-export default function useSelfTest({ apiUrl, wsAudioUrl, authToken, onStatus } = {}) {
+export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onStatus } = {}) {
   const [selfTest, setSelfTest] = useState(INITIAL);
 
   const runSelfTest = useCallback(async () => {
@@ -64,34 +64,72 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, authToken, onStatus } 
       message: 'Self-test passed',
     };
     const failures = [];
+    let authToken = '';
 
     try {
-      const response = await fetch(`${apiUrl}/translate/text`, {
-        method: 'POST',
-        headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          text: 'hello world',
-          source_language: 'en',
-          target_language: 'es',
-          synthesize_audio: false,
-        }),
-      });
-      if (!response.ok) {
-        throw new Error(await responseErrorMessage(response, 'Translation test failed'));
-      }
-      const data = await response.json();
-      if (!data.translated_text?.trim()) throw new Error('Translation returned empty text');
-      next.translation = data.translated_text;
+      authToken = ensureAuthToken ? await ensureAuthToken() : '';
+      if (!authToken) throw new Error('Login required');
     } catch (error) {
-      next.translation = 'failed';
-      failures.push(error.message || 'Translation test failed');
+      failures.push(error.message || 'Login required');
     }
 
-    try {
-      next.websocket = await testAudioSocket(wsAudioUrl, authToken);
-    } catch (error) {
+    if (!failures.length) {
+      try {
+        const response = await fetch(`${apiUrl}/translate/text`, {
+          method: 'POST',
+          headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            text: 'hello world',
+            source_language: 'en',
+            target_language: 'es',
+            synthesize_audio: false,
+          }),
+        });
+        if (response.status === 401 && ensureAuthToken) {
+          authToken = await ensureAuthToken({ force: true });
+          if (!authToken) throw new Error('Login required');
+          const retry = await fetch(`${apiUrl}/translate/text`, {
+            method: 'POST',
+            headers: authHeaders(authToken, { 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+              text: 'hello world',
+              source_language: 'en',
+              target_language: 'es',
+              synthesize_audio: false,
+            }),
+          });
+          if (!retry.ok) throw new Error(await responseErrorMessage(retry, 'Translation test failed'));
+          const retryData = await retry.json();
+          if (!retryData.translated_text?.trim()) throw new Error('Translation returned empty text');
+          if (/^\[[a-z]{2}->[a-z]{2}\]/i.test(retryData.translated_text)) {
+            throw new Error(`Translation returned placeholder output: ${retryData.translated_text}`);
+          }
+          next.translation = retryData.translated_text;
+        } else {
+          if (!response.ok) {
+            throw new Error(await responseErrorMessage(response, 'Translation test failed'));
+          }
+          const data = await response.json();
+          if (!data.translated_text?.trim()) throw new Error('Translation returned empty text');
+          if (/^\[[a-z]{2}->[a-z]{2}\]/i.test(data.translated_text)) {
+            throw new Error(`Translation returned placeholder output: ${data.translated_text}`);
+          }
+          next.translation = data.translated_text;
+        }
+      } catch (error) {
+        next.translation = 'failed';
+        failures.push(error.message || 'Translation test failed');
+      }
+
+      try {
+        next.websocket = await testAudioSocket(wsAudioUrl, authToken);
+      } catch (error) {
+        next.websocket = 'failed';
+        failures.push(error.message || 'Audio socket test failed');
+      }
+    } else {
+      next.translation = 'failed';
       next.websocket = 'failed';
-      failures.push(error.message || 'Audio socket test failed');
     }
 
     if (failures.length) {
@@ -103,7 +141,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, authToken, onStatus } 
     }
 
     setSelfTest(next);
-  }, [apiUrl, wsAudioUrl, authToken, onStatus]);
+  }, [apiUrl, wsAudioUrl, ensureAuthToken, onStatus]);
 
   return { selfTest, runSelfTest };
 }

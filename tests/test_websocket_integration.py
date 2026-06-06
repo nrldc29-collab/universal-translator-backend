@@ -136,6 +136,52 @@ class TestWsAudio:
             payload = ws.receive_json()
         assert payload["type"] == "ready"
 
+    def test_audio_ping_pong_when_ready(self, app_module, client, monkeypatch):
+        monkeypatch.setitem(app_module.runtime_state, "ready", True)
+        with client.websocket_connect("/ws/audio") as ws:
+            ws.receive_json()
+            ws.send_json({"type": "ping"})
+            payload = ws.receive_json()
+        assert payload["type"] == "pong"
+
+    def test_stream_limit_blocks_extra_device(self, app_module, client, monkeypatch):
+        monkeypatch.setitem(app_module.runtime_state, "ready", True)
+        monkeypatch.setattr("backend.streaming.get_max_active_streams_per_user", lambda: 2)
+        app_module.session_registry.cleanup()
+
+        def start_device(device_id: str):
+            ws = client.websocket_connect("/ws/audio").__enter__()
+            ws.receive_json()
+            ws.send_json(
+                {
+                    "type": "start",
+                    "session_id": "limit-test",
+                    "device_id": device_id,
+                    "speaker_mode": "auto",
+                    "source_language": "en",
+                    "target_language": "es",
+                    "mime_type": "audio/webm;codecs=opus",
+                }
+            )
+            while True:
+                payload = ws.receive_json()
+                if payload.get("type") == "error":
+                    return ws, payload
+                if payload.get("type") == "listening":
+                    return ws, payload
+            return ws, payload
+
+        ws1, first = start_device("device-1")
+        assert first["type"] == "listening"
+        ws2, second = start_device("device-2")
+        assert second["type"] == "listening"
+        ws3, third = start_device("device-3")
+        assert third["type"] == "error"
+        assert "Too many active streams" in third["message"]
+        ws1.close()
+        ws2.close()
+        ws3.close()
+
 
 # ---------------------------------------------------------------------------
 # /ws/assistant

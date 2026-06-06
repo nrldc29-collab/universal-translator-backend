@@ -64,7 +64,6 @@ import { useWsDebug } from './hooks/useWsDebug';
 import { useSpeechFastPath } from './hooks/useSpeechFastPath';
 import { useStreamRefs } from './hooks/useStreamRefs';
 import { useHoldToTalk } from './hooks/useHoldToTalk';
-import { useAutoConversation } from './hooks/useAutoConversation';
 import useReliabilityMonitor from './hooks/useReliabilityMonitor';
 import {
   // host detection + URL helpers
@@ -242,13 +241,6 @@ function App() {
     shouldSkipBrainTts, resetBrainRuntimeUi,
   } = useBrainState();
   const reliabilityMonitor = useReliabilityMonitor();
-  const autoConversation = useAutoConversation({
-    wsAudioUrl: `${liveWsUrl}/ws/audio`,
-    authToken,
-    sourceLanguage,
-    targetLanguage,
-    withAuthToken,
-  });
   const lowBandwidthMode = !!settings.lowBandwidthMode;
   const [showDebugPanel, setShowDebugPanel] = useState(() => !!settings.debugMode);
   const [showAILangConfig, setShowAILangConfig] = useState(false);
@@ -318,7 +310,7 @@ function App() {
   const { selfTest, runSelfTest } = useSelfTest({
     apiUrl: liveApiUrl,
     wsAudioUrl: `${liveWsUrl}/ws/audio`,
-    authToken,
+    ensureAuthToken,
     onStatus: (message) => setStatus(message),
   });
   const { sessionId, setSessionId, updateSessionId, sharedSession, setSharedSession, speakerMode, setSpeakerMode } = useStreamSession();
@@ -1349,6 +1341,17 @@ function App() {
       setStatus(connectionStatus === 'warming' ? 'Models still loading — wait for LIVE' : 'Backend offline — start the server first');
       return;
     }
+    if (micPermission === 'unavailable') {
+      setStatus('Microphone not available on this device');
+      setCurrentError('mic_not_found');
+      return;
+    }
+    if (micPermission === 'denied') {
+      await requestMicPermission();
+      setStatus('Grant microphone access, then tap again');
+      setCurrentError('mic_permission_denied');
+      return;
+    }
     if (ignoreNextMicClickRef.current) {
       ignoreNextMicClickRef.current = false;
       return;
@@ -1622,6 +1625,7 @@ function App() {
       disableStreamReconnect();
       setMicPermission('denied');
       setStatus(mediaErrorMessage(error));
+      setCurrentError(mapTechnicalError(error));
       return;
     }
     const selectedSpeakerMode = cleanOptions.speakerMode || speakerMode;
@@ -1951,7 +1955,7 @@ function App() {
       if (data.type === 'error') {
         debugLog('WS ERROR MESSAGE:', data);
         const message = data.message || 'Stream recovered';
-        if (shouldKeepContinuousStream(socket) && !isFatalStreamError(message)) {
+        if (shouldKeepContinuousStream(socket) && !isFatalStreamError(message) && !data.warming) {
           setProcessing(false);
           setPipelineStage('Listening');
           setStatus(`${message} Listening...`);
@@ -2927,9 +2931,9 @@ function App() {
   const hasTranslatedText = Boolean(liveTranslation || result?.translated_text);
   const perceivedListening = streaming || instantListening;
   const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
-  const micReady = connectionStatus === 'online';
+  const micReady = connectionStatus === 'online' && micPermission !== 'denied' && micPermission !== 'unavailable';
   const micLabel = !micReady
-    ? (connectionStatus === 'warming' ? 'Starting models' : 'Offline')
+    ? (connectionStatus === 'checking' ? 'Syncing' : connectionStatus === 'warming' ? 'Starting models' : micPermission === 'denied' ? 'Mic blocked' : micPermission === 'unavailable' ? 'No mic' : 'Offline')
     : playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
   const statusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
   const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
@@ -2943,7 +2947,7 @@ function App() {
   const timingLabel = Number.isFinite(latencyTotalMs) ? `${latencyTotalMs}ms` : latencyAverageMs ? `${latencyAverageMs}ms avg` : '';
   const speakerSummary = activeSpeakerLabel;
   const micHint = !micReady
-    ? (connectionStatus === 'warming' ? 'Wait for LIVE in the header' : 'Start backend with: cd backend && python app.py')
+    ? (connectionStatus === 'checking' ? 'Connecting to backend...' : connectionStatus === 'warming' ? 'Wait for LIVE in the header' : micPermission === 'denied' ? 'Allow microphone access in browser settings' : micPermission === 'unavailable' ? 'Connect a microphone to use voice' : 'Start backend with: cd backend && python app.py')
     : perceivedListening ? 'Listening now' : processing ? 'Translation in motion' : playing ? 'Voice playing' : 'Ready for one tap';
   const visibleRepairOptions = (brainUi.repairOptions || []).slice(0, 3);
   const visibleHighlightTerms = (brainUi.highlightTerms || []).slice(0, 5);
@@ -2998,6 +3002,13 @@ function App() {
           try { handleMicClick(); } catch {}
         }}
       />
+      {currentError && (
+        <UserFriendlyError
+          errorCode={currentError}
+          onDismiss={handleDismissError}
+          onRetry={handleRetryError}
+        />
+      )}
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
         <AppHeader
           connectionStatus={connectionStatus}
@@ -3158,6 +3169,9 @@ function App() {
           }}
           diagnostics={diagnostics}
           apiUrl={liveApiUrl}
+          selfTest={selfTest}
+          runSelfTest={runSelfTest}
+          onRequestMicPermission={requestMicPermission}
         />
         {settings.debugMode && showDebugPanel && (
           <DebugPanel

@@ -118,6 +118,8 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
         translated = str(payload.get("translated_text") or "")
         if "hola" not in translated.lower():
             errors.append(f"translate en->es unexpected result: {translated!r}")
+        if translated.startswith("[") and "->" in translated[:12]:
+            errors.append(f"translate en->es returned placeholder output: {translated!r}")
 
     status, payload = _post_json(
         f"{root}/translate/text",

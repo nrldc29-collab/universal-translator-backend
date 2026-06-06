@@ -68,7 +68,7 @@ export function readInitialSessionId() {
 export const TARGET_LANGUAGE_OPTIONS = [
   { code: 'en', label: 'English', native: 'English', flag: '🇺🇸', dir: 'ltr', group: 'european', popularity: 1, family: 'Indo-European', speakers: '1.5B', difficulty: 1, script: 'Latin', currency: '$', ttsVoice: 'en-US-Neural2', units: 'imperial', keyboard: 'QWERTY', cultural: 'Direct communication, personal space valued', dateFormat: 'MDY', nameOrder: 'firstLast' },
   { code: 'es', label: 'Spanish', native: 'Español', flag: '🇪🇸', dir: 'ltr', group: 'european', popularity: 2, family: 'Indo-European', speakers: '550M', difficulty: 2, script: 'Latin', currency: '€', ttsVoice: 'es-ES-Neural2', units: 'metric', keyboard: 'QWERTY', cultural: 'Formal address with usted, close physical contact', dateFormat: 'DMY', nameOrder: 'firstLast' },
-  { code: 'ht', label: 'Haitian Creole', native: 'Kreyòl Ayisyen', flag: '🇭🇹', dir: 'ltr', group: 'caribbean', popularity: 12, family: 'Creole', speakers: '12M', difficulty: 3, script: 'Latin', currency: 'HTG', ttsVoice: 'fr-HT-Standard', units: 'metric', keyboard: 'QWERTY', cultural: 'French-influenced, warm hospitality', dateFormat: 'DMY', nameOrder: 'firstLast' },
+  { code: 'ht', label: 'Haitian Creole', native: 'Kreyòl Ayisyen', flag: '🇭🇹', dir: 'ltr', group: 'caribbean', popularity: 12, family: 'Creole', speakers: '12M', difficulty: 3, script: 'Latin', currency: 'HTG', ttsVoice: 'ht-HT-Standard', units: 'metric', keyboard: 'QWERTY', cultural: 'French-influenced, warm hospitality', dateFormat: 'DMY', nameOrder: 'firstLast' },
   { code: 'fr', label: 'French', native: 'Français', flag: '🇫🇷', dir: 'ltr', group: 'european', popularity: 5, family: 'Indo-European', speakers: '300M', difficulty: 3, script: 'Latin', currency: '€', ttsVoice: 'fr-FR-Neural2', units: 'metric', keyboard: 'AZERTY', cultural: 'Formal vous, appreciation of art and cuisine', dateFormat: 'DMY', nameOrder: 'firstLast', variants: ['fr-CA', 'fr-BE'] },
   { code: 'de', label: 'German', native: 'Deutsch', flag: '🇩🇪', dir: 'ltr', group: 'european', popularity: 6, family: 'Indo-European', speakers: '230M', difficulty: 4, script: 'Latin', currency: '€', ttsVoice: 'de-DE-Neural2', units: 'metric', keyboard: 'QWERTZ', cultural: 'Punctual, formal Sie, direct communication', dateFormat: 'DMY', nameOrder: 'firstLast', variants: ['de-AT', 'de-CH'] },
   { code: 'it', label: 'Italian', native: 'Italiano', flag: '🇮🇹', dir: 'ltr', group: 'european', popularity: 7, family: 'Indo-European', speakers: '70M', difficulty: 3, script: 'Latin', currency: '€', ttsVoice: 'it-IT-Neural2', units: 'metric', keyboard: 'QWERTY', cultural: 'Formal Lei, emphasis on family and food', dateFormat: 'DMY', nameOrder: 'firstLast', variants: ['it-CH'] },
@@ -883,7 +883,7 @@ export function activePacketMs({ lowBandwidthMode, streamPacketMs, experimentalI
 }
 
 export function isFatalStreamError(message = '') {
-  return /quota|too many active|not authorized|unauthorized|forbidden|exceeds|buffer limit/i.test(String(message || ''));
+  return /quota|too many active|not authorized|unauthorized|forbidden|exceeds|buffer limit|models still loading|wait for live/i.test(String(message || ''));
 }
 
 export function logAudioStream(stream, debugLog) {

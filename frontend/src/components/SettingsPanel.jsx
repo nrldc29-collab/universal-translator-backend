@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   X, Languages, Volume2, Mic, Zap, Monitor, Lock, Bell, Settings2, Info,
   ChevronRight, ChevronDown, Sun, Moon, Contrast, Type, Eye, EyeOff,
-  Trash2, Shield, Music, Bug, Server, Key, Check, AlertTriangle,
+  Trash2, Shield, Music, Bug, Server, Key, Check, AlertTriangle, Activity,
 } from 'lucide-react';
 import { TARGET_LANGUAGE_OPTIONS } from '../utils';
 
@@ -37,6 +37,9 @@ export default function SettingsPanel({
   onClearSession,
   diagnostics,
   apiUrl,
+  selfTest,
+  runSelfTest,
+  onRequestMicPermission,
 }) {
   const [activeSection, setActiveSection] = useState('language');
   const [micDevices, setMicDevices] = useState([]);
@@ -129,7 +132,12 @@ export default function SettingsPanel({
               <SectionLanguage settings={settings} updateSetting={updateSetting} />
             )}
             {activeSection === 'audio' && (
-              <SectionAudio settings={settings} updateSetting={updateSetting} micDevices={micDevices} />
+              <SectionAudio
+                settings={settings}
+                updateSetting={updateSetting}
+                micDevices={micDevices}
+                onRequestMicPermission={onRequestMicPermission}
+              />
             )}
             {activeSection === 'translation' && (
               <SectionTranslation settings={settings} updateSetting={updateSetting} />
@@ -156,6 +164,8 @@ export default function SettingsPanel({
                 backendTestResult={backendTestResult}
                 onTestBackend={testBackendUrl}
                 apiUrl={apiUrl}
+                selfTest={selfTest}
+                runSelfTest={runSelfTest}
               />
             )}
             {activeSection === 'about' && (
@@ -209,7 +219,7 @@ function SectionLanguage({ settings, updateSetting }) {
 }
 
 /* ─── Section: Audio ──────────────────────────────────────────────── */
-function SectionAudio({ settings, updateSetting, micDevices }) {
+function SectionAudio({ settings, updateSetting, micDevices, onRequestMicPermission }) {
   return (
     <div className="sp-section">
       <h2 className="sp-section-title">Audio Settings</h2>
@@ -272,6 +282,11 @@ function SectionAudio({ settings, updateSetting, micDevices }) {
         <div className="sp-info-box warning">
           <AlertTriangle size={13} />
           <span>Grant microphone permission to list available devices.</span>
+          {onRequestMicPermission && (
+            <button type="button" className="sp-test-btn" onClick={() => onRequestMicPermission()}>
+              Grant Microphone Access
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -485,6 +500,8 @@ function SectionAdvanced({
   apiKeyVisible, setApiKeyVisible,
   testingBackend, backendTestResult, onTestBackend,
   apiUrl,
+  selfTest,
+  runSelfTest,
 }) {
   return (
     <div className="sp-section">
@@ -525,6 +542,30 @@ function SectionAdvanced({
         <div className={`sp-info-box ${backendTestResult.ok ? '' : 'warning'}`}>
           {backendTestResult.ok ? <Check size={13} /> : <AlertTriangle size={13} />}
           <span>{backendTestResult.msg}</span>
+        </div>
+      )}
+
+      <div className="sp-divider-label">Self Test</div>
+
+      <SettingRow label="Run Self Test" hint="Quick translation + audio WebSocket check" icon={<Activity size={15} />}>
+        <button
+          type="button"
+          className="sp-test-btn"
+          onClick={() => runSelfTest?.()}
+          disabled={!runSelfTest || selfTest?.status === 'running'}
+        >
+          {selfTest?.status === 'running' ? 'Running…' : 'Run Self Test'}
+        </button>
+      </SettingRow>
+
+      {selfTest && selfTest.status !== 'idle' && (
+        <div className={`sp-info-box ${selfTest.status === 'online' ? '' : 'warning'}`}>
+          {selfTest.status === 'online' ? <Check size={13} /> : <AlertTriangle size={13} />}
+          <span>
+            {selfTest.message}
+            {selfTest.translation !== '-' ? ` · Translation: ${selfTest.translation}` : ''}
+            {selfTest.websocket !== '-' ? ` · WebSocket: ${selfTest.websocket}` : ''}
+          </span>
         </div>
       )}
 

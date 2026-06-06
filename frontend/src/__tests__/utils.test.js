@@ -182,6 +182,10 @@ describe('isFatalStreamError', () => {
     expect(isFatalStreamError('buffer limit reached')).toBe(true);
   });
 
+  it('matches warming messages', () => {
+    expect(isFatalStreamError('Models still loading. Wait for LIVE.')).toBe(true);
+  });
+
   it('returns false for non-fatal messages', () => {
     expect(isFatalStreamError('connection closed')).toBe(false);
     expect(isFatalStreamError('')).toBe(false);

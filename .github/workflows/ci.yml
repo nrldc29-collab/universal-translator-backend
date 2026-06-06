@@ -19,6 +19,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+      - name: Fetch bundled Piper voices for offline smoke
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import scripts.setup_models as setup
+          for name, url in setup.PIPER_VOICE_URLS.items():
+              setup.download_file(url, setup.TTS_DIR / name)
+          PY
+      - name: Offline smoke check
+        run: python scripts/smoke_local.py
       - name: Run backend tests
         run: pytest --ignore=tests/test_stt_integration.py -q
 
