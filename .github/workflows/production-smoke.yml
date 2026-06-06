@@ -7,9 +7,14 @@ on:
         description: Deployed service URL (e.g. https://your-app.up.railway.app)
         required: true
         type: string
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 jobs:
-  smoke:
+  smoke-manual:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,3 +25,22 @@ jobs:
         run: python -m pip install websockets
       - name: Run EN↔HT production smoke
         run: python scripts/smoke_local.py "${{ inputs.base_url }}"
+
+  smoke-auto:
+    if: >
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      vars.PRODUCTION_URL != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install smoke client dependency
+        run: python -m pip install websockets
+      - name: Run EN↔HT production smoke (PRODUCTION_URL)
+        env:
+          SMOKE_REMOTE: "1"
+          USERS: ${{ secrets.PRODUCTION_USERS }}
+        run: python scripts/smoke_local.py "${{ vars.PRODUCTION_URL }}"

@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup setup-deps setup-models verify-local verify-local-live verify-bundled-live verify-all preflight-deploy preflight-deploy-live release-ready smoke-production run-backend run-frontend start-local test-translator
+.PHONY: backend-test backend-compile frontend-build mobile-lint mobile-build validate setup setup-deps setup-models verify-local verify-local-live verify-bundled-live verify-all preflight-deploy preflight-deploy-live release-ready smoke-production railway-public-setup run-backend run-frontend start-local test-translator
 
 setup-deps:
 	$(PYTHON) -m pip install -r requirements.txt
@@ -68,3 +68,7 @@ release-ready: validate verify-all preflight-deploy
 smoke-production:
 	@test -n "$(URL)" || (echo "Usage: make smoke-production URL=https://YOUR-SERVICE.up.railway.app [USERS=user:pass]" >&2; exit 1)
 	USERS="$(USERS)" $(PYTHON) scripts/smoke_local.py "$(URL)"
+
+railway-public-setup:
+	@test -n "$$RAILWAY_TOKEN" || (echo "Usage: RAILWAY_TOKEN=... make railway-public-setup [USERS=user:pass]" >&2; exit 1)
+	USERS="$(USERS)" URL="$(URL)" bash scripts/railway_public_setup.sh
