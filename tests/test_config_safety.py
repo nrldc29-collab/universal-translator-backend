@@ -51,8 +51,10 @@ def test_railway_bootstrap_fills_missing_production_defaults(monkeypatch):
     assert "JWT_SECRET" in applied
     assert "USERS" in applied
     assert "ALLOWED_ORIGINS" in applied
+    assert "BACKEND_HOST" in applied
     assert config.validate_production_config() == []
     assert config.get_allowed_origins() == ["https://my-app.up.railway.app"]
+    assert config.get_backend_host() == "0.0.0.0"
     assert len(config.get_jwt_secret()) >= 32
     assert config.get_users()["demo"]
 
