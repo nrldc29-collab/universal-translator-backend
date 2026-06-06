@@ -676,6 +676,14 @@ async def websocket_audio_translation(
             phrase_accumulation_start = 0.0
             if tts_playback_text:
                 await emit_live_tts(tts_playback_text, partial=False)
+            else:
+                await websocket.send_json({
+                    "type": "tts_end",
+                    "speaker": live_speaker,
+                    "speaker_label": live_speaker_label,
+                    "partial": False,
+                    "source": "browser_live_text",
+                })
             if payload_revision != live_text_revision:
                 return
             memory.add(live_speaker, text_value, refined, {"source": "browser_live_text"})
@@ -1560,17 +1568,35 @@ async def websocket_streaming_stt_translation(
             provider_ws = None
         provider_language = None
 
-    async def emit_translated_final(source_text: str) -> None:
+    async def emit_translated_final(
+        source_text: str,
+        *,
+        src_lang: str | None = None,
+        tgt_lang: str | None = None,
+        live_text_source: bool = False,
+    ) -> None:
         source_text = normalize_live_text(source_text)
         if not source_text:
             return
+        active_src = src_lang or source_language
+        active_tgt = tgt_lang or target_language
 
-        await send_json({
-            "type": "final_transcription",
-            "speaker": speaker,
-            "speaker_label": speaker_label,
-            "text": source_text,
-        })
+        if live_text_source:
+            await send_json({
+                "type": "partial_transcription",
+                "speaker": speaker,
+                "speaker_label": speaker_label,
+                "text": source_text,
+                "source": "browser_live_text",
+                "final": True,
+            })
+        else:
+            await send_json({
+                "type": "final_transcription",
+                "speaker": speaker,
+                "speaker_label": speaker_label,
+                "text": source_text,
+            })
         semantic_context = conversation_brain.analyze_semantics(speaker, source_text)
         await send_json({"type": "semantic_context", "speaker": speaker, "speaker_label": speaker_label, **semantic_context})
         await send_json({"type": "stage", "stage": "translation", "message": "Transcription ready. Translating..."})
@@ -1580,16 +1606,16 @@ async def websocket_streaming_stt_translation(
             "context improvement",
             pipeline.context_layer.improve,
             source_text,
-            source_language,
-            target_language,
+            active_src,
+            active_tgt,
             None,
         )
         raw_translated_text = await run_pipeline_step(
             "translation",
             lambda: pipeline.translate_local(
                 improved_text,
-                source_language,
-                target_language,
+                active_src,
+                active_tgt,
                 session_id=session_id,
                 original_source_text=source_text,
             ),
@@ -1603,10 +1629,10 @@ async def websocket_streaming_stt_translation(
         try:
             cip = await call_cip_brain(
                 source_text,
-                target_language,
+                active_tgt,
                 identity,
                 fallback_translation=translated_text,
-                source_language=source_language,
+                source_language=active_src,
                 stt_confidence=stt_conf,
                 translation_confidence=tr_conf,
                 context=memory_context,
@@ -1623,8 +1649,8 @@ async def websocket_streaming_stt_translation(
             source_text,
             pre_cip_translation,
             text_glossary,
-            source_language,
-            target_language,
+            active_src,
+            active_tgt,
         ):
             cip_clarify = False
         cip_response_plan = cip.get("response_plan") if isinstance(cip, dict) and isinstance(cip.get("response_plan"), dict) else {}
@@ -1638,8 +1664,8 @@ async def websocket_streaming_stt_translation(
             source_text,
             translated_text,
             text_glossary,
-            source_language,
-            target_language,
+            active_src,
+            active_tgt,
         )
         assessment = assess_translation_confidence(
             source_text,
@@ -1676,7 +1702,7 @@ async def websocket_streaming_stt_translation(
                 "domains": assessment["high_stakes"],
             })
         if translated_text.strip():
-            await send_json({
+            live_payload = {
                 "type": "live_translation",
                 "speaker": speaker,
                 "speaker_label": speaker_label,
@@ -1684,11 +1710,69 @@ async def websocket_streaming_stt_translation(
                 "final": True,
                 "confidence": assessment["confidence"],
                 "low_confidence": assessment["low_confidence"],
-            })
+            }
+            if live_text_source:
+                live_payload["source"] = "browser_live_text"
+            await send_json(live_payload)
         if cip_clarify:
             await send_json({"type": "clarify", "message": cip_decision.get("message") or "Can you rephrase that?", "stage": "cip_clarification"})
         elif conf_score < 0.4:
             await send_json({"type": "clarify", "message": clarification_for(source_text, detect_ambiguities(source_text)), "stage": "final_low_confidence"})
+
+        tts_meta = {"source": "browser_live_text"} if live_text_source else {}
+        if translated_text.strip() and not cip_clarify:
+            tts_path = None
+            try:
+                tts_path = await run_pipeline_step(
+                    "streaming STT TTS",
+                    lambda: pipeline.tts.synthesize(
+                        translated_text,
+                        f"models/tts/{uuid4()}-streaming-stt.wav",
+                        language=active_tgt,
+                    ),
+                )
+                audio_bytes = Path(tts_path).read_bytes()
+                if len(audio_bytes) >= 100:
+                    await send_json({
+                        "type": "tts_start",
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "chunks": 1,
+                        "partial": False,
+                        **tts_meta,
+                    })
+                    await send_json({
+                        "type": "tts_audio_chunk",
+                        "speaker": speaker,
+                        "speaker_label": speaker_label,
+                        "index": 1,
+                        "total": 1,
+                        "text": translated_text,
+                        "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
+                        "mime_type": "audio/wav",
+                        "partial": False,
+                        **tts_meta,
+                    })
+            except Exception as exc:
+                logger.warning("streaming_stt_tts_failed error=%s", exc)
+            finally:
+                if tts_path:
+                    Path(tts_path).unlink(missing_ok=True)
+            await send_json({
+                "type": "tts_end",
+                "speaker": speaker,
+                "speaker_label": speaker_label,
+                "partial": False,
+                **tts_meta,
+            })
+        elif live_text_source:
+            await send_json({
+                "type": "tts_end",
+                "speaker": speaker,
+                "speaker_label": speaker_label,
+                "partial": False,
+                **tts_meta,
+            })
 
         memory.add(speaker, source_text, translated_text, {"cip": cip})
         speaker_memory.add_message(speaker, source_text)
@@ -1709,7 +1793,7 @@ async def websocket_streaming_stt_translation(
             audio_output_path=None,
         )
         await send_json({"type": "session_sync", "session": shared_session})
-        await send_json({
+        final_payload = {
             "type": "final",
             "speaker": speaker,
             "speaker_label": speaker_label,
@@ -1734,7 +1818,10 @@ async def websocket_streaming_stt_translation(
             "high_stakes_domains": assessment["high_stakes"],
             "session": shared_session,
             **result.__dict__,
-        })
+        }
+        if live_text_source:
+            final_payload["source"] = "browser_live_text"
+        await send_json(final_payload)
         complete_decision = conversation_brain.end_turn(speaker)
         await send_json({
             "type": "turn",
@@ -1911,6 +1998,23 @@ async def websocket_streaming_stt_translation(
                             **result.__dict__,
                         })
 
+                elif msg_type == "live_text" and data.get("text"):
+                    if not runtime_state.get("ready"):
+                        await send_json({
+                            "type": "error",
+                            "message": "Models still loading. Wait for LIVE.",
+                            "recoverable": True,
+                            "warming": True,
+                        })
+                        continue
+                    if bool(data.get("final")):
+                        await emit_translated_final(
+                            data.get("text", ""),
+                            src_lang=data.get("source_language") or source_language,
+                            tgt_lang=data.get("target_language") or target_language,
+                            live_text_source=True,
+                        )
+
                 elif msg_type == "finalize":
                     if provider_ws is not None:
                         await provider_ws.send(json.dumps({"type": "flush"}))
@@ -1942,3 +2046,4 @@ async def websocket_streaming_stt_translation(
         raise
     finally:
         await close_provider()
+        session_registry.disconnect_session(session_id, identity)

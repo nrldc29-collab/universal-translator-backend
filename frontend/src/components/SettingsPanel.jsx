@@ -582,6 +582,7 @@ function SectionAdvanced({
             {selfTest.message}
             {selfTest.translation !== '-' ? ` · ES: ${selfTest.translation}` : ''}
             {selfTest.htTranslation !== '-' ? ` · HT: ${selfTest.htTranslation}` : ''}
+            {selfTest.liveText !== '-' ? ` · Live text: ${selfTest.liveText}` : ''}
             {selfTest.websocket !== '-' ? ` · WebSocket: ${selfTest.websocket}` : ''}
           </span>
         </div>

@@ -17,6 +17,7 @@ const INITIAL = {
   status: 'idle',
   translation: '-',
   htTranslation: '-',
+  liveText: '-',
   websocket: '-',
   message: 'Not run yet',
 };
@@ -75,6 +76,70 @@ function testAudioSocket(wsAudioUrl, authToken) {
   });
 }
 
+function testLiveTextSocket(wsAudioUrl, authToken) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(withAuthToken(wsAudioUrl, authToken));
+    let sawTranslation = false;
+    let sawFinalTts = false;
+    let started = false;
+    const timeout = window.setTimeout(() => {
+      socket.close();
+      reject(new Error('Live text socket timed out'));
+    }, 45000);
+
+    const finish = (value) => {
+      window.clearTimeout(timeout);
+      socket.close();
+      resolve(value);
+    };
+
+    socket.onmessage = (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (data.type === 'error') {
+        window.clearTimeout(timeout);
+        socket.close();
+        reject(new Error(data.message || 'Live text error'));
+        return;
+      }
+      if (data.type === 'ready' && !started) {
+        started = true;
+        socket.send(JSON.stringify({
+          type: 'start',
+          source_language: 'en',
+          target_language: 'ht',
+          speaker_mode: 'manual',
+          speaker: 'A',
+          mime_type: 'audio/webm;codecs=opus',
+        }));
+        socket.send(JSON.stringify({
+          type: 'live_text',
+          text: 'I need help',
+          final: true,
+          source_language: 'en',
+          target_language: 'ht',
+          speaker_mode: 'manual',
+          speaker: 'A',
+        }));
+        return;
+      }
+      if (data.type === 'live_translation' || data.type === 'partial_translation') {
+        if (htTranslationHasGlossaryTerms(data.text)) sawTranslation = true;
+      }
+      if (data.type === 'tts_end' && !data.partial) sawFinalTts = true;
+      if (sawTranslation && sawFinalTts) finish('ok');
+    };
+    socket.onerror = () => {
+      window.clearTimeout(timeout);
+      reject(new Error('Live text socket failed'));
+    };
+  });
+}
+
 export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onStatus, connectionStatus } = {}) {
   const [selfTest, setSelfTest] = useState(INITIAL);
 
@@ -87,6 +152,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
         status: 'offline',
         translation: '-',
         htTranslation: '-',
+        liveText: '-',
         websocket: '-',
         message,
       });
@@ -98,6 +164,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       status: 'running',
       translation: 'checking',
       htTranslation: 'checking',
+      liveText: 'checking',
       websocket: 'checking',
       message: 'Running checks...',
     });
@@ -107,6 +174,7 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
       status: 'online',
       translation: '-',
       htTranslation: '-',
+      liveText: '-',
       websocket: '-',
       message: 'Self-test passed',
     };
@@ -167,9 +235,17 @@ export default function useSelfTest({ apiUrl, wsAudioUrl, ensureAuthToken, onSta
         next.websocket = 'failed';
         failures.push(error.message || 'Audio socket test failed');
       }
+
+      try {
+        next.liveText = await testLiveTextSocket(wsAudioUrl, authToken);
+      } catch (error) {
+        next.liveText = 'failed';
+        failures.push(error.message || 'Live text test failed');
+      }
     } else {
       next.translation = 'failed';
       next.htTranslation = 'failed';
+      next.liveText = 'failed';
       next.websocket = 'failed';
     }
 

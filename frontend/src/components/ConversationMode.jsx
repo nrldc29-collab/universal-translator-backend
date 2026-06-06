@@ -152,6 +152,7 @@ function ConversationHistory({ turns, onClear }) {
 export default function ConversationMode({
   wsAudioUrl, authToken, withAuthToken,
   sourceLanguage, targetLanguage,
+  sessionId, deviceId,
   sourceLanguageLabel, targetLanguageLabel,
   connectionStatus = 'checking',
   onStatus,
@@ -167,6 +168,8 @@ export default function ConversationMode({
     authToken,
     sourceLanguage,
     targetLanguage,
+    sessionId,
+    deviceId,
     withAuthToken,
     backendReady,
     onStatus,

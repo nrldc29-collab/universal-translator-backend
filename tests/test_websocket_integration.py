@@ -172,7 +172,7 @@ class TestWsAudio:
                     "mime_type": "audio/webm;codecs=opus",
                 }
             )
-            for _ in range(25):
+            for _ in range(15):
                 payload = ws.receive_json()
                 if payload.get("type") == "error":
                     return payload

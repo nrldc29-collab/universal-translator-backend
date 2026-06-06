@@ -118,13 +118,47 @@ function createMicAnalyser(stream) {
 }
 
 // ─── WebSocket with exponential backoff ──────────────────────────────────
-function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
+function createTranslationSocket(urlFn, srcLang, tgtLang, handlers, socketMeta = {}) {
   let ws = null;
   let ready = false;
   let queue = [];
   let retryCount = 0;
   let closed = false;
   let retryTimer = null;
+  const {
+    sessionId = 'default',
+    deviceId = null,
+    speaker = 'auto',
+    speakerLabel = 'Auto',
+  } = socketMeta;
+
+  function buildStartPayload() {
+    return {
+      type: 'start',
+      source_language: srcLang,
+      target_language: tgtLang,
+      session_id: sessionId,
+      device_id: deviceId,
+      speaker_mode: 'manual',
+      speaker,
+      speaker_label: speakerLabel,
+    };
+  }
+
+  function buildLiveTextPayload(text, isFinal) {
+    return {
+      type: 'live_text',
+      text,
+      final: isFinal,
+      session_id: sessionId,
+      device_id: deviceId,
+      source_language: srcLang,
+      target_language: tgtLang,
+      speaker,
+      speaker_label: speakerLabel,
+      speaker_mode: 'manual',
+    };
+  }
 
   function connect() {
     if (closed) return;
@@ -136,12 +170,9 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
       try {
         const d = JSON.parse(data);
         if (d.type === 'ready') {
-          ws.send(JSON.stringify({
-            type:'start', source_language:srcLang, target_language:tgtLang,
-            speaker_mode:'manual', speaker:'auto', speaker_label:'Auto',
-          }));
+          ws.send(JSON.stringify(buildStartPayload()));
           ready = true;
-          queue.splice(0).forEach(m => ws.send(m));
+          queue.splice(0).forEach((m) => ws.send(m));
           handlers.onReady?.();
           return;
         }
@@ -153,11 +184,13 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
           }
           return;
         }
-        if (d.type === 'live_translation') handlers.onTranslation?.(d.text, true);
-        else if (d.type === 'partial_translation') handlers.onTranslation?.(d.text, false);
-        else if (d.type === 'final' || d.type === 'translation') handlers.onTranslation?.(d.translated_text || d.text || '', true);
-        if (d.type === 'tts_audio_chunk' && d.audio_base64) handlers.onTtsChunk?.(d.audio_base64, d.mime_type);
-        if (d.type === 'tts_end' && !d.partial) handlers.onTtsEnd?.();
+        if (d.type === 'live_translation') {
+          handlers.onTranslation?.(d.text, Boolean(d.final), d);
+        } else if (d.type === 'partial_translation') {
+          handlers.onTranslation?.(d.text, false, d);
+        }
+        if (d.type === 'tts_audio_chunk' && d.audio_base64) handlers.onTtsChunk?.(d.audio_base64, d.mime_type, d);
+        if (d.type === 'tts_end' && !d.partial) handlers.onTtsEnd?.(d);
       } catch {}
     };
     ws.onerror = () => { ready = false; handlers.onError?.({ message: 'WebSocket error' }); };
@@ -172,11 +205,7 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers) {
   }
 
   function send(text, isFinal = true) {
-    const msg = JSON.stringify({
-      type:'live_text', text, final:isFinal,
-      source_language:srcLang, target_language:tgtLang,
-      speaker:'auto', speaker_label:'Auto', speaker_mode:'manual',
-    });
+    const msg = JSON.stringify(buildLiveTextPayload(text, isFinal));
     if (ready && ws?.readyState === WebSocket.OPEN) ws.send(msg);
     else queue.push(msg);
   }
@@ -199,6 +228,8 @@ export function useAutoConversation({
   authToken,
   sourceLanguage,
   targetLanguage,
+  sessionId = 'default',
+  deviceId = 'conversation',
   withAuthToken,
   backendReady = true,
   onStatus,
@@ -226,6 +257,8 @@ export function useAutoConversation({
   const liveTextRef    = useRef('');   // ref copy of liveText to avoid stale closures
   const srcRef         = useRef(sourceLanguage);
   const tgtRef         = useRef(targetLanguage);
+  const sessionRef     = useRef(sessionId);
+  const deviceRef      = useRef(deviceId);
   const ttsTimerRef    = useRef(null);
   const ttsTimerBARef  = useRef(null);
   const utteranceIdRef = useRef(0); // incremented per utterance to invalidate stale handlers
@@ -235,6 +268,8 @@ export function useAutoConversation({
 
   useEffect(() => { srcRef.current = sourceLanguage; }, [sourceLanguage]);
   useEffect(() => { tgtRef.current = targetLanguage; }, [targetLanguage]);
+  useEffect(() => { sessionRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { deviceRef.current = deviceId; }, [deviceId]);
 
   // Re-open sockets when languages or auth change (while active)
   useEffect(() => {
@@ -310,30 +345,37 @@ export function useAutoConversation({
       let finalTranslation = '';
       let finalSource = '';
       let receivedTtsChunks = 0;
+      let ttsCompleted = false;
       let audioFallbackTimer = null;
 
       return {
-        onTranslation(text, isFinal) {
+        onTranslation(text, isFinal, frame = {}) {
           if (!activeRef.current) return;
           setLiveTrans(text);
-          if (isFinal) finalTranslation = text;
+          if (!isFinal) return;
+          finalTranslation = text;
           clearTimeout(audioFallbackTimer);
-          if (isFinal && text && !BACKEND_TTS_LANGS.has(outboundTargetLang)) {
+          if (ttsCompleted) return;
+          const backendOwnsTts = frame.source === 'browser_live_text'
+            && BACKEND_TTS_LANGS.has(outboundTargetLang);
+          if (backendOwnsTts) {
+            receivedTtsChunks = 0;
+            audioFallbackTimer = window.setTimeout(() => {
+              if (!activeRef.current || receivedTtsChunks > 0 || ttsCompleted) return;
+              setPhaseR('speaking');
+              speakBrowser(text, outboundTargetLang, {
+                onEnd: () => afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B'),
+              });
+            }, 2500);
+            return;
+          }
+          if (text && !BACKEND_TTS_LANGS.has(outboundTargetLang)) {
             clearTimeout(timerRef.current);
             clearTimeout(dir === 'AB' ? ttsTimerBARef.current : ttsTimerRef.current);
             setPhaseR('speaking');
             speakBrowser(text, outboundTargetLang, {
               onEnd: () => afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B'),
             });
-          } else if (isFinal && text) {
-            receivedTtsChunks = 0;
-            audioFallbackTimer = window.setTimeout(() => {
-              if (!activeRef.current || receivedTtsChunks > 0) return;
-              setPhaseR('speaking');
-              speakBrowser(text, outboundTargetLang, {
-                onEnd: () => afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B'),
-              });
-            }, 2000);
           }
         },
         onTtsChunk(b64) {
@@ -350,6 +392,8 @@ export function useAutoConversation({
         },
         onTtsEnd() {
           if (!activeRef.current) return;
+          ttsCompleted = true;
+          clearTimeout(audioFallbackTimer);
           clearTimeout(timerRef.current);
           timerRef.current = setTimeout(async () => {
             if (!activeRef.current) return;
@@ -380,6 +424,7 @@ export function useAutoConversation({
           finalTranslation = '';
           finalSource = '';
           receivedTtsChunks = 0;
+          ttsCompleted = false;
           clearTimeout(audioFallbackTimer);
         },
       };
@@ -387,9 +432,21 @@ export function useAutoConversation({
 
     const handlerAB = makeTtsHandler('AB', tgt);
     const handlerBA = makeTtsHandler('BA', src);
+    const sessionKey = sessionRef.current;
+    const baseDevice = deviceRef.current;
 
-    sockABRef.current = createTranslationSocket(() => buildUrl(), src, tgt, handlerAB);
-    sockBARef.current = createTranslationSocket(() => buildUrl(), tgt, src, handlerBA);
+    sockABRef.current = createTranslationSocket(() => buildUrl(), src, tgt, handlerAB, {
+      sessionId: sessionKey,
+      deviceId: `${baseDevice}-conv-ab`,
+      speaker: 'A',
+      speakerLabel: 'Person 1',
+    });
+    sockBARef.current = createTranslationSocket(() => buildUrl(), tgt, src, handlerBA, {
+      sessionId: sessionKey,
+      deviceId: `${baseDevice}-conv-ba`,
+      speaker: 'B',
+      speakerLabel: 'Person 2',
+    });
 
     // Store handlers for use in handleUtterance
     sockABRef.current._handler = handlerAB;

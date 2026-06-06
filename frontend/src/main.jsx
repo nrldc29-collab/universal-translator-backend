@@ -142,8 +142,15 @@ const BROWSER_TTS_LANG_MAP = {
   ar: 'ar-SA', hi: 'hi-IN', ht: 'ht-HT', nl: 'nl-NL',
 };
 let browserTtsLastText = '';
-function browserTtsSpeak(text, langCode, speed = 1.0) {
-  if (!window.speechSynthesis || !text || text === browserTtsLastText) return;
+function browserTtsSpeak(text, langCode, speed = 1.0, onEnd = null) {
+  if (typeof speed === 'function') {
+    onEnd = speed;
+    speed = 1.0;
+  }
+  if (!window.speechSynthesis || !text || text === browserTtsLastText) {
+    onEnd?.();
+    return;
+  }
   browserTtsLastText = text;
   const lang = BROWSER_TTS_LANG_MAP[langCode] || langCode || 'en-US';
   window.speechSynthesis.cancel();
@@ -154,8 +161,14 @@ function browserTtsSpeak(text, langCode, speed = 1.0) {
   const match = voices.find((v) => v.lang.startsWith(lang.slice(0, 2)) && !v.localService)
     || voices.find((v) => v.lang.startsWith(lang.slice(0, 2)));
   if (match) utt.voice = match;
+  const finish = () => {
+    browserTtsLastText = '';
+    onEnd?.();
+  };
+  utt.onend = finish;
+  utt.onerror = finish;
   window.speechSynthesis.speak(utt);
-  setTimeout(() => { browserTtsLastText = ''; }, 3000);
+  window.setTimeout(finish, Math.max(8000, text.length * 90));
 }
 
 const INITIAL_SPEAKER_NAME = localStorage.getItem('translator_speaker_name') || '';
@@ -1935,7 +1948,8 @@ function App() {
             const voice = await fetchTranslationVoice(data.text, voiceLang, authToken);
             if (voice && await playEmbeddedTranslationAudio(voice)) return;
             if (settings.ttsVoice === 'browser' || !BACKEND_TTS_LANGS.has(voiceLang)) {
-              browserTtsSpeak(data.text, voiceLang, settings.ttsSpeed ?? 1.0);
+              pauseBrowserSpeechForTts();
+              browserTtsSpeak(data.text, voiceLang, settings.ttsSpeed ?? 1.0, () => resumeBrowserSpeechAfterTts());
             }
           }, 500);
         }
@@ -1944,7 +1958,8 @@ function App() {
         const useBrowserTts = settings.ttsVoice === 'browser' ||
           (settings.partialTts !== false && !BACKEND_TTS_LANGS.has(voiceLang));
         if (useBrowserTts && data.text && !data.final && !ttsPlayingRef.current && data.source !== 'browser_live_text') {
-          browserTtsSpeak(data.text, voiceLang, settings.ttsSpeed ?? 1.0);
+          pauseBrowserSpeechForTts();
+          browserTtsSpeak(data.text, voiceLang, settings.ttsSpeed ?? 1.0, () => resumeBrowserSpeechAfterTts());
         }
       }
       if (data.type === 'tts_start') {
@@ -2025,7 +2040,8 @@ function App() {
                   .then(async (voice) => {
                     if (voice && await playEmbeddedTranslationAudio(voice)) return;
                     if (settings.ttsVoice === 'browser' || !BACKEND_TTS_LANGS.has(targetLanguage)) {
-                      browserTtsSpeak(textToSpeak, targetLanguage, settings.ttsSpeed ?? 1.0);
+                      pauseBrowserSpeechForTts();
+                      browserTtsSpeak(textToSpeak, targetLanguage, settings.ttsSpeed ?? 1.0, () => resumeBrowserSpeechAfterTts());
                     }
                   })
                   .catch(() => {});
@@ -3214,6 +3230,8 @@ function App() {
               withAuthToken={withAuthToken}
               sourceLanguage={sourceLanguage}
               targetLanguage={targetLanguage}
+              sessionId={sessionId}
+              deviceId={INITIAL_DEVICE_ID}
               sourceLanguageLabel={sourceLanguageLabel}
               targetLanguageLabel={targetLanguageLabel}
               connectionStatus={connectionStatus}
