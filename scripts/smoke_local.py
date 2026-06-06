@@ -544,7 +544,7 @@ def check_tts(base_url: str, auth: dict[str, str]) -> list[str]:
         ("en", "hello", "en"),
         ("ht", "Mwen bezwen èd", "ht"),
     ):
-        status, payload = _post_json(
+        status, payload = _post_json_with_retry(
             f"{root}/tts",
             {"text": text, "language": language},
             auth,
@@ -571,7 +571,7 @@ def main() -> int:
         errors.extend(check_self_test_bundle(base_url))
         errors.extend(check_diagnostics(base_url))
         errors.extend(check_pwa_assets(base_url))
-        login_status, login_payload = _post_json(
+        login_status, login_payload = _post_json_with_retry(
             f"{base_url.rstrip('/')}/auth/login",
             {"username": "demo", "password": "demo"},
         )

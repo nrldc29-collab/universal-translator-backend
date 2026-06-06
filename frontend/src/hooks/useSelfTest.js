@@ -24,23 +24,30 @@ const INITIAL = {
 
 async function runTranslateTest(apiUrl, authToken, ensureAuthToken, payload, label) {
   let token = authToken;
-  let response = await fetch(`${apiUrl}/translate/text`, {
-    method: 'POST',
-    headers: authHeaders(token, { 'Content-Type': 'application/json' }),
-    body: JSON.stringify(payload),
-  });
-  if (response.status === 401 && ensureAuthToken) {
-    token = await ensureAuthToken({ force: true });
-    if (!token) throw new Error('Login required');
-    response = await fetch(`${apiUrl}/translate/text`, {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let response = await fetch(`${apiUrl}/translate/text`, {
       method: 'POST',
       headers: authHeaders(token, { 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload),
     });
+    if (response.status === 401 && ensureAuthToken) {
+      token = await ensureAuthToken({ force: true });
+      if (!token) throw new Error('Login required');
+      response = await fetch(`${apiUrl}/translate/text`, {
+        method: 'POST',
+        headers: authHeaders(token, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload),
+      });
+    }
+    if (response.status === 429 && attempt < 3) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000 + attempt * 1500));
+      continue;
+    }
+    if (!response.ok) throw new Error(await responseErrorMessage(response, `${label} failed`));
+    const data = await response.json();
+    return assertTranslationText(data.translated_text?.trim() || '', label);
   }
-  if (!response.ok) throw new Error(await responseErrorMessage(response, `${label} failed`));
-  const data = await response.json();
-  return assertTranslationText(data.translated_text?.trim() || '', label);
+  throw new Error(`${label} failed after rate-limit retries`);
 }
 
 function assertTranslationText(text, label) {

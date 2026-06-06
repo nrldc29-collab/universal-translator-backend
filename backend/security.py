@@ -154,6 +154,16 @@ class UsageLimiter:
                 for identity, record in self.billing_usage.items()
             }
 
+    def reset(self) -> None:
+        """Clear in-memory counters (used by tests)."""
+        with self._lock:
+            self.usage.clear()
+            self.minute_usage.clear()
+            self.audio_usage.clear()
+            self.billing_usage.clear()
+            self._quota_seeded.clear()
+            self._audio_seeded.clear()
+
 
 usage_limiter = UsageLimiter()
 WEBSOCKET_AUTH_RELEASE = "anonymous-ws-v3"

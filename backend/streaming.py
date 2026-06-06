@@ -556,6 +556,13 @@ async def websocket_audio_translation(
             return
         except Exception as exc:
             logger.warning("live_text_translation_failed error=%s", exc)
+            if payload_revision == live_text_revision:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": f"Translation failed: {exc}",
+                    "recoverable": True,
+                    "source": "browser_live_text",
+                })
             return
 
         if not speaker_memory.get_language(live_speaker):

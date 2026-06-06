@@ -2110,6 +2110,27 @@ function App() {
       if (data.type === 'error') {
         debugLog('WS ERROR MESSAGE:', data);
         const message = data.message || 'Stream recovered';
+        if (
+          data.source === 'browser_live_text'
+          && data.recoverable
+          && shouldKeepContinuousStream(socket)
+          && !data.warming
+        ) {
+          setProcessing(false);
+          setPipelineStage('Listening');
+          setStatus(`${message} Listening...`);
+          streamFinalizePendingRef.current = false;
+          holdToTalkReleasePendingRef.current = false;
+          if (/translation empty|translation failed/i.test(message)) {
+            speechFinalTextRef.current = '';
+            speechInterimTextRef.current = '';
+            speechLastSentTextRef.current = '';
+            setPartialTranscript('');
+            setLiveTranslation('');
+          }
+          resumeBrowserSpeechAfterTts();
+          return;
+        }
         if (shouldKeepContinuousStream(socket) && !isFatalStreamError(message) && !data.warming) {
           setProcessing(false);
           setPipelineStage('Listening');

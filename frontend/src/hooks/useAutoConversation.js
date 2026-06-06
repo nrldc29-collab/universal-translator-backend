@@ -188,6 +188,8 @@ function createTranslationSocket(urlFn, srcLang, tgtLang, handlers, socketMeta =
           handlers.onTranslation?.(d.text, Boolean(d.final), d);
         } else if (d.type === 'partial_translation') {
           handlers.onTranslation?.(d.text, false, d);
+        } else if (d.type === 'final') {
+          handlers.onFinal?.(d);
         }
         if (d.type === 'tts_audio_chunk' && d.audio_base64) handlers.onTtsChunk?.(d.audio_base64, d.mime_type, d);
         if (d.type === 'tts_end' && !d.partial) handlers.onTtsEnd?.(d);
@@ -409,6 +411,10 @@ export function useAutoConversation({
             afterTts(liveTextRef.current, finalTranslation, spk);
           }, 150);
         },
+        onFinal(data) {
+          if (!activeRef.current || data?.source !== 'browser_live_text') return;
+          if (data.translated_text) finalTranslation = data.translated_text;
+        },
         onReady() { setSockStat('connected'); },
         onReconnecting(n) { setSockStat(n > 1 ? 'reconnecting' : 'connected'); },
         onError(err) {
@@ -433,6 +439,10 @@ export function useAutoConversation({
           if (err?.source === 'browser_live_text' && err?.recoverable) {
             clearTimeout(audioFallbackTimer);
             ttsCompleted = true;
+            const msg = String(err?.message || '');
+            if (/translation failed/i.test(msg)) {
+              onStatus?.(msg);
+            }
             afterTts(liveTextRef.current, '', dir === 'AB' ? 'A' : 'B');
           }
         },

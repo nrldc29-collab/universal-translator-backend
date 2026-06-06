@@ -207,7 +207,7 @@ class PiperTextToSpeech:
             return False
         if normalized not in GOOGLE_TTS_LANGUAGE_CODES:
             return False
-        return os.getenv("PREFER_CLOUD_TTS", "1").strip().lower() not in {
+        return os.getenv("PREFER_CLOUD_TTS", "0").strip().lower() not in {
             "0",
             "false",
             "no",

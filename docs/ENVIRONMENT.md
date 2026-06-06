@@ -89,7 +89,7 @@ defaults lives in `backend/config.py`.
 | `PARTIAL_TTS_MODE` | `1` | `1` enables partial TTS playback. |
 | `NEAR_ZERO_LATENCY_MODE` | `1` | Aggressive partial emit + caching. |
 | `STREAM_BUFFER_MAX_MB` | `12` | Per-socket buffer cap. |
-| `MAX_ACTIVE_STREAMS_PER_USER` | `2` | Per-identity concurrency cap. |
+| `MAX_ACTIVE_STREAMS_PER_USER` | `4` | Per-identity concurrency cap (conversation uses 2). |
 | `PIPELINE_STEP_TIMEOUT_SECONDS` | `10` | Cut off slow STT/translation/TTS calls. |
 | `STREAM_HOT_PATH_LOGGING` | `0` | Verbose per-frame logging. |
 
