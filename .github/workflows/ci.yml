@@ -21,12 +21,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+      - name: Restore model cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            models/tts
+          key: models-v1-${{ runner.os }}-${{ hashFiles('scripts/setup_models.py', 'requirements.txt') }}
+          restore-keys: |
+            models-v1-${{ runner.os }}-
       - name: Fetch bundled Piper voices for offline smoke
         run: |
           python - <<'PY'
           from pathlib import Path
           import scripts.setup_models as setup
-          for name, url in setup.PIPER_VOICE_URLS.items():
+          for name, url in setup.REQUIRED_PIPER_VOICE_URLS.items():
               setup.download_file(url, setup.TTS_DIR / name)
           PY
       - name: Offline smoke check
@@ -68,6 +77,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+      - name: Restore model cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            models/tts
+          key: models-v1-${{ runner.os }}-${{ hashFiles('scripts/setup_models.py', 'requirements.txt') }}
+          restore-keys: |
+            models-v1-${{ runner.os }}-
       - name: Download and warm local models
         run: python scripts/setup_models.py
       - name: Install frontend dependencies
@@ -83,7 +101,7 @@ jobs:
           MAX_ACTIVE_STREAMS_PER_USER: "5"
         run: |
           mkdir -p logs
-          SERVE_FRONTEND_DIST=1 BACKEND_PORT=8001 PARTIAL_TTS_MODE=1 python -m uvicorn backend.api:app --host 127.0.0.1 --port 8001 >logs/bundled-backend.log 2>&1 &
+          env -u ALLOWED_ORIGIN_REGEX SERVE_FRONTEND_DIST=1 BACKEND_PORT=8001 PARTIAL_TTS_MODE=1 python -m uvicorn backend.api:app --host 127.0.0.1 --port 8001 >logs/bundled-backend.log 2>&1 &
           echo $! >logs/bundled-backend.pid
           for i in $(seq 1 90); do
             curl -sf http://127.0.0.1:8001/health >/dev/null 2>&1 && break

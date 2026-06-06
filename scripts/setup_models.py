@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,29 +18,48 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 TTS_DIR = ROOT / "models" / "tts"
 
-PIPER_VOICE_URLS = {
+# Required for the default EN↔HT path (English Piper + Haitian Creole via eSpeak).
+REQUIRED_PIPER_VOICE_URLS = {
     "en_US-lessac-medium.onnx": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx",
     "en_US-lessac-medium.onnx.json": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
+}
+
+# Optional Spanish Piper voice (falls back to eSpeak when missing).
+OPTIONAL_PIPER_VOICE_URLS = {
     "es_MX-claude-high.onnx": "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx",
     "es_MX-claude-high.onnx.json": "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx.json",
 }
 
+PIPER_VOICE_URLS = {**REQUIRED_PIPER_VOICE_URLS, **OPTIONAL_PIPER_VOICE_URLS}
 
-def download_file(url: str, dest: Path, *, retries: int = 5) -> None:
+DOWNLOAD_RETRIES = 8
+DOWNLOAD_RETRYABLE_CODES = {429, 500, 502, 503, 504}
+WARM_RETRIES = 6
+
+
+def _configure_hf_hub() -> None:
+    os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "300")
+    os.environ.setdefault("HF_HUB_ETAG_TIMEOUT", "60")
+
+
+def download_file(url: str, dest: Path, *, retries: int = DOWNLOAD_RETRIES) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.stat().st_size > 0:
         print(f"skip  {dest.name} (already present)")
         return
     print(f"fetch {dest.name}")
     last_error: Exception | None = None
+    request = urllib.request.Request(url, headers={"User-Agent": "anai-translator-setup/1.0"})
     for attempt in range(retries):
         try:
-            urllib.request.urlretrieve(url, dest)
+            with urllib.request.urlopen(request, timeout=120) as response:
+                dest.write_bytes(response.read())
             return
         except urllib.error.HTTPError as exc:
             last_error = exc
-            if exc.code in {429, 500, 502, 503, 504} and attempt + 1 < retries:
-                delay = min(30, 2 ** attempt)
+            if exc.code in DOWNLOAD_RETRYABLE_CODES and attempt + 1 < retries:
+                delay = min(60, 2 ** attempt * 2)
                 print(f"retry {dest.name} in {delay}s ({exc.code})")
                 time.sleep(delay)
                 continue
@@ -46,8 +67,28 @@ def download_file(url: str, dest: Path, *, retries: int = 5) -> None:
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last_error = exc
             if attempt + 1 < retries:
-                delay = min(30, 2 ** attempt)
+                delay = min(60, 2 ** attempt * 2)
                 print(f"retry {dest.name} in {delay}s ({exc.__class__.__name__})")
+                time.sleep(delay)
+                continue
+            raise
+    if last_error is not None:
+        raise last_error
+
+
+def retry_warm(label: str, fn: Callable[[], None], *, retries: int = WARM_RETRIES) -> None:
+    last_error: Exception | None = None
+    for attempt in range(retries):
+        try:
+            fn()
+            return
+        except (RuntimeError, OSError, ValueError) as exc:
+            last_error = exc
+            message = str(exc).lower()
+            retryable = any(token in message for token in ("429", "too many requests", "timed out", "connection"))
+            if retryable and attempt + 1 < retries:
+                delay = min(60, 2 ** attempt * 3)
+                print(f"retry {label} in {delay}s ({exc.__class__.__name__})")
                 time.sleep(delay)
                 continue
             raise
@@ -59,18 +100,29 @@ def warm_translation() -> None:
     from translation.marian_translator import MarianTranslator
 
     translator = MarianTranslator()
-    result = translator.translate("hello", "en", "es")
-    if not result or result.startswith("[en->es]"):
-        raise RuntimeError(f"translation warmup failed: {result!r}")
-    print(f"warm  translation en->es ({result!r})")
-    ht_result = translator.translate("I need help", "en", "ht")
-    if not ht_result or ht_result.startswith("[en->ht]"):
-        raise RuntimeError(f"en->ht translation warmup failed: {ht_result!r}")
-    print(f"warm  translation en->ht ({ht_result!r})")
-    ht_en = translator.translate("mwen bezwen èd", "ht", "en")
-    if not ht_en or ht_en.startswith("[ht->en]"):
-        raise RuntimeError(f"ht->en translation warmup failed: {ht_en!r}")
-    print(f"warm  translation ht->en ({ht_en!r})")
+
+    def _warm_en_ht() -> None:
+        ht_result = translator.translate("I need help", "en", "ht")
+        if not ht_result or ht_result.startswith("[en->ht]"):
+            raise RuntimeError(f"en->ht translation warmup failed: {ht_result!r}")
+        print(f"warm  translation en->ht ({ht_result!r})")
+
+    def _warm_ht_en() -> None:
+        ht_en = translator.translate("mwen bezwen èd", "ht", "en")
+        if not ht_en or ht_en.startswith("[ht->en]"):
+            raise RuntimeError(f"ht->en translation warmup failed: {ht_en!r}")
+        print(f"warm  translation ht->en ({ht_en!r})")
+
+    retry_warm("translation en->ht", _warm_en_ht)
+    retry_warm("translation ht->en", _warm_ht_en)
+
+    try:
+        result = translator.translate("hello", "en", "es")
+        if not result or result.startswith("[en->es]"):
+            raise RuntimeError(f"translation warmup failed: {result!r}")
+        print(f"warm  translation en->es ({result!r})")
+    except (RuntimeError, OSError, ValueError) as exc:
+        print(f"warn  optional en->es translation warmup skipped: {exc}")
 
 
 def warm_whisper() -> None:
@@ -78,14 +130,18 @@ def warm_whisper() -> None:
     from speech.whisper_stt import WhisperSpeechToText
 
     model_size = get_whisper_model_size()
-    stt = WhisperSpeechToText(
-        model_size=model_size,
-        device=get_whisper_device(),
-        compute_type=get_whisper_compute_type(),
-    )
-    if not stt.preload():
-        raise RuntimeError("whisper preload returned false")
-    print(f"warm  whisper ({model_size})")
+
+    def _warm() -> None:
+        stt = WhisperSpeechToText(
+            model_size=model_size,
+            device=get_whisper_device(),
+            compute_type=get_whisper_compute_type(),
+        )
+        if not stt.preload():
+            raise RuntimeError("whisper preload returned false")
+        print(f"warm  whisper ({model_size})")
+
+    retry_warm("whisper", _warm)
 
 
 def espeak_installed() -> bool:
@@ -137,16 +193,25 @@ def warm_tts_ht() -> None:
 
 
 def main() -> int:
+    _configure_hf_hub()
     errors: list[str] = []
     warnings: list[str] = []
     for subdir in ("whisper", "translation", "tts", "uploads"):
         (ROOT / "models" / subdir).mkdir(parents=True, exist_ok=True)
 
-    for filename, url in PIPER_VOICE_URLS.items():
+    for filename, url in REQUIRED_PIPER_VOICE_URLS.items():
         try:
             download_file(url, TTS_DIR / filename)
         except (OSError, urllib.error.URLError) as exc:
             errors.append(f"failed to download {filename}: {exc}")
+        time.sleep(0.5)
+
+    for filename, url in OPTIONAL_PIPER_VOICE_URLS.items():
+        try:
+            download_file(url, TTS_DIR / filename)
+        except (OSError, urllib.error.URLError) as exc:
+            warnings.append(f"optional voice not downloaded ({filename}): {exc}")
+        time.sleep(0.5)
 
     if not ensure_espeak_ng() and not espeak_installed():
         errors.append(
