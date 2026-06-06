@@ -27,6 +27,7 @@ check_file railway.json
 check_file requirements-railway.txt
 check_file RAILWAY-DEPLOY.md
 check_file scripts/smoke_local.py
+check_file scripts/docker_fetch_piper.sh
 check_file Get-Railway-Variables.ps1
 check_file Get-Railway-Variables.sh
 

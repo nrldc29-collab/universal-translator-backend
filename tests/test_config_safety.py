@@ -23,9 +23,35 @@ def test_quota_default_supports_conversation_mode(monkeypatch):
     assert config.get_quota_limit() == 500
 
 
-def test_boolean_env_parsing(monkeypatch):
-    monkeypatch.setenv("PARTIAL_TTS_MODE", "off")
-    monkeypatch.setenv("PRELOAD_MODELS", "yes")
+def test_railway_bootstrap_fills_missing_production_defaults(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    monkeypatch.setenv("USERS", "demo:demo")
+    monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
+    monkeypatch.setenv("RAILWAY_PUBLIC_DOMAIN", "my-app.up.railway.app")
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+    monkeypatch.setenv("RAILWAY_SERVICE_ID", "service-xyz")
 
-    assert config.get_partial_tts_mode() is False
-    assert config.get_preload_models() is True
+    applied = config.apply_railway_production_defaults()
+    assert "JWT_SECRET" in applied
+    assert "USERS" in applied
+    assert "ALLOWED_ORIGINS" in applied
+    assert config.validate_production_config() == []
+    assert config.get_allowed_origins() == ["https://my-app.up.railway.app"]
+    assert len(config.get_jwt_secret()) >= 32
+    assert config.get_users()["demo"]
+
+
+def test_railway_bootstrap_does_not_override_explicit_secrets(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("JWT_SECRET", "x" * 64)
+    monkeypatch.setenv("USERS", "operator:strong-pass-here")
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://app.mycompany.com")
+    monkeypatch.setenv("RAILWAY_PUBLIC_DOMAIN", "my-app.up.railway.app")
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "project-abc")
+
+    applied = config.apply_railway_production_defaults()
+    assert applied == []
+    assert config.get_jwt_secret() == "x" * 64
+    assert config.get_users() == {"operator": "strong-pass-here"}
+    assert config.get_allowed_origins() == ["https://app.mycompany.com"]

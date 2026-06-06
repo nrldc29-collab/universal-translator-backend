@@ -155,3 +155,11 @@ jobs:
       - name: Build mobile web export
         working-directory: translator-mobile
         run: npm run build
+
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Railway Docker image
+        run: docker build -f Dockerfile -t anai-translator:ci .

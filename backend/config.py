@@ -1,5 +1,9 @@
+import base64
+import hashlib
+import hmac
 import os
 import re
+import secrets
 from pathlib import Path
 
 
@@ -478,6 +482,78 @@ _UNSAFE_USERS: frozenset[str] = frozenset({
     "root:root",
 })
 
+railway_bootstrap_applied: list[str] = []
+
+
+def _railway_public_domain() -> str:
+    return os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+
+
+def _railway_seed(purpose: str) -> str:
+    parts = [
+        os.getenv("RAILWAY_PROJECT_ID", "").strip(),
+        os.getenv("RAILWAY_SERVICE_ID", "").strip(),
+        os.getenv("RAILWAY_ENVIRONMENT_ID", "").strip(),
+        purpose,
+    ]
+    return ":".join(parts)
+
+
+def _derive_railway_secret(purpose: str, *, byte_length: int = 48) -> str:
+    seed = _railway_seed(purpose)
+    if not seed.replace(":", ""):
+        return secrets.token_urlsafe(byte_length)
+    digest = hmac.new(
+        b"anai-translator-railway-v1",
+        seed.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    extra = hashlib.sha256(digest).digest()
+    raw = (digest + extra)[:byte_length]
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def apply_railway_production_defaults() -> list[str]:
+    """Fill missing production secrets/origins when running on Railway."""
+    applied: list[str] = []
+    if not is_production() or not _railway_public_domain():
+        return applied
+
+    domain = _railway_public_domain()
+    origin = f"https://{domain}"
+
+    raw_origins = os.getenv("ALLOWED_ORIGINS", "").strip()
+    if not raw_origins or "example.com" in raw_origins or "your-frontend" in raw_origins:
+        os.environ["ALLOWED_ORIGINS"] = origin
+        applied.append("ALLOWED_ORIGINS")
+
+    jwt = os.getenv("JWT_SECRET", "dev-only-change-me")
+    if jwt in _UNSAFE_JWT_SECRETS or len(jwt) < 32:
+        os.environ["JWT_SECRET"] = _derive_railway_secret("jwt", byte_length=64)
+        applied.append("JWT_SECRET")
+
+    raw_users = os.getenv("USERS", "demo:demo").strip().lower()
+    if raw_users in _UNSAFE_USERS:
+        username = os.getenv("RAILWAY_BOOTSTRAP_USER", "demo").strip() or "demo"
+        password = _derive_railway_secret("user-password", byte_length=18)
+        os.environ["USERS"] = f"{username}:{password}"
+        raw_tiers = os.getenv("USER_TIERS", "").strip()
+        if not raw_tiers or raw_tiers.lower() == "demo:free":
+            os.environ["USER_TIERS"] = f"{username}:free"
+        applied.append("USERS")
+
+    if applied:
+        railway_bootstrap_applied[:] = applied
+    return applied
+
+
+def railway_bootstrap_status() -> dict:
+    return {
+        "active": bool(railway_bootstrap_applied),
+        "fields": list(railway_bootstrap_applied),
+        "public_domain": _railway_public_domain(),
+    }
+
 
 def validate_production_config() -> list[str]:
     """Validate configuration for a production deployment.
@@ -488,6 +564,8 @@ def validate_production_config() -> list[str]:
     """
     if not is_production():
         return []
+
+    apply_railway_production_defaults()
 
     errors: list[str] = []
 
@@ -514,6 +592,10 @@ def validate_production_config() -> list[str]:
         )
 
     return errors
+
+
+if is_production():
+    apply_railway_production_defaults()
 
 
 def ailang_diagnostics() -> dict:
