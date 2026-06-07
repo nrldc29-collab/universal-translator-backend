@@ -43,6 +43,24 @@ class UsageLimiter:
         self._quota_seeded: set[str] = set()
         self._audio_seeded: set[str] = set()
 
+    def reset(self) -> None:
+        """Clear in-memory counters (test isolation)."""
+        with self._lock:
+            self.usage.clear()
+            self.minute_usage.clear()
+            self.audio_usage.clear()
+            self.billing_usage = defaultdict(lambda: {
+                "http_requests": 0,
+                "text_translations": 0,
+                "audio_translations": 0,
+                "streaming_segments": 0,
+                "audio_seconds": 0.0,
+                "errors": 0,
+                "last_seen": 0.0,
+            })
+            self._quota_seeded.clear()
+            self._audio_seeded.clear()
+
     def _ensure_quota_seeded(self, identity: str) -> None:
         """Lazily hydrate hourly quota from DB on first access per identity."""
         if identity not in self._quota_seeded:
@@ -267,6 +285,7 @@ async def authenticate_websocket(websocket):
         identity = token or "anonymous"
     else:
         identity = "anonymous"
+    identity = str(identity or "anonymous")[:128]
     if identity == "anonymous":
         return True, identity
     allowed, remaining = usage_limiter.check(identity)

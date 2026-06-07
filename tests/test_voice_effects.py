@@ -55,3 +55,26 @@ def test_voice_cache_fingerprint_includes_voice_profile(monkeypatch):
     soothing = voice_cache_fingerprint()
     monkeypatch.setenv("TTS_VOICE_PROFILE", "plain")
     assert voice_cache_fingerprint() != soothing
+
+
+def test_soothing_profile_softens_more_than_plain(tmp_path, monkeypatch):
+    monkeypatch.setenv("TTS_SOFTENING_ENABLED", "true")
+    monkeypatch.setenv("TTS_SOFTENING_BACKGROUND_AIR", "0")
+    sample_rate = 22050
+    duration = 0.5
+    t = np.arange(int(sample_rate * duration), dtype=np.float32) / sample_rate
+    harsh = 0.35 * np.sin(2 * np.pi * 450 * t) + 0.2 * np.sin(2 * np.pi * 8200 * t)
+
+    plain_path = tmp_path / "plain.wav"
+    soothing_path = tmp_path / "soothing.wav"
+    _write_wav(plain_path, sample_rate, harsh)
+    _write_wav(soothing_path, sample_rate, harsh)
+
+    monkeypatch.setenv("TTS_VOICE_PROFILE", "plain")
+    postprocess_tts_wav(plain_path, language="en")
+    monkeypatch.setenv("TTS_VOICE_PROFILE", "soothing")
+    postprocess_tts_wav(soothing_path, language="en")
+
+    _, plain_audio = _read_wav(plain_path)
+    _, soothing_audio = _read_wav(soothing_path)
+    assert _high_frequency_ratio(soothing_audio, sample_rate) <= _high_frequency_ratio(plain_audio, sample_rate)

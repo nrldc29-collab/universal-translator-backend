@@ -116,6 +116,7 @@ jobs:
             sleep 2
           done
           python scripts/smoke_local.py http://127.0.0.1:8001
+          python benchmarks/run_benchmark.py --mode direct --direction en-ht --limit 5 --min-chrf 12
           kill $(cat logs/bundled-backend.pid) 2>/dev/null || true
 
   frontend:

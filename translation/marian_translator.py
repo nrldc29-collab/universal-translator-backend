@@ -1,7 +1,7 @@
 import logging
 from threading import Lock
 
-from backend.config import get_translation_device
+from backend.config import get_nllb_model, get_translation_device, get_translation_num_beams
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ class MarianTranslator:
         self._model_lock = Lock()
         self._cache = {}
         self._cache_lock = Lock()
-        self.nllb_model = "facebook/nllb-200-distilled-600M"
+        self.nllb_model = get_nllb_model()
 
     def _nllb_language(self, language: str) -> str:
         codes = {
@@ -86,7 +86,7 @@ class MarianTranslator:
             self._models[key] = translator
             return translator
 
-    def _generate_translation(self, text: str, translator: dict) -> str:
+    def _generate_translation(self, text: str, translator: dict, *, quality: bool = False) -> str:
         try:
             import torch
         except ImportError as exc:
@@ -101,7 +101,8 @@ class MarianTranslator:
         # only bounds pathological inputs — short sentences finish well before it.
         # Keeping it generous prevents long sentences from being truncated mid-thought.
         max_new_tokens = min(256, max(24, len(text.split()) * 3 + 16))
-        generate_kwargs = {"max_new_tokens": max_new_tokens, "num_beams": 1, "do_sample": False}
+        num_beams = get_translation_num_beams(quality=quality)
+        generate_kwargs = {"max_new_tokens": max_new_tokens, "num_beams": num_beams, "do_sample": False}
 
         if translator["uses_nllb"]:
             source_code = self._nllb_language(translator["source_language"])
@@ -115,19 +116,26 @@ class MarianTranslator:
             output_tokens = model.generate(**inputs, **generate_kwargs)
         return tokenizer.batch_decode(output_tokens, skip_special_tokens=True)[0]
 
-    def translate(self, text: str, source_language: str | None = None, target_language: str | None = None) -> str:
+    def translate(
+        self,
+        text: str,
+        source_language: str | None = None,
+        target_language: str | None = None,
+        *,
+        quality: bool = False,
+    ) -> str:
         if not text.strip():
             return ""
 
         source = source_language or self.default_source_language
         target = target_language or self.default_target_language
-        cache_key = (source, target, " ".join(text.lower().split()))
+        cache_key = (source, target, "quality" if quality else "fast", " ".join(text.lower().split()))
         with self._cache_lock:
             cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
         translator = self._load_model(source, target)
-        translated = self._generate_translation(text, translator)
+        translated = self._generate_translation(text, translator, quality=quality)
         with self._cache_lock:
             self._cache[cache_key] = translated
             if len(self._cache) > 500:

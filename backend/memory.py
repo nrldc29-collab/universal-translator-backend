@@ -17,7 +17,8 @@ def _topic_tokens(text: str) -> list[str]:
 
 class ConversationMemory:
     def __init__(self, limit: int = 40):
-        self.limit = limit
+        base = 40 if limit is None else int(limit)
+        self.limit = max(1, min(base, 500))
         self.history = []
         self._lock = RLock()
 
@@ -43,7 +44,8 @@ class ConversationMemory:
         with self._lock:
             items = list(self.history)
         if limit is not None:
-            return items[-limit:]
+            safe_limit = max(0, min(int(limit), self.limit))
+            return items[-safe_limit:]
         return items
 
     def recent_topics(self, limit: int = 6) -> list[str]:

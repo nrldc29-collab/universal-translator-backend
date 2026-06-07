@@ -337,7 +337,8 @@ def detect_urgency(text: str, intent: str | None = None) -> str:
 
 
 TTS_STYLE_MAP = {
-    "neutral": {"speed": 1.0, "pitch": 1.0, "pause_seconds": 0.25, "tone": "flat"},
+    # Slightly slower / warmer than flat 1.0 — reads more like conversation.
+    "neutral": {"speed": 0.94, "pitch": 0.98, "pause_seconds": 0.32, "tone": "warm"},
     "apologetic": {"speed": 0.85, "pitch": 0.95, "pause_seconds": 0.5, "tone": "soft"},
     "excited": {"speed": 1.2, "pitch": 1.1, "pause_seconds": 0.15, "tone": "energetic"},
     "serious": {"speed": 0.9, "pitch": 0.9, "pause_seconds": 0.4, "tone": "deliberate"},
@@ -378,18 +379,54 @@ def build_tts_pacing(text: str, intent: str | None = None, urgency: str | None =
     }
 
 
+def _neural_minimal_prosody() -> bool:
+    """Edge/Google neural audio is already lifelike — avoid stacking slow/warm filters."""
+    import os
+    return os.getenv("TTS_NEURAL_MINIMAL_PROCESSING", "1").strip().lower() not in {
+        "0", "false", "no", "off",
+    }
+
+
 def emotion_config_from_style(style=None):
     if not style:
-        return None
+        return natural_baseline_emotion_config()
     import math
-    config = {}
+    config = dict(natural_baseline_emotion_config())
+    neural = _neural_minimal_prosody()
     speed = style.get("speed")
-    if isinstance(speed, (int, float)) and speed > 0 and float(speed) != 1.0:
-        config["speed"] = float(speed)
+    if isinstance(speed, (int, float)) and speed > 0:
+        if not neural or abs(float(speed) - 1.0) > 0.08:
+            config["speed"] = float(speed)
     pitch = style.get("pitch")
-    if isinstance(pitch, (int, float)) and pitch > 0 and float(pitch) != 1.0:
-        config["pitch_shift"] = round(12.0 * math.log2(float(pitch)), 3)
+    if isinstance(pitch, (int, float)) and pitch > 0:
+        if not neural or abs(float(pitch) - 1.0) > 0.05:
+            config["pitch_shift"] = round(12.0 * math.log2(float(pitch)), 3)
     energy = style.get("energy")
-    if isinstance(energy, (int, float)) and energy > 0 and float(energy) != 1.0:
+    if isinstance(energy, (int, float)) and energy > 0:
         config["volume"] = float(energy)
-    return config or None
+    return config
+
+
+def natural_baseline_emotion_config() -> dict:
+    """Conversational defaults applied when no AILang emotion is present."""
+    import os
+    if _neural_minimal_prosody():
+        return {"speed": 1.0, "pitch_shift": 0, "volume": 1.0}
+    try:
+        speed = float(os.getenv("TTS_NATURAL_SPEED", "0.94"))
+    except (TypeError, ValueError):
+        speed = 0.94
+    try:
+        pitch_shift = float(os.getenv("TTS_NATURAL_PITCH_SHIFT", "-0.6"))
+    except (TypeError, ValueError):
+        pitch_shift = -0.6
+    return {"speed": max(0.5, min(1.5, speed)), "pitch_shift": pitch_shift, "volume": 1.0}
+
+
+def resolve_tts_emotion_config(text: str, emotion_config: dict | None = None) -> dict:
+    """Merge pacing-derived prosody with any explicit emotion config."""
+    pacing = build_tts_pacing(text or "")
+    resolved = emotion_config_from_style(pacing.get("style"))
+    if emotion_config:
+        resolved.update(emotion_config)
+    return resolved

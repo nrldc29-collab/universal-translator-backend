@@ -1,0 +1,1829 @@
+{
+  "meta": {
+    "name": "Anai Translator EN<->HT extended set (200+)",
+    "version": "0.2.0",
+    "language_pair": "en-ht",
+    "review_status": "UNVERIFIED",
+    "review_note": "201 items. All Haitian Creole strings remain best-effort until a fluent speaker sets review_status to verified.",
+    "domains": [
+      "everyday",
+      "travel",
+      "medical",
+      "emergency",
+      "numbers",
+      "idiom"
+    ],
+    "item_count": 201
+  },
+  "items": [
+    {
+      "id": "ev01",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Hello, how are you?",
+      "reference": "Bonjou, kijan ou ye?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev02",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Good morning.",
+      "reference": "Bonjou.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev03",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Good evening.",
+      "reference": "Bonswa.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev04",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Thank you very much.",
+      "reference": "Mèsi anpil.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev05",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "What is your name?",
+      "reference": "Kijan ou rele?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev06",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I do not understand.",
+      "reference": "Mwen pa konprann.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev07",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Please speak slowly.",
+      "reference": "Tanpri pale dousman.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev08",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Can you help me?",
+      "reference": "Èske ou ka ede m?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev09",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I am going to the store after work because I need groceries.",
+      "reference": "M ap ale nan magazen an apre travay paske mwen bezwen pwovizyon.",
+      "review_status": "unverified",
+      "notes": "Long sentence, matches README real-usage test."
+    },
+    {
+      "id": "ev10",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "See you tomorrow.",
+      "reference": "N a wè demen.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev11",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I am hungry and thirsty.",
+      "reference": "Mwen grangou e mwen swaf.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ev12",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Where do you live?",
+      "reference": "Kote ou rete?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "tr01",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "Where is the bathroom?",
+      "reference": "Kote twalèt la ye?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "tr02",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "How much does this cost?",
+      "reference": "Konbyen sa koute?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "tr03",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "Turn left at the corner.",
+      "reference": "Vire agoch nan kwen an.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "tr04",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "Go straight ahead, then turn right.",
+      "reference": "Ale tou dwat, epi vire adwat.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "tr05",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "The store is closed today.",
+      "reference": "Magazen an fèmen jodi a.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "tr06",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "What time is it?",
+      "reference": "Ki lè li ye?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "tr07",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "I am lost. Can you show me the way?",
+      "reference": "Mwen pèdi. Èske ou ka montre m chemen an?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "tr08",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "I would like a glass of water, please.",
+      "reference": "Mwen ta renmen yon vè dlo, tanpri.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "md01",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "Where does it hurt?",
+      "reference": "Ki kote w fè mal?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "md02",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I have a headache and a fever.",
+      "reference": "Mwen gen maltèt ak lafyèv.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "md03",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "Take this medicine twice a day.",
+      "reference": "Pran medikaman sa a de fwa pa jou.",
+      "review_status": "unverified",
+      "notes": "Dosage/number sensitive."
+    },
+    {
+      "id": "md04",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "The patient is allergic to penicillin.",
+      "reference": "Pasyan an fè alèji ak penisilin.",
+      "review_status": "unverified",
+      "notes": "Drug name should not be mangled."
+    },
+    {
+      "id": "md05",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "Drink plenty of water and rest.",
+      "reference": "Bwè anpil dlo epi repoze w.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "md06",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "Are you taking any other medications?",
+      "reference": "Èske w ap pran nenpòt lòt medikaman?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "md07",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "How long have you felt this way?",
+      "reference": "Depi konbyen tan ou santi w konsa?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "em01",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "Call a doctor now.",
+      "reference": "Rele yon doktè kounye a.",
+      "review_status": "unverified",
+      "notes": "Urgency routing test."
+    },
+    {
+      "id": "em02",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "Where is the nearest hospital?",
+      "reference": "Kote lopital ki pi pre a ye?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "em03",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "I need help. It is an emergency.",
+      "reference": "Mwen bezwen èd. Se yon ijans.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "nm01",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "I have three children.",
+      "reference": "Mwen gen twa pitit.",
+      "review_status": "unverified",
+      "notes": "Number preservation."
+    },
+    {
+      "id": "nm02",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "It costs ten dollars.",
+      "reference": "Li koute dis dola.",
+      "review_status": "unverified",
+      "notes": "Number preservation."
+    },
+    {
+      "id": "nm03",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "The bus leaves at seven o'clock.",
+      "reference": "Otobis la pati a sètè.",
+      "review_status": "unverified",
+      "notes": "Time/number preservation."
+    },
+    {
+      "id": "id01",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "It is raining very hard outside.",
+      "reference": "Lapli ap tonbe byen fò deyò.",
+      "review_status": "unverified",
+      "notes": "Literal-meaning paraphrase of 'raining cats and dogs' to avoid an untranslatable idiom; confirm natural HT phrasing."
+    },
+    {
+      "id": "id02",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "Good luck on your exam.",
+      "reference": "Bòn chans nan egzamen ou.",
+      "review_status": "unverified",
+      "notes": "Idiomatic 'break a leg' rendered as plain good luck."
+    },
+    {
+      "id": "id03",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "That was very easy.",
+      "reference": "Sa te fasil anpil.",
+      "review_status": "unverified",
+      "notes": "Plain rendering of 'piece of cake'."
+    },
+    {
+      "id": "he01",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Bonjou, kijan ou ye?",
+      "reference": "Hello, how are you?",
+      "review_status": "unverified",
+      "notes": "HT source needs native check; EN reference is reliable."
+    },
+    {
+      "id": "he02",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Mèsi anpil pou èd ou.",
+      "reference": "Thank you very much for your help.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "he03",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Mwen pa konprann. Tanpri pale dousman.",
+      "reference": "I do not understand. Please speak slowly.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "he04",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Kijan ou rele?",
+      "reference": "What is your name?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "he05",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "M ap ale lakay mwen kounye a.",
+      "reference": "I am going home now.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ht06",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Kote twalèt la ye?",
+      "reference": "Where is the bathroom?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ht07",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Konbyen sa koute?",
+      "reference": "How much does this cost?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ht08",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Vire agoch epi ale tou dwat.",
+      "reference": "Turn left and go straight ahead.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ht09",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Mwen pèdi, èske ou ka ede m?",
+      "reference": "I am lost, can you help me?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "hm10",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Mwen gen maltèt ak lafyèv.",
+      "reference": "I have a headache and a fever.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "hm11",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Ki kote w fè mal?",
+      "reference": "Where does it hurt?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "hm12",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Pran medikaman sa a de fwa pa jou.",
+      "reference": "Take this medicine twice a day.",
+      "review_status": "unverified",
+      "notes": "Dosage/number sensitive."
+    },
+    {
+      "id": "hm13",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Mwen fè alèji ak penisilin.",
+      "reference": "I am allergic to penicillin.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "hg14",
+      "domain": "emergency",
+      "direction": "ht-en",
+      "source": "Rele yon doktè, se yon ijans.",
+      "reference": "Call a doctor, it is an emergency.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "hg15",
+      "domain": "emergency",
+      "direction": "ht-en",
+      "source": "Kote lopital ki pi pre a ye?",
+      "reference": "Where is the nearest hospital?",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "hn16",
+      "domain": "numbers",
+      "direction": "ht-en",
+      "source": "Mwen gen twa pitit.",
+      "reference": "I have three children.",
+      "review_status": "unverified",
+      "notes": "Number preservation."
+    },
+    {
+      "id": "hn17",
+      "domain": "numbers",
+      "direction": "ht-en",
+      "source": "Li koute dis dola.",
+      "reference": "It costs ten dollars.",
+      "review_status": "unverified",
+      "notes": "Number preservation."
+    },
+    {
+      "id": "hn18",
+      "domain": "numbers",
+      "direction": "ht-en",
+      "source": "Otobis la pati a sètè.",
+      "reference": "The bus leaves at seven o'clock.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "he19",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "M ap tann ou devan magazen an.",
+      "reference": "I am waiting for you in front of the store.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "he20",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "N a wè demen maten.",
+      "reference": "See you tomorrow morning.",
+      "review_status": "unverified",
+      "notes": ""
+    },
+    {
+      "id": "ex01",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I need to leave early today.",
+      "reference": "Mwen bezwen ale bonè jodi a.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex02",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Can I borrow your phone?",
+      "reference": "Èske mwen ka prete telefòn ou?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex03",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "The weather is nice today.",
+      "reference": "Tan an bèl jodi a.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex04",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I will call you later.",
+      "reference": "M ap rele ou pita.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex05",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Do you have any questions?",
+      "reference": "Èske ou gen kesyon?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex06",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I am tired and want to rest.",
+      "reference": "Mwen fatige e mwen vle repoze.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex07",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "My family lives in Port-au-Prince.",
+      "reference": "Fanmi mwen rete Pòtoprens.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex08",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I work at a hospital.",
+      "reference": "Mwen travay nan yon lopital.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex09",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "She is my sister.",
+      "reference": "Li se sè mwen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex10",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "We are friends.",
+      "reference": "Nou se zanmi.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex11",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I like Haitian music.",
+      "reference": "Mwen renmen mizik ayisyen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex12",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "The food was delicious.",
+      "reference": "Manje a te bon.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex13",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I am learning Haitian Creole.",
+      "reference": "Mwen ap aprann kreyòl ayisyen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex14",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Please repeat that.",
+      "reference": "Tanpri repete sa.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex15",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I agree with you.",
+      "reference": "Mwen dakò avèk ou.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex16",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "That is not correct.",
+      "reference": "Sa pa kòrèk.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex17",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I am sorry for the delay.",
+      "reference": "Mwen regrèt pou reta a.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex18",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Let us meet at noon.",
+      "reference": "Ann rankontre midi.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex19",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I forgot my keys.",
+      "reference": "Mwen bliye kle mwen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex20",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "The meeting starts at nine.",
+      "reference": "Reyinyon an kòmanse a nèfè.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt01",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "I need a taxi to the airport.",
+      "reference": "Mwen bezwen yon taksi pou ale nan ayewopò a.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt02",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "Is this seat taken?",
+      "reference": "Èske chèz sa a okipe?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt03",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "The flight is delayed.",
+      "reference": "Vòl la an reta.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt04",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "I lost my passport.",
+      "reference": "Mwen pèdi paspò mwen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt05",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "Where can I exchange money?",
+      "reference": "Kote mwen ka chanje lajan?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt06",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "I need a room for two nights.",
+      "reference": "Mwen bezwen yon chanm pou de nuit.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt07",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "Is breakfast included?",
+      "reference": "Èske dejene enkli?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt08",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "The bus stop is over there.",
+      "reference": "Estasyon bis la la ba.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt09",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "How far is the beach?",
+      "reference": "Ki distans lanmè a?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt10",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "I would like a map of the city.",
+      "reference": "Mwen ta renmen yon kat vil la.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt11",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "Please stop here.",
+      "reference": "Tanpri kanpe isit.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt12",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "The road is closed.",
+      "reference": "Wout la fèmen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt13",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "I need directions to the hotel.",
+      "reference": "Mwen bezwen direksyon pou otèl la.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt14",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "My luggage is missing.",
+      "reference": "Baga mwen yo disparèt.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt15",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "Is there Wi-Fi here?",
+      "reference": "Èske gen Wi-Fi isit?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm01",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I feel dizzy.",
+      "reference": "Mwen santi mwen vire tèt.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm02",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I have chest pain.",
+      "reference": "Mwen gen doulè nan pwatrin.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm03",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I cannot breathe well.",
+      "reference": "Mwen pa ka respire byen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm04",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I need to see a nurse.",
+      "reference": "Mwen bezwen wè yon enfimyè.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm05",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "When did the pain start?",
+      "reference": "Ki lè doulè a te kòmanse?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm06",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I am pregnant.",
+      "reference": "Mwen ansent.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm07",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I have diabetes.",
+      "reference": "Mwen gen dyabèt.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm08",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "Take one pill before bed.",
+      "reference": "Pran yon grenn avan ou kouche.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm09",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "The wound is bleeding.",
+      "reference": "Blesi a ap senyen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm10",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I need a wheelchair.",
+      "reference": "Mwen bezwen yon chèz woulant.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm11",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "My blood pressure is high.",
+      "reference": "Tansyon mwen wo.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm12",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I fell and hurt my leg.",
+      "reference": "Mwen tonbe e mwen blese janm mwen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm13",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "Do you have insurance?",
+      "reference": "Èske ou gen asirans?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm14",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "The doctor will see you soon.",
+      "reference": "Doktè a ap wè ou byento.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm15",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I need a prescription refill.",
+      "reference": "Mwen bezwen ranpli preskripsyon mwen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg01",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "There is a fire.",
+      "reference": "Gen yon dife.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg02",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "Someone is hurt.",
+      "reference": "Yon moun blese.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg03",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "Call the police.",
+      "reference": "Rele lapolis.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg04",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "We need an ambulance.",
+      "reference": "Nou bezwen yon anbilans.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg05",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "Stay away from the building.",
+      "reference": "Rete lwen bilding la.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg06",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "Is everyone safe?",
+      "reference": "Èske tout moun an sekirite?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg07",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "There was an accident on the road.",
+      "reference": "Te gen yon aksidan sou wout la.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg08",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "I smell gas.",
+      "reference": "Mwen santi gaz.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg09",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "Evacuate the area now.",
+      "reference": "Evakye zòn nan kounye a.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg10",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "The child is missing.",
+      "reference": "Timoun nan disparèt.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn01",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "I need two tickets.",
+      "reference": "Mwen bezwen de tikè.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn02",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "The appointment is at three thirty.",
+      "reference": "Randevou a se a twaè demi.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn03",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "It weighs five kilograms.",
+      "reference": "Li peze senk kilo.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn04",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "Room number twelve.",
+      "reference": "Chanm nimewo douz.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn05",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "I am twenty-five years old.",
+      "reference": "Mwen gen vennsenk an.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn06",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "The total is one hundred dollars.",
+      "reference": "Total la se san dola.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn07",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "Call me at this number.",
+      "reference": "Rele m nan nimewo sa a.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn08",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "We need four chairs.",
+      "reference": "Nou bezwen kat chèz.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn09",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "The store opens at eight.",
+      "reference": "Magazen an ouvri a witè.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn10",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "I will return in one hour.",
+      "reference": "M ap retounen nan yon èdtan.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi01",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "It is raining cats and dogs.",
+      "reference": "Li ap pliye anpil.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi02",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "Do not worry about it.",
+      "reference": "Pa enkyete w pou sa.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi03",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "That is a great idea.",
+      "reference": "Sa se yon bon lide.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi04",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "I am running late.",
+      "reference": "Mwen an reta.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi05",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "Let us get started.",
+      "reference": "Ann kòmanse.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi06",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "That makes sense.",
+      "reference": "Sa gen sans.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi07",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "I am not sure yet.",
+      "reference": "Mwen poko sèten.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi08",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "Take your time.",
+      "reference": "Pran tan ou.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi09",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "It is up to you.",
+      "reference": "Se ou ki deside.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi10",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "We are almost there.",
+      "reference": "Nou prèske rive.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex21",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Mwen bezwen dlo.",
+      "reference": "I need water.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex22",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Kote mwen ka achte manje?",
+      "reference": "Where can I buy food?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex23",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Mwen pa ka jwenn travay la.",
+      "reference": "I cannot find the job.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex24",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Li ap vini demen.",
+      "reference": "He is coming tomorrow.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex25",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Nou bezwen pale ansanm.",
+      "reference": "We need to talk together.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt16",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Èske vòl la an reta?",
+      "reference": "Is the flight delayed?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt17",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Mwen bezwen yon tikè pou Cap-Haïtien.",
+      "reference": "I need a ticket to Cap-Haïtien.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt18",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Ki lè bis la ap pati?",
+      "reference": "What time does the bus leave?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt19",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Mwen pèdi kat kredi mwen.",
+      "reference": "I lost my credit card.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt20",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Èske otèl la gen chanm vid?",
+      "reference": "Does the hotel have empty rooms?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm16",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Mwen santi mwen malad.",
+      "reference": "I feel sick.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm17",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Mwen gen doulè nan vant mwen.",
+      "reference": "I have pain in my stomach.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm18",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Doktè a di mwen dwe repoze.",
+      "reference": "The doctor told me I must rest.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm19",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Mwen bezwen yon randevou.",
+      "reference": "I need an appointment.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm20",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Èske medikaman sa a gen efè segondè?",
+      "reference": "Does this medicine have side effects?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg11",
+      "domain": "emergency",
+      "direction": "ht-en",
+      "source": "Rele lapolis imedyatman.",
+      "reference": "Call the police immediately.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg12",
+      "domain": "emergency",
+      "direction": "ht-en",
+      "source": "Gen yon moun ki bezwen èd.",
+      "reference": "There is someone who needs help.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg13",
+      "domain": "emergency",
+      "direction": "ht-en",
+      "source": "Pa apwoche dife a.",
+      "reference": "Do not approach the fire.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn11",
+      "domain": "numbers",
+      "direction": "ht-en",
+      "source": "Mwen gen senk dola.",
+      "reference": "I have five dollars.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn12",
+      "domain": "numbers",
+      "direction": "ht-en",
+      "source": "Li gen kat pitit.",
+      "reference": "She has four children.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi11",
+      "domain": "idiom",
+      "direction": "ht-en",
+      "source": "Pa fè m mal.",
+      "reference": "Do not hurt me.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi12",
+      "domain": "idiom",
+      "direction": "ht-en",
+      "source": "Sa se pa pwoblèm mwen.",
+      "reference": "That is not my problem.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi13",
+      "domain": "idiom",
+      "direction": "ht-en",
+      "source": "Mwen kontan wè ou.",
+      "reference": "I am happy to see you.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi14",
+      "domain": "idiom",
+      "direction": "ht-en",
+      "source": "Ann ale.",
+      "reference": "Let us go.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi15",
+      "domain": "idiom",
+      "direction": "ht-en",
+      "source": "Mwen pa konnen.",
+      "reference": "I do not know.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex26",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I will be right back.",
+      "reference": "M ap tounen touswit.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex27",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Can you write that down?",
+      "reference": "Èske ou ka ekri sa?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex28",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I do not speak Creole well.",
+      "reference": "Mwen pa pale kreyòl byen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex29",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "My phone battery is dead.",
+      "reference": "Batri telefòn mwen fini.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex30",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "We arrived safely.",
+      "reference": "Nou rive an sekirite.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex31",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "The children are at school.",
+      "reference": "Timoun yo lekòl.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex32",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I need to buy water.",
+      "reference": "Mwen bezwen achte dlo.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex33",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "It is very hot today.",
+      "reference": "Li cho anpil jodi a.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex34",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "Open the window please.",
+      "reference": "Tanpri ouvri fenèt la.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex35",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I am looking for my friend.",
+      "reference": "M ap chache zanmi mwen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt21",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "The train leaves in ten minutes.",
+      "reference": "Tren nan ap pati nan dis minit.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt22",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "I have a reservation.",
+      "reference": "Mwen gen yon rezèvasyon.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt23",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "Is this the right platform?",
+      "reference": "Èske se platfòm ki bon an?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt24",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "I need a receipt.",
+      "reference": "Mwen bezwen yon resi.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt25",
+      "domain": "travel",
+      "direction": "en-ht",
+      "source": "The museum is closed on Monday.",
+      "reference": "Mize a fèmen lendi.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm21",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I have a sore throat.",
+      "reference": "Mwen gen mal nan gòj mwen.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm22",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I need glasses.",
+      "reference": "Mwen bezwen linèt.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm23",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "The nurse will check your temperature.",
+      "reference": "Enfimyè a ap pran tanperati ou.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm24",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "Do not eat before the test.",
+      "reference": "Pa manje anvan tès la.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm25",
+      "domain": "medical",
+      "direction": "en-ht",
+      "source": "I am allergic to peanuts.",
+      "reference": "Mwen fè alèji ak pistach.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg14",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "There is flooding on the road.",
+      "reference": "Gen inondasyon sou wout la.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg15",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "Power is out in the building.",
+      "reference": "Kouran an koupe nan bilding la.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg16",
+      "domain": "emergency",
+      "direction": "en-ht",
+      "source": "A tree fell on the car.",
+      "reference": "Yon pye bwa tonbe sou machin nan.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn13",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "The meeting is on the fifteenth.",
+      "reference": "Reyinyon an se kenzyèm.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn14",
+      "domain": "numbers",
+      "direction": "en-ht",
+      "source": "I need change for twenty dollars.",
+      "reference": "Mwen bezwen monnen pou ven dola.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi16",
+      "domain": "idiom",
+      "direction": "en-ht",
+      "source": "Better late than never.",
+      "reference": "Pi bon an reta pase pa janm.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex36",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Mwen vle ale nan mache a.",
+      "reference": "I want to go to the market.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex37",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Tan an ap pliye.",
+      "reference": "It is raining.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex38",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Mwen pa gen lajan.",
+      "reference": "I do not have money.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex39",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Ki lè ou ap vini?",
+      "reference": "What time are you coming?",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt26",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Machin nan pa mache.",
+      "reference": "The car is not working.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xt27",
+      "domain": "travel",
+      "direction": "ht-en",
+      "source": "Mwen bezwen yon kat pou vil la.",
+      "reference": "I need a map of the city.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm26",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Mwen gen kase.",
+      "reference": "I have a cough.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xm27",
+      "domain": "medical",
+      "direction": "ht-en",
+      "source": "Mwen pa ka dòmi.",
+      "reference": "I cannot sleep.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xg17",
+      "domain": "emergency",
+      "direction": "ht-en",
+      "source": "Tanpri rele yon anbilans.",
+      "reference": "Please call an ambulance.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xn15",
+      "domain": "numbers",
+      "direction": "ht-en",
+      "source": "Li gen swasant an.",
+      "reference": "He is sixty years old.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi17",
+      "domain": "idiom",
+      "direction": "ht-en",
+      "source": "Sa pa enpòtan.",
+      "reference": "That does not matter.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "xi18",
+      "domain": "idiom",
+      "direction": "ht-en",
+      "source": "Mwen swete ou bon chans.",
+      "reference": "I wish you good luck.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex40",
+      "domain": "everyday",
+      "direction": "en-ht",
+      "source": "I enjoyed talking with you.",
+      "reference": "Mwen te kontan pale avèk ou.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    },
+    {
+      "id": "ex41",
+      "domain": "everyday",
+      "direction": "ht-en",
+      "source": "Mwen pa tande byen.",
+      "reference": "I did not hear well.",
+      "review_status": "unverified",
+      "notes": "Extended set — requires native HT review."
+    }
+  ]
+}

@@ -29,12 +29,14 @@ from backend.audio import process_wav_for_stt, compute_rms
 from backend.cip_bridge import choose_translation, get_cip_confidence, get_cip_decision, should_block_translation_for_cip
 from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
 from backend.config import (
+    LANGUAGES,
     get_client_vad_mode,
     get_client_vad_threshold,
     get_max_active_streams_per_user,
     get_max_audio_seconds,
     get_min_speech_bytes,
     get_near_zero_latency_mode,
+    get_natural_tts_mode,
     get_partial_tts_mode,
     get_partial_stt_interval_ms,
     get_partial_stt_min_bytes,
@@ -50,7 +52,7 @@ from backend.observability import observability
 from backend.pipeline import TranslationResult
 from backend.security import usage_limiter
 from backend.sessions import session_registry
-from backend.tts_pacing import build_tts_pacing, emotion_config_from_style
+from backend.tts_pacing import build_tts_pacing, emotion_config_from_style, resolve_tts_emotion_config
 from backend.tts_cache import cached_tts_payload as _cached_tts_payload_impl
 from fastapi import WebSocket
 from fastapi.concurrency import run_in_threadpool
@@ -67,6 +69,21 @@ def _language_code(language: str | None) -> str:
     if not language:
         return "en"
     return str(language).strip().lower().replace("_", "-").split("-")[0] or "en"
+
+
+def _sanitize_language_code(language: str | None, default: str) -> str:
+    """Clamp WebSocket language codes to supported pipeline languages."""
+    code = _language_code(language or default)
+    fallback = _language_code(default) if _language_code(default) in LANGUAGES else "en"
+    return code if code in LANGUAGES else fallback
+
+
+def _sanitize_session_id(session_id: str | None, default: str = "default") -> str:
+    """Bound session identifiers from client config messages."""
+    if not session_id:
+        return default
+    cleaned = re.sub(r"[^\w\-.:]", "", str(session_id).strip())[:128]
+    return cleaned or default
 
 
 def _truthy(value) -> bool:
@@ -240,30 +257,61 @@ def _synthesize_live_tts_chunk(
     google_api_key: str | None = None,
     emotion_config: dict | None = None,
 ) -> str:
-    if emotion_config:
-        return _synthesize_tts_resilient(
-            tts_engine,
-            text,
-            output_path,
-            language=language,
-            google_api_key=google_api_key,
-            emotion_config=emotion_config,
-        )
+    effective_emotion = resolve_tts_emotion_config(text, emotion_config)
 
-    payload = _cached_tts_payload_impl(
-        text,
-        language,
-        "url",
-        lambda temp_path: _synthesize_tts_resilient(
+    def _render(temp_path):
+        return _synthesize_tts_resilient(
             tts_engine,
             text,
             temp_path,
             language=language,
             google_api_key=google_api_key,
-            emotion_config=None,
-        ),
-    )
+            emotion_config=effective_emotion,
+        )
+
+    if emotion_config:
+        return _render(output_path)
+
+    payload = _cached_tts_payload_impl(text, language, "url", _render)
     return payload["audio_output_path"]
+
+
+_TTS_PREWARM_PHRASES = {
+    "en": "Okay.",
+    "es": "Hola.",
+    "ht": "Bonjou.",
+    "fr": "Bonjour.",
+    "de": "Hallo.",
+    "it": "Ciao.",
+    "pt": "Olá.",
+    "nl": "Hallo.",
+    "ru": "Привет.",
+    "zh": "你好。",
+    "ja": "こんにちは。",
+    "ko": "안녕하세요.",
+    "ar": "مرحبا.",
+    "hi": "नमस्ते.",
+}
+
+
+async def _prewarm_target_language_tts(pipeline: AnaiTranslatorPipeline, language: str) -> None:
+    """Prime Edge neural TTS so the first real translation sounds immediate."""
+    normalized = _language_code(language)
+    if not _should_use_backend_live_tts(normalized):
+        return
+    phrase = _TTS_PREWARM_PHRASES.get(normalized, "Okay.")
+    try:
+        await run_in_threadpool(
+            lambda: _synthesize_live_tts_chunk(
+                pipeline.tts,
+                phrase,
+                f"models/tts/prewarm-{uuid4()}.wav",
+                language=normalized,
+            )
+        )
+        logger.info("neural_tts_prewarm_complete language=%s", normalized)
+    except Exception as exc:
+        logger.debug("neural_tts_prewarm_failed language=%s error=%s", normalized, exc)
 
 
 def _apply_ailang_enhancements(
@@ -395,6 +443,7 @@ async def websocket_audio_translation(
     observability.increment("websocket_connects_total")
     logger.info("websocket_audio_connected partial_tts_mode=%s", get_partial_tts_mode())
     await websocket.send_json({"type": "ready", "message": "Audio streaming connected."})
+    asyncio.create_task(_prewarm_target_language_tts(pipeline, target_language))
     memory = memory or ConversationMemory()
     speaker_memory = speaker_memory or SpeakerMemory()
 
@@ -1426,14 +1475,16 @@ async def websocket_audio_translation(
             translation_ms = round((time() - translation_started_at) * 1000)
             intent = semantic_context.get("last_intent") or semantic_context.get("intent") or "statement"
             urgency = "high" if semantic_context.get("conversation_mood") == "urgent" else None
+            # Lifelike voice: one full neural pass per sentence (not choppy partial clips).
             tts_playback_text = translated_text
-            live_spoken_text = normalize_live_text(segment_partial_tts_text)
-            if live_spoken_text:
-                live_tail = live_translation_delta(live_spoken_text, translated_text)
-                if is_speakable_live_delta(live_tail):
-                    tts_playback_text = live_tail
-                elif folded_live_text(translated_text).startswith(folded_live_text(live_spoken_text)):
-                    tts_playback_text = ""
+            if get_partial_tts_mode() and not get_natural_tts_mode():
+                live_spoken_text = normalize_live_text(segment_partial_tts_text)
+                if live_spoken_text:
+                    live_tail = live_translation_delta(live_spoken_text, translated_text)
+                    if is_speakable_live_delta(live_tail):
+                        tts_playback_text = live_tail
+                    elif folded_live_text(translated_text).startswith(folded_live_text(live_spoken_text)):
+                        tts_playback_text = ""
             tts_pacing = build_tts_pacing(tts_playback_text or translated_text, intent, urgency)
             tts_emotion_config = emotion_config_from_style(tts_pacing.get("style"))
             stream_debug_log("Translate:", translation_ms, "ms", translated_text)
@@ -1472,7 +1523,12 @@ async def websocket_audio_translation(
             observability.record_event("mobile_stream_checkpoint", identity=identity, speaker=speaker, checkpoint="translation_done", translated_text=translated_text)
             # If CIP requested clarification, inform client and skip TTS
             browser_voice_target = not _should_use_backend_live_tts(active_target_language)
-            skip_tts = bool(cip_client_hints.get("skip_tts")) or browser_voice_target or not is_speakable_live_delta(tts_playback_text)
+            final_tts_text = tts_playback_text or translated_text
+            skip_tts = (
+                bool(cip_client_hints.get("skip_tts"))
+                or browser_voice_target
+                or not is_speakable_live_delta(final_tts_text)
+            )
             if cip_clarify:
                 msg = cip_decision.get("message") or "Can you rephrase that?"
                 await websocket.send_json({
@@ -1516,7 +1572,10 @@ async def websocket_audio_translation(
             if not skip_tts:
                 for tts_segment in tts_pacing["segments"]:
                     tts_chunks.extend(chunk_text_for_tts(tts_segment))
-                tts_chunks = [chunk for chunk in tts_chunks if not recently_spoken_audio_tts(chunk)]
+                if get_natural_tts_mode():
+                    tts_chunks = [chunk for chunk in tts_chunks if is_speakable_live_delta(chunk)]
+                else:
+                    tts_chunks = [chunk for chunk in tts_chunks if not recently_spoken_audio_tts(chunk)]
                 if not tts_chunks:
                     skip_tts = True
                     await websocket.send_json({
@@ -1737,8 +1796,12 @@ async def websocket_audio_translation(
                     continue
 
                 if message_type == "config":
-                    next_source_language = payload.get("source_language") or source_language
-                    next_target_language = payload.get("target_language") or target_language
+                    next_source_language = _sanitize_language_code(
+                        payload.get("source_language"), source_language,
+                    )
+                    next_target_language = _sanitize_language_code(
+                        payload.get("target_language"), target_language,
+                    )
                     if "barrier_mode" in payload:
                         barrier_mode = _truthy(payload.get("barrier_mode"))
                     changed_language = (
@@ -1749,7 +1812,7 @@ async def websocket_audio_translation(
                     target_language = next_target_language
                     speaker_mode = payload.get("speaker_mode") or speaker_mode
                     if payload.get("session_id"):
-                        session_id = payload.get("session_id")
+                        session_id = _sanitize_session_id(payload.get("session_id"), session_id)
                     if payload.get("device_id"):
                         device_id = payload.get("device_id")
                     requested_speaker_label = payload.get("speaker_name") or payload.get("speaker_label") or speaker_label
@@ -1764,6 +1827,7 @@ async def websocket_audio_translation(
                         phrase_accumulation_buffer = ""
                         phrase_accumulation_start = 0.0
                         last_partial_tts_at = 0.0
+                        asyncio.create_task(_prewarm_target_language_tts(pipeline, target_language))
                     await websocket.send_json({
                         "type": "config_ack",
                         "source_language": source_language,
@@ -2388,12 +2452,16 @@ async def websocket_streaming_stt_translation(
                 if msg_type in {"config", "start"}:
                     previous_source_language = source_language
                     previous_barrier_mode = barrier_mode
-                    source_language = data.get("source_language", source_language)
-                    target_language = data.get("target_language", target_language)
+                    source_language = _sanitize_language_code(
+                        data.get("source_language"), source_language,
+                    )
+                    target_language = _sanitize_language_code(
+                        data.get("target_language"), target_language,
+                    )
                     if "barrier_mode" in data:
                         barrier_mode = _truthy(data.get("barrier_mode"))
                     speaker_mode = data.get("speaker_mode", speaker_mode)
-                    session_id = data.get("session_id", session_id)
+                    session_id = _sanitize_session_id(data.get("session_id"), session_id)
                     device_id = data.get("device_id", device_id)
                     requested_speaker_label = data.get("speaker_name") or data.get("speaker_label")
                     if speaker_mode == "auto":
@@ -2970,12 +3038,16 @@ async def websocket_streaming_stt_translation(
                 if msg_type in {"config", "start"}:
                     previous_source_language = source_language
                     previous_barrier_mode = barrier_mode
-                    source_language = data.get("source_language", source_language)
-                    target_language = data.get("target_language", target_language)
+                    source_language = _sanitize_language_code(
+                        data.get("source_language"), source_language,
+                    )
+                    target_language = _sanitize_language_code(
+                        data.get("target_language"), target_language,
+                    )
                     if "barrier_mode" in data:
                         barrier_mode = _truthy(data.get("barrier_mode"))
                     speaker_mode = data.get("speaker_mode", speaker_mode)
-                    session_id = data.get("session_id", session_id)
+                    session_id = _sanitize_session_id(data.get("session_id"), session_id)
                     device_id = data.get("device_id", device_id)
                     requested_speaker_label = data.get("speaker_name") or data.get("speaker_label")
                     if speaker_mode == "auto":

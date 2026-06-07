@@ -17,6 +17,7 @@ requests==2.34.2
 websockets==14.1
 pytest==9.0.3
 pytest-asyncio==1.4.0
+sacrebleu==2.5.1
 # NAIA assistant integration (bundled under naia/)
 anthropic==0.103.1
 httpx==0.27.2

@@ -117,6 +117,17 @@ def get_whisper_beam_size() -> int:
     return _to_int("WHISPER_BEAM_SIZE", 1, minimum=1)
 
 
+def get_translation_num_beams(*, quality: bool = False) -> int:
+    """Beam width for Marian/NLLB decode. Quality mode uses a wider search."""
+    if quality:
+        return _to_int("TRANSLATION_QUALITY_NUM_BEAMS", 4, minimum=1, maximum=8)
+    return _to_int("TRANSLATION_NUM_BEAMS", 1, minimum=1, maximum=8)
+
+
+def get_nllb_model() -> str:
+    return os.getenv("NLLB_MODEL", "facebook/nllb-200-distilled-600M").strip()
+
+
 def get_translation_backend() -> str:
     return os.getenv("TRANSLATION_BACKEND", "marian").lower()
 
@@ -282,11 +293,22 @@ def get_free_daily_audio_minutes() -> int:
 
 
 def get_tts_chunk_chars() -> int:
-    return _to_int("TTS_CHUNK_CHARS", 14, minimum=6)
+    # Larger chunks = fewer hard cuts between TTS segments (less robotic).
+    return _to_int("TTS_CHUNK_CHARS", 48, minimum=6)
 
 
 def get_tts_first_chunk_chars() -> int:
-    return _to_int("TTS_FIRST_CHUNK_CHARS", 10, minimum=4)
+    return _to_int("TTS_FIRST_CHUNK_CHARS", 28, minimum=4)
+
+
+def get_tts_max_single_pass_chars() -> int:
+    """Synthesize up to this many chars in one neural TTS call (full sentences)."""
+    return _to_int("TTS_MAX_SINGLE_PASS_CHARS", 320, minimum=48)
+
+
+def get_natural_tts_mode() -> bool:
+    """Prioritize lifelike voice over lowest latency (fewer chunk cuts, no partial TTS)."""
+    return _to_bool("TTS_NATURAL_VOICE", True)
 
 
 def get_client_vad_mode() -> bool:
@@ -302,6 +324,8 @@ def get_partial_translation_min_words() -> int:
 
 
 def get_partial_tts_mode() -> bool:
+    if get_natural_tts_mode():
+        return _to_bool("PARTIAL_TTS_MODE", False)
     return _to_bool("PARTIAL_TTS_MODE", True)
 
 

@@ -380,7 +380,7 @@ export function useAutoConversation({
               if (!activeRef.current || receivedTtsChunks > 0 || ttsCompleted) return;
               onStatus?.('Voice playback timed out');
               afterTts(liveTextRef.current, text, dir === 'AB' ? 'A' : 'B');
-            }, 2500);
+            }, 12000);
             return;
           }
           if (text && !BACKEND_TTS_LANGS.has(activeTarget)) {

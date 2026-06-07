@@ -13,7 +13,7 @@ export function useMobileTts() {
   const [ttsQueue, setTtsQueue] = useState([]);
   const [isPlayingTts, setIsPlayingTts] = useState(false);
   const [volume, setVolume] = useState(0.8);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  const [playbackSpeed, setPlaybackSpeed] = useState(0.96);
   const [currentAudio, setCurrentAudio] = useState(null);
   const [hasReplayAudio, setHasReplayAudio] = useState(false);
   const ttsQueueRef = useRef([]);

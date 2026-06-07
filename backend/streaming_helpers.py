@@ -20,11 +20,13 @@ from fastapi.concurrency import run_in_threadpool
 
 from backend.cip_client import call_cip_brain as call_cip_brain_sync
 from backend.config import (
+    get_natural_tts_mode,
     get_partial_translation_min_words,
     get_pipeline_step_timeout_seconds,
     get_stream_hot_path_logging,
     get_tts_chunk_chars,
     get_tts_first_chunk_chars,
+    get_tts_max_single_pass_chars,
 )
 
 
@@ -35,12 +37,19 @@ def stream_debug_log(*args) -> None:
         print(*args, flush=True)
 
 
-def chunk_text_for_tts(text: str, max_chars: int | None = None) -> list[str]:
-    """Split `text` into TTS-friendly chunks, with a small first chunk.
+def chunk_text_for_tts(text: str, max_chars: int | None = None, *, natural: bool | None = None) -> list[str]:
+    """Split `text` into TTS-friendly chunks.
 
-    The first chunk is intentionally smaller (capped at
-    `TTS_FIRST_CHUNK_CHARS`) so the user hears audio sooner.
+    When ``natural`` is true (default follows ``TTS_NATURAL_VOICE``), prefer
+  one neural synthesis pass per sentence instead of many tiny clips.
     """
+    stripped = (text or "").strip()
+    if not stripped:
+        return [text or ""]
+
+    use_natural = get_natural_tts_mode() if natural is None else natural
+    if use_natural:
+        return _chunk_text_natural(stripped, max_chars)
 
     max_chars = max_chars or get_tts_chunk_chars()
     parts = re.split(r"(?<=[.!?;:,])\s+", text.strip())
@@ -72,6 +81,36 @@ def chunk_text_for_tts(text: str, max_chars: int | None = None) -> list[str]:
                 new_chunks.extend(chunk_text_for_tts(rest, max_chars))
             chunks = new_chunks + chunks[1:]
 
+    return chunks or [text]
+
+
+def _chunk_text_natural(text: str, max_chars: int | None = None) -> list[str]:
+    """Sentence-level chunks — avoids robotic micro-clips between words."""
+    max_pass = get_tts_max_single_pass_chars()
+    if len(text) <= max_pass:
+        return [text]
+
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
+    if not sentences:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    for sentence in sentences:
+        if len(sentence) > max_pass:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.extend(chunk_text_for_tts(sentence, max_chars=max_pass, natural=False))
+            continue
+        candidate = f"{current} {sentence}".strip() if current else sentence
+        if current and len(candidate) > max_pass:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
     return chunks or [text]
 
 

@@ -29,6 +29,8 @@ class StageMetrics:
     _history: deque = field(default_factory=lambda: deque(maxlen=200))
 
     def record(self, ms):
+        if ms is None or ms < 0:
+            return
         self.count += 1
         self.total_ms += ms
         self.last_ms = ms

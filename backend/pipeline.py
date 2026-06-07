@@ -128,6 +128,7 @@ class AnaiTranslatorPipeline:
         output_audio_path: str = "models/output.wav",
         speaker: str | None = None,
         confidence: float = 0.0,
+        quality: bool = False,
     ) -> TranslationResult:
         if not text.strip():
             return TranslationResult(
@@ -137,7 +138,7 @@ class AnaiTranslatorPipeline:
                 audio_output_path=None,
                 ailang_metadata=None,
             )
-
+        
         ailang_metadata = {}
         working_text = text
         
@@ -205,7 +206,9 @@ class AnaiTranslatorPipeline:
         
         if not translated_text:
             # Perform translation if not cached
-            translated_text = self.translator.translate(improved_text, source_language, target_language)
+            translated_text = self.translator.translate(
+                improved_text, source_language, target_language, quality=quality,
+            )
             
             # Cache the result
             if self.enable_predictive_cache and self.predictive_cache:
@@ -296,6 +299,7 @@ class AnaiTranslatorPipeline:
         output_audio_path: str = "models/output.wav",
         speaker: str | None = None,
         confidence: float = 0.0,
+        quality: bool = False,
     ) -> TranslationResult:
         """Run translate_text using a caller-supplied translator instead of self.translator."""
         if not text.strip():
@@ -343,7 +347,15 @@ class AnaiTranslatorPipeline:
         else:
             improved_text = self.context_layer.improve(text, source_language, target_language, tone)
         
-        translated_text = translator.translate(improved_text, source_language, target_language)
+        from translation.hybrid_translator import HybridTranslator
+        from translation.marian_translator import MarianTranslator
+
+        if quality and isinstance(translator, (MarianTranslator, HybridTranslator)):
+            translated_text = translator.translate(
+                improved_text, source_language, target_language, quality=True,
+            )
+        else:
+            translated_text = translator.translate(improved_text, source_language, target_language)
         
         # AILang post-translation pipeline
         if self.ailang_pipeline:
@@ -353,7 +365,7 @@ class AnaiTranslatorPipeline:
             if confidence > 0:
                 confidence_result = self.ailang_pipeline.process_confidence_fallback(
                     improved_text, translated_text, confidence, source_language, target_language, 
-                    context, analysis.get("instructions", [])
+                    context, analysis.get("instructions", []),
                 )
                 if confidence_result.get("escalated"):
                     translated_text = confidence_result["final_translation"]

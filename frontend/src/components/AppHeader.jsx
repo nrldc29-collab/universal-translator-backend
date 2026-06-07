@@ -3,6 +3,7 @@ import { Check, CircleHelp, Download, Settings2, Share2 } from 'lucide-react';
 import { ONBOARDING_OPEN_EVENT } from './OnboardingTour';
 import VolumeControl from './VolumeControl';
 import AILangStatusBadge from './AILangStatusBadge';
+import NeuralVoiceBadge from './NeuralVoiceBadge';
 
 export default function AppHeader({
   connectionStatus,
@@ -15,6 +16,7 @@ export default function AppHeader({
   onOpenSettings,
   updateAvailable = false,
   apiUrl,
+  diagnostics = null,
 }) {
   const isOnline = connectionStatus === 'online';
   const isChecking = connectionStatus === 'checking';
@@ -39,6 +41,7 @@ export default function AppHeader({
             {isWarming ? 'STARTING' : isChecking ? 'CONNECTING' : isOnline ? 'LIVE' : 'OFFLINE'}
           </span>
           <AILangStatusBadge apiUrl={apiUrl} />
+          <NeuralVoiceBadge diagnostics={diagnostics} connectionStatus={connectionStatus} />
         </div>
       </div>
 

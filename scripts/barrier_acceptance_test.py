@@ -115,6 +115,8 @@ PHRASES = {
 
 
 CONTINUOUS_DIALOGUE_CASES = (
+    ("en", "ht", "Hello, how are you?"),
+    ("ht", "en", "Mèsi anpil pou èd ou."),
     ("en", "fr", "Hello"),
     ("en", "ja", "Hello"),
     ("ht", "ru", "Mesi anpil"),

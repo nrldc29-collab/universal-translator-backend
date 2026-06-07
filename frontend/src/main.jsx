@@ -135,9 +135,28 @@ const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.repla
 
 const INITIAL_DEVICE_ID = localStorage.getItem('translator_device_id') || crypto.randomUUID();
 
-// Browser TTS -- used as fallback when backend has no voice for the target language.
-// Works offline, free, covers all languages via system voices.
-const PIPER_SUPPORTED_LANGS = new Set(['en', 'es', 'ht', 'fr', 'de', 'it', 'pt', 'nl', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi']); // backend live voice stream languages
+// Backend streams Microsoft Edge neural TTS for these languages (lifelike voice).
+const BACKEND_NEURAL_VOICE_LANGS = new Set(['en', 'es', 'ht', 'fr', 'de', 'it', 'pt', 'nl', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi']);
+const PIPER_SUPPORTED_LANGS = BACKEND_NEURAL_VOICE_LANGS;
+const BACKEND_TTS_WAIT_MS = Number(import.meta.env.VITE_BACKEND_TTS_WAIT_MS || 12000);
+
+function shouldUseBrowserTts(settings, targetLang) {
+  return settings?.ttsVoice === 'browser';
+}
+
+function prefersBackendNeuralVoice(settings, targetLang) {
+  if (settings?.ttsVoice === 'browser') return false;
+  if (settings?.ttsVoice === 'backend' || settings?.ttsVoice === 'google' || settings?.ttsVoice === 'auto') {
+    return BACKEND_NEURAL_VOICE_LANGS.has(targetLang);
+  }
+  return BACKEND_NEURAL_VOICE_LANGS.has(targetLang);
+}
+
+function neuralPlaybackRate(speedSetting) {
+  // Neural Edge TTS renders at natural speed — only apply the user's speed preference.
+  const user = Number(speedSetting ?? 1.0);
+  return Math.min(Math.max(user, 0.88), 1.12);
+}
 const BROWSER_TTS_LANG_MAP = {
   en: 'en-US', es: 'es-MX', fr: 'fr-FR', de: 'de-DE', it: 'it-IT',
   pt: 'pt-BR', ru: 'ru-RU', zh: 'zh-CN', ja: 'ja-JP', ko: 'ko-KR',
@@ -753,6 +772,12 @@ function App() {
 
   // Connection status polling and language loading are handled by useConnectionStatus above.
   // First diagnostics fetch happens inside useDiagnostics on mount.
+  useEffect(() => {
+    if (diagnosticsStatus !== 'online' || !diagnostics?.tts_neural) return;
+    if (diagnostics.tts_neural.neural_ready === false && settings.ttsVoice !== 'browser') {
+      toast('Neural voice offline — speech may sound robotic. Run Restart-Translator.ps1', 'error', 9000);
+    }
+  }, [diagnostics, diagnosticsStatus, settings.ttsVoice, toast]);
 
   function shouldPauseMicForVoicePlayback() {
     const ua = navigator.userAgent || '';
@@ -840,6 +865,8 @@ function App() {
   }
 
   function speakTranslatedTextWithBrowser(fullTranslatedText, sourceText = '', utteranceId = null, languageOverride = null) {
+    const voiceLanguage = languageOverride || languagePairRef.current.targetLanguage;
+    if (!shouldUseBrowserTts(settings, voiceLanguage)) return false;
     const text = String(fullTranslatedText || '').trim();
     if (!text || lowBandwidthMode) return false;
     if (ttsPlayingRef.current) {
@@ -849,7 +876,6 @@ function App() {
     const spokenDelta = liveBrowserTtsDelta(text, sourceText, utteranceId);
     if (!spokenDelta || spokenDelta.split(/\s+/).length < 1) return false;
     const estimatedMs = Math.min(12000, Math.max(1800, spokenDelta.split(/\s+/).length * 520));
-    const voiceLanguage = languageOverride || languagePairRef.current.targetLanguage;
     const started = browserTtsSpeak(spokenDelta, voiceLanguage, settings.ttsSpeed ?? 1.0, {
       onStart: () => {
         pauseMicForVoicePlayback();
@@ -1046,7 +1072,7 @@ function App() {
         setStatus(brainUpdate?.message || 'Text translated');
         setTextInputMode(false);
         toast('Translation ready', 'success', 2200);
-        if (data.translated_text && (settings.ttsVoice === 'browser' || data.audio_unavailable)) {
+        if (data.translated_text && shouldUseBrowserTts(settings, languagePairRef.current.targetLanguage)) {
           speakTranslatedTextWithBrowser(data.translated_text, textToSend, `text-${Date.now()}`);
         }
       }
@@ -1215,8 +1241,16 @@ function App() {
         'Ready',
       );
       if (!played) {
-        const browserPlayed = speakTranslatedTextWithBrowser(data.translated_text || '');
-        if (!browserPlayed) resumeInterpreterAfterPlayback('Ready');
+        const targetLang = languagePairRef.current.targetLanguage;
+        if (shouldUseBrowserTts(settings, targetLang)) {
+          const browserPlayed = speakTranslatedTextWithBrowser(data.translated_text || '');
+          if (!browserPlayed) resumeInterpreterAfterPlayback('Ready');
+        } else {
+          resumeInterpreterAfterPlayback('Ready');
+          if (data.translated_text && prefersBackendNeuralVoice(settings, targetLang)) {
+            setStatus('Neural voice unavailable — check Settings or restart the app');
+          }
+        }
       }
     } catch (error) {
       window.clearTimeout(timeoutId);
@@ -1915,8 +1949,13 @@ function App() {
           }});
         }, playDelay);
       } else if (data.translated_text) {
-        const browserPlayed = speakTranslatedTextWithBrowser(data.translated_text, data.source_text || '', `upload-${Date.now()}`);
-        if (!browserPlayed) setStatus('Audio translated');
+        const targetLang = data.target_language || languagePairRef.current.targetLanguage;
+        if (shouldUseBrowserTts(settings, targetLang)) {
+          const browserPlayed = speakTranslatedTextWithBrowser(data.translated_text, data.source_text || '', `upload-${Date.now()}`);
+          if (!browserPlayed) setStatus('Audio translated');
+        } else {
+          setStatus('Translation ready (neural voice unavailable)');
+        }
       }
     } catch (error) {
       console.error('UPLOAD: catch error', error);
@@ -2135,7 +2174,8 @@ function App() {
         setPipelineStage('Translation ready');
         const continuousVoiceEnabled = !lowBandwidthMode;
         const activeTargetLanguage = data.target_language || data.targetLanguage || languagePairRef.current.targetLanguage;
-        const useImmediateBrowserTts = settings.ttsVoice === 'browser' || !PIPER_SUPPORTED_LANGS.has(activeTargetLanguage);
+        const useBackendNeural = prefersBackendNeuralVoice(settings, activeTargetLanguage);
+        const useImmediateBrowserTts = shouldUseBrowserTts(settings, activeTargetLanguage);
         if (continuousVoiceEnabled && data.text) {
           const speakWithBrowserFallback = () => {
             speakTranslatedTextWithBrowser(
@@ -2151,13 +2191,18 @@ function App() {
           }
           if (useImmediateBrowserTts) {
             speakWithBrowserFallback();
-          } else {
+          } else if (useBackendNeural) {
+            setPipelineStage('Preparing neural voice...');
+            // Wait for backend Edge TTS — never swap to robotic browser voice mid-flight.
+          } else if (shouldUseBrowserTts(settings, activeTargetLanguage)) {
             const scheduledAt = performance.now();
             liveVoiceFallbackTimerRef.current = window.setTimeout(() => {
               liveVoiceFallbackTimerRef.current = null;
               if (backendVoiceChunkSeenAtRef.current > scheduledAt) return;
               speakWithBrowserFallback();
-            }, 1800);
+            }, BACKEND_TTS_WAIT_MS);
+          } else {
+            setPipelineStage('Waiting for neural voice...');
           }
         }
       }
@@ -2448,6 +2493,7 @@ function App() {
       sourceText: String(options.sourceText || '').trim(),
       targetLanguage: options.targetLanguage || languagePairRef.current.targetLanguage,
       browserFallbackTried: false,
+      neuralBackend: options.neuralBackend !== false,
     };
     if (options.live && Number.isFinite(LIVE_TTS_MAX_QUEUE)) {
       while (ttsQueueRef.current.length >= Math.max(1, LIVE_TTS_MAX_QUEUE)) {
@@ -2541,6 +2587,9 @@ function App() {
     const tryBrowserSpeechFallback = (error) => {
       const fallbackText = String(item.text || '').trim();
       if (!fallbackText || item.browserFallbackTried) return false;
+      if (!shouldUseBrowserTts(settings, item.targetLanguage || languagePairRef.current.targetLanguage)) {
+        return false;
+      }
       if (!window.speechSynthesis) return false;
       item.browserFallbackTried = true;
       const fallbackLanguage = item.targetLanguage || languagePairRef.current.targetLanguage;
@@ -2755,7 +2804,9 @@ function App() {
             
             const source = context.createBufferSource();
             source.buffer = audioBuffer;
-            source.playbackRate.value = settings.ttsSpeed ?? 1.0;
+            source.playbackRate.value = item.neuralBackend !== false
+              ? neuralPlaybackRate(settings.ttsSpeed)
+              : Math.min(Math.max((settings.ttsSpeed ?? 0.94) * 0.98, 0.72), 1.15);
             source.connect(gainNode);
             
             // Track duration for adaptive timing
@@ -2825,7 +2876,7 @@ function App() {
   const nextNextAudioBufferRef = useRef(null); // Lookahead: 2 chunks ahead
   const gainNodeRef = useRef(null);
   const masterGainRef = useRef(null); // Limiter to prevent clipping
-  const crossfadeDuration = 0.15; // 150ms crossfade for perfectly smooth transitions
+  const crossfadeDuration = 0.22; // longer crossfade — smoother between neural TTS chunks
   const overlapDuration = 0.05; // 50ms overlap between chunks
   const jitterBufferMs = 50; // Small jitter buffer for network stability
   const recentDurationsRef = useRef([]); // Track durations for adaptive timing
@@ -3539,6 +3590,7 @@ function App() {
           onOpenSettings={() => setSettingsOpen(true)}
           updateAvailable={updateAvailable}
           apiUrl={liveApiUrl}
+          diagnostics={diagnostics}
         />
         {showConnectionQuality && (
           <ConnectionQualityIndicator

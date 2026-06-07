@@ -80,7 +80,7 @@ def sentence_chrf(hyp, ref, CHRF):
 # --------------------------------------------------------------------------
 # Translation backends
 # --------------------------------------------------------------------------
-def make_http_translator(base_url, token, api_key, timeout):
+def make_http_translator(base_url, token, api_key, timeout, *, quality=False, tier="marian"):
     try:
         import requests
     except ImportError:
@@ -94,10 +94,23 @@ def make_http_translator(base_url, token, api_key, timeout):
         headers["x-api-key"] = api_key
 
     def translate(text, src, tgt):
+        payload = {
+            "text": text,
+            "source_language": src,
+            "target_language": tgt,
+            "synthesize_audio": False,
+        }
+        if quality:
+            payload["translation_quality"] = "quality"
+        if tier == "hybrid":
+            payload["translation_provider"] = "hybrid"
+        elif tier == "ollama":
+            payload["translation_provider"] = "hybrid"
+            payload["translation_mode"] = "balanced"
+            os.environ["TRANSLATION_TIER"] = "ollama"
         resp = requests.post(
             f"{base_url}/translate/text",
-            json={"text": text, "source_language": src,
-                  "target_language": tgt, "synthesize_audio": False},
+            json=payload,
             headers=headers,
             timeout=timeout,
         )
@@ -112,9 +125,26 @@ def make_http_translator(base_url, token, api_key, timeout):
     return translate
 
 
-def make_direct_translator():
+def make_direct_translator(*, tier="marian", quality=False):
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
+    tier = (tier or "marian").lower()
+    if tier in {"hybrid", "ollama", "auto"}:
+        try:
+            from translation.hybrid_translator import HybridTranslator
+        except Exception as exc:  # noqa: BLE001
+            sys.exit(f"ERROR: could not import HybridTranslator: {exc}")
+        if tier == "ollama":
+            os.environ["TRANSLATION_TIER"] = "ollama"
+        elif tier == "hybrid":
+            os.environ.setdefault("TRANSLATION_TIER", "auto")
+        hybrid = HybridTranslator()
+
+        def translate(text, src, tgt):
+            return (hybrid.translate(text, src, tgt, quality=quality) or "").strip()
+
+        return translate
+
     try:
         from translation.marian_translator import MarianTranslator
     except Exception as exc:  # noqa: BLE001
@@ -126,7 +156,7 @@ def make_direct_translator():
     translator = MarianTranslator()
 
     def translate(text, src, tgt):
-        return (translator.translate(text, src, tgt) or "").strip()
+        return (translator.translate(text, src, tgt, quality=quality) or "").strip()
 
     return translate
 
@@ -145,16 +175,21 @@ def run(args):
 
     if args.direction:
         items = [it for it in items if it["direction"] == args.direction]
+    if args.verified_only:
+        items = [it for it in items if str(it.get("review_status", "")).lower() == "verified"]
     if args.limit:
         items = items[: args.limit]
     if not items:
         sys.exit("No test items matched the filters.")
 
+    tier = args.tier or "marian"
     if args.mode == "http":
-        translate = make_http_translator(args.base_url, args.token,
-                                         args.api_key, args.timeout)
+        translate = make_http_translator(
+            args.base_url, args.token, args.api_key, args.timeout,
+            quality=args.quality, tier=tier,
+        )
     else:
-        translate = make_direct_translator()
+        translate = make_direct_translator(tier=tier, quality=args.quality)
 
     rows = []
     print(f"\nRunning {len(items)} items in {args.mode} mode...\n")
@@ -207,11 +242,18 @@ def run(args):
     worst = sorted([r for r in rows if not r["error"]],
                    key=lambda r: r["sentence_chrfpp"])[:10]
 
+    verified_count = sum(
+        1 for it in data.get("items", [])
+        if str(it.get("review_status", "")).lower() == "verified"
+    )
     result = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "mode": args.mode,
+        "tier": tier,
+        "quality_beams": args.quality,
         "base_url": args.base_url if args.mode == "http" else None,
         "testset": str(testset_path),
+        "verified_items_in_testset": verified_count,
         "review_warning": data.get("meta", {}).get("review_note", ""),
         "overall": overall,
         "by_direction": by_direction,
@@ -240,6 +282,14 @@ def run(args):
         w.writerows(rows)
 
     print_summary(result, json_path, csv_path)
+
+    if args.min_chrf is not None:
+        score = result["overall"]["chrf2"]
+        if score < args.min_chrf:
+            print(f"FAIL: overall chrF2 {score} < floor {args.min_chrf}", file=sys.stderr)
+            sys.exit(1)
+        print(f"PASS: overall chrF2 {score} >= floor {args.min_chrf}")
+
     return result
 
 
@@ -251,9 +301,12 @@ def _fmt(scores):
 
 def print_summary(result, json_path, csv_path):
     line = "=" * 72
+    tier = result.get("tier", "marian")
+    quality = "on" if result.get("quality_beams") else "off"
     print(f"\n{line}\nANAI TRANSLATOR  EN<->HT  ACCURACY  —  {result['generated_at']}"
-          f"\nmode: {result['mode']}" +
+          f"\nmode: {result['mode']}   tier: {tier}   quality-beams: {quality}" +
           (f"   base_url: {result['base_url']}" if result["base_url"] else "") +
+          f"\nverified refs in testset: {result.get('verified_items_in_testset', 0)}" +
           f"\n{line}")
     print(f"OVERALL    {_fmt(result['overall'])}")
     print("\nBY DIRECTION")
@@ -292,6 +345,14 @@ def build_parser():
     p.add_argument("--testset", default="testset_en_ht.json")
     p.add_argument("--direction", choices=["en-ht", "ht-en"],
                    help="run only one direction")
+    p.add_argument("--verified-only", action="store_true",
+                   help="only items with review_status=verified")
+    p.add_argument("--tier", choices=["marian", "hybrid", "ollama"], default="marian",
+                   help="translation backend for --mode direct (or http provider hint)")
+    p.add_argument("--quality", action="store_true",
+                   help="use wider beam search (TRANSLATION_QUALITY_NUM_BEAMS)")
+    p.add_argument("--min-chrf", type=float, default=None,
+                   help="exit 1 if overall chrF2 is below this floor (CI gate)")
     p.add_argument("--limit", type=int, help="run only the first N items")
     p.add_argument("--timeout", type=float, default=60.0,
                    help="per-request HTTP timeout seconds")

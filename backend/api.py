@@ -51,6 +51,8 @@ from backend.config import (
     get_whisper_device,
     get_whisper_model_size,
     get_google_tts_api_key,
+    get_natural_tts_mode,
+    get_partial_tts_mode,
     validate_production_config,
 )
 from backend.service_health import get_service_health_manager
@@ -112,6 +114,12 @@ from backend.tts_cache import (
     is_tts_cache_key as _is_shared_tts_cache_key,
     tts_cache_path as _shared_tts_cache_path,
 )
+
+
+def _translation_wants_quality(mode: str | None, quality: str | None) -> bool:
+    m = (mode or "").lower()
+    q = (quality or "").lower()
+    return m in {"accurate", "quality", "high"} or q in {"quality", "high", "accurate"}
 
 
 def _translator_for_request(mode: str | None, provider: str | None):
@@ -184,6 +192,11 @@ async def lifespan(app_instance: FastAPI):
     elif _cip["mode"] == "off":
         logger.info("CIP brain disabled (CIP_DEFAULT_MODE=off). Translations will not go through ambiguity resolution.")
 
+    from tts.tts_readiness import log_neural_tts_startup_warning, neural_tts_status
+
+    log_neural_tts_startup_warning()
+    runtime_state["tts_neural"] = neural_tts_status()
+
     voice_warmup_task = None
     runtime_state["models"] = {
         "whisper_device": get_whisper_device(),
@@ -192,7 +205,7 @@ async def lifespan(app_instance: FastAPI):
         "translation_backend": get_translation_backend(),
         "translation_runtime": pipeline.translator.__class__.__name__,
         "translation_device": get_translation_device(),
-        "tts": "piper",
+        "tts": "edge_neural" if runtime_state.get("tts_neural", {}).get("neural_ready") else "piper_fallback",
         "vad": "silero",
     }
     runtime_state["warming"] = get_preload_models()
@@ -201,14 +214,25 @@ async def lifespan(app_instance: FastAPI):
     runtime_state["warming"] = False
     runtime_state["ready"] = True
 
-    # --- Ollama + AILang warm-up ---
-    # Pre-load the model into memory so the first real request is fast.
-    # Logs whether AILang intelligence is active or degraded.
-    ollama_warmup_result = await _warm_ollama()
-    runtime_state["ollama_warmup"] = ollama_warmup_result
+    async def _run_ollama_warmup() -> None:
+        runtime_state["ollama_warmup"] = await _warm_ollama()
 
-    translation_warmup_result = await _warm_translation_cache("startup")
-    runtime_state["translation_warmup"] = translation_warmup_result
+    runtime_state["ollama_warmup"] = {"status": "queued", "started_at": time()}
+    ollama_warmup_task = asyncio.create_task(_run_ollama_warmup())
+
+    translation_warmup_task = None
+    skip_translation_warmup = os.getenv("SKIP_TRANSLATION_WARMUP", "true").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if skip_translation_warmup:
+        runtime_state["translation_warmup"] = {
+            "status": "skipped",
+            "reason": "SKIP_TRANSLATION_WARMUP",
+            "message": "Translation warmup skipped to keep neural voice stable on limited RAM",
+        }
+    else:
+        runtime_state["translation_warmup"] = {"status": "queued", "started_at": time()}
+        translation_warmup_task = asyncio.create_task(_warm_translation_cache("startup"))
 
     runtime_state["voice_warmup"] = {"status": "queued", "started_at": time()}
     voice_warmup_task = asyncio.create_task(_warm_voice_cache("startup"))
@@ -217,6 +241,10 @@ async def lifespan(app_instance: FastAPI):
     finally:
         if voice_warmup_task:
             voice_warmup_task.cancel()
+        if translation_warmup_task:
+            translation_warmup_task.cancel()
+        if ollama_warmup_task:
+            ollama_warmup_task.cancel()
         runtime_state["ready"] = False
 
 
@@ -492,6 +520,12 @@ def diagnostics(request: Request):
             "remote_translator_reachable": _remote_ok,
             "remote_translator_error": _remote_error,
             "tts_google_configured": bool(get_google_tts_api_key()),
+        },
+        "tts_neural": runtime_state.get("tts_neural"),
+        "tts_voice": {
+            "engine": runtime_state["models"].get("tts"),
+            "natural_voice": get_natural_tts_mode(),
+            "partial_tts_mode": get_partial_tts_mode(),
         },
         "persistence": _persistence,
         "cip": cip_health_snapshot(),
@@ -815,7 +849,7 @@ async def _warm_translation_cache(reason: str) -> dict:
                 target_language=target_language,
                 reason=reason,
             )
-        except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
+        except (RuntimeError, ValueError, OSError, TimeoutError, MemoryError) as exc:
             logger.warning(
                 "translation_warmup_failed source=%s target=%s reason=%s error=%s",
                 source_language,
@@ -932,6 +966,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
             speaker_memory.register(speaker_id, language=request.source_language or detect_language_heuristic(request.text))
         # Use a per-request translator if mode/provider was specified by the client
         req_translator = _translator_for_request(request.translation_mode, request.translation_provider)
+        use_quality = _translation_wants_quality(request.translation_mode, request.translation_quality)
         
         # Get session ID from request or generate one
         session_id = request.session_id if hasattr(request, 'session_id') and request.session_id else identity
@@ -958,6 +993,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 synthesize_audio=False,
                 speaker=speaker,
                 confidence=confidence,
+                quality=use_quality,
             )
         else:
             interim = pipeline.translate_text(
@@ -968,6 +1004,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 synthesize_audio=False,
                 speaker=speaker,
                 confidence=confidence,
+                quality=use_quality,
             )
         user_profile = profiles.get(identity)
         # Let the UT pipeline produce the translation first, then let CIP make
@@ -1286,6 +1323,10 @@ async def websocket_translate(websocket: WebSocket):
         await websocket_text_translation(websocket, pipeline)
     except WebSocketDisconnect:
         pass
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
+        metrics["websocket_errors"] += 1
+        with suppress(Exception):
+            await websocket.close(code=1011, reason="Internal WebSocket error")
 
 
 @app.websocket("/ws/audio")

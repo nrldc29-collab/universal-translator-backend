@@ -135,7 +135,7 @@ export default function SettingsPanel({
               <SectionLanguage settings={settings} updateSetting={updateSetting} />
             )}
             {activeSection === 'audio' && (
-              <SectionAudio settings={settings} updateSetting={updateSetting} micDevices={micDevices} />
+              <SectionAudio settings={settings} updateSetting={updateSetting} micDevices={micDevices} diagnostics={diagnostics} apiUrl={apiUrl} />
             )}
             {activeSection === 'translation' && (
               <SectionTranslation settings={settings} updateSetting={updateSetting} />
@@ -219,10 +219,58 @@ function SectionLanguage({ settings, updateSetting }) {
 }
 
 /* ─── Section: Audio ──────────────────────────────────────────────── */
-function SectionAudio({ settings, updateSetting, micDevices }) {
+function SectionAudio({ settings, updateSetting, micDevices, diagnostics, apiUrl }) {
+  const neuralReady = diagnostics?.tts_neural?.neural_ready === true;
+  const [voiceTestState, setVoiceTestState] = React.useState('idle');
+
+  async function testNeuralVoice() {
+    const base = (settings.backendUrl || apiUrl || '').replace(/\/+$/, '');
+    if (!base) {
+      setVoiceTestState('error');
+      return;
+    }
+    setVoiceTestState('playing');
+    try {
+      const res = await fetch(`${base}/debug/tts-sample.wav`, { signal: AbortSignal.timeout(90000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.volume = settings.volume ?? 0.84;
+      await audio.play();
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        setVoiceTestState('done');
+      };
+    } catch {
+      setVoiceTestState('error');
+    }
+  }
+
   return (
     <div className="sp-section">
       <h2 className="sp-section-title">Audio Settings</h2>
+
+      <div className={`sp-info-box${neuralReady ? '' : ' warning'}`}>
+        {neuralReady ? <Check size={13} /> : <AlertTriangle size={13} />}
+        <span>
+          {neuralReady
+            ? 'Neural voice active — lifelike Microsoft Edge TTS is ready.'
+            : 'Neural voice unavailable — speech may sound robotic until edge-tts is installed. Restart the app.'}
+        </span>
+      </div>
+
+      <SettingRow label="Test voice" hint="Hear a neural voice sample" icon={<Volume2 size={15} />}>
+        <button type="button" className="sp-btn-option" onClick={testNeuralVoice} disabled={voiceTestState === 'playing'}>
+          {voiceTestState === 'playing' ? 'Playing...' : voiceTestState === 'done' ? 'Play again' : 'Test neural voice'}
+        </button>
+      </SettingRow>
+      {voiceTestState === 'error' && (
+        <div className="sp-info-box warning">
+          <AlertTriangle size={13} />
+          <span>Could not play sample. Run Restart-Translator.ps1, then try again.</span>
+        </div>
+      )}
 
       <SettingRow label="Volume" hint="Master playback volume" icon={<Volume2 size={15} />}>
         <div className="sp-slider-row">
@@ -256,9 +304,8 @@ function SectionAudio({ settings, updateSetting, micDevices }) {
           value={settings.ttsVoice}
           onChange={(e) => updateSetting('ttsVoice', e.target.value)}
         >
-          <option value="auto">Auto (recommended)</option>
-          <option value="backend">Backend Neural</option>
-          <option value="browser">Browser TTS</option>
+          <option value="backend">Neural voice (recommended)</option>
+          <option value="browser">Browser TTS (robotic — not recommended)</option>
           <option value="google">Google Cloud TTS</option>
         </select>
       </SettingRow>
@@ -320,9 +367,9 @@ function SectionTranslation({ settings, updateSetting }) {
           onChange={(v) => updateSetting('partialTts', v)}
         />
       </SettingRow>
-      <div className="sp-info-box">
-        <Info size={13} />
-        <span>Partial speech playback depends on your server configuration. This preference is saved for when the backend supports it.</span>
+      <div className="sp-info-box warning">
+        <AlertTriangle size={13} />
+        <span>Partial TTS speaks half-finished sentences and sounds choppy or robotic. Keep this off for natural voice.</span>
       </div>
 
       <SettingRow label="Translation Provider" hint="Backend translation engine" icon={<Zap size={15} />}>

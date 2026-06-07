@@ -80,6 +80,8 @@ class SmartBuffer:
         
     def add_chunk(self, data: bytes, priority: Priority = Priority.NORMAL) -> bool:
         """Add chunk to buffer with priority."""
+        if not data:
+            return False
         chunk = BufferChunk(
             data=data,
             priority=priority,

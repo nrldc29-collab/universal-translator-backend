@@ -191,7 +191,7 @@ class HybridTranslator:
                 return ollama_result
 
         if self._marian_enabled:
-            marian_result = self._try_marian(text, source, target)
+            marian_result = self._try_marian(text, source, target, quality=quality)
             if marian_result:
                 return marian_result
 
@@ -213,9 +213,9 @@ class HybridTranslator:
             self._record("ollama", False)
             return None
 
-    def _try_marian(self, text, source, target):
+    def _try_marian(self, text, source, target, *, quality=False):
         try:
-            result = self.marian.translate(text, source, target)
+            result = self.marian.translate(text, source, target, quality=quality)
             if result and not self.is_placeholder_translation(result, source, target):
                 self._record("marian", True)
                 return result

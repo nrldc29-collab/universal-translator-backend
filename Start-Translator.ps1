@@ -95,6 +95,12 @@ function Get-CloudflaredPath {
     return $null
 }
 
+# Local desktop use: skip phone tunnel when no tunnel tool is configured.
+if (-not $NoTunnel -and $TunnelProvider -eq "cloudflare" -and -not $LocalTunnelSubdomain -and -not (Get-CloudflaredPath)) {
+    Write-Host "No cloudflared found - running local-only (phone tunnel skipped)."
+    $NoTunnel = $true
+}
+
 function Get-TunnelUrl {
     param([string[]]$Paths)
     foreach ($path in $Paths) {
@@ -456,11 +462,26 @@ if (Test-PortListening -Port $BackendPort) {
     }
 }
 
+function Ensure-NeuralTtsDeps {
+    param([string]$PythonExe)
+    $check = & $PythonExe -c "from tts.tts_readiness import is_neural_tts_ready; import sys; sys.exit(0 if is_neural_tts_ready() else 1)" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Neural TTS ready (edge-tts + ffmpeg)."
+        return
+    }
+    Write-Host "Installing neural TTS dependency (edge-tts) for lifelike voice..."
+    & $PythonExe -m pip install "edge-tts==7.2.8" -q
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Could not install edge-tts. Voice will sound robotic until you run: pip install edge-tts"
+    }
+}
+
 if (-not (Test-PortListening -Port $BackendPort)) {
     $python = Join-Path $Root "venv\Scripts\python.exe"
     if (-not (Test-Path $python)) {
         throw "Missing venv Python at $python"
     }
+    Ensure-NeuralTtsDeps -PythonExe $python
     $env:FRONTEND_URL = if ($DevFrontend) { "http://127.0.0.1:$FrontendPort" } else { "http://127.0.0.1:$BackendPort" }
     $env:SERVE_FRONTEND_DIST = if ($DevFrontend) { "0" } else { "1" }
     $env:FRONTEND_DIST_DIR = "frontend/dist"
@@ -481,7 +502,6 @@ if (-not (Test-PortListening -Port $BackendPort)) {
     }
     $env:ALLOWED_ORIGIN_REGEX = "https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?|https://.*\.trycloudflare\.com$extraOriginRegex"
     $env:NEAR_ZERO_LATENCY_MODE = "true"
-    $env:PARTIAL_TTS_MODE = "true"
     $env:PARTIAL_TTS_MIN_WORDS = "1"
     $env:PARTIAL_TTS_MIN_INTERVAL = "0.35"
     $env:PARTIAL_TRANSLATION_MIN_WORDS = "1"
@@ -494,6 +514,7 @@ if (-not (Test-PortListening -Port $BackendPort)) {
     $env:VAD_FORCE_FINAL_SECONDS = "0.65"
     $env:SPEECH_MERGE_MS = "180"
     $env:PRELOAD_MODELS = "false"
+    $env:SKIP_TRANSLATION_WARMUP = "true"
     $env:OLLAMA_ENABLED = "false"
     if (-not $env:REQUESTS_PER_MINUTE) {
         $env:REQUESTS_PER_MINUTE = "240"
@@ -502,14 +523,17 @@ if (-not (Test-PortListening -Port $BackendPort)) {
         $env:QUOTA_REQUESTS_PER_HOUR = "5000"
     }
     $env:PREFER_EDGE_TTS = "true"
+    $env:TTS_EDGE_SSML_PAUSES = "true"
     $env:TTS_SOFTENING_ENABLED = "true"
-    $env:TTS_VOICE_PROFILE = "soothing"
-    $env:TTS_SOFTENING_LOW_PASS_HZ = "6200"
-    $env:TTS_SOFTENING_TARGET_RMS = "0.115"
-    $env:TTS_SOFTENING_PEAK_LIMIT = "0.82"
-    $env:TTS_SOFTENING_ROOM = "0.08"
-    $env:TTS_SOFTENING_BACKGROUND_AIR = "0.0022"
-    $env:TTS_SOFTENING_FADE_MS = "16"
+    $env:TTS_VOICE_PROFILE = "neural"
+    $env:TTS_NEURAL_MINIMAL_PROCESSING = "true"
+    $env:TTS_CHUNK_CHARS = "48"
+    $env:TTS_FIRST_CHUNK_CHARS = "28"
+    $env:TTS_NATURAL_SPEED = "1.0"
+    $env:TTS_NATURAL_PITCH_SHIFT = "0"
+    $env:TTS_NATURAL_VOICE = "true"
+    $env:PARTIAL_TTS_MODE = "0"
+    $env:TTS_PROSODY_WARMTH = "false"
     if (-not $env:AILANG_ENHANCEMENTS_ENABLED) {
         $env:AILANG_ENHANCEMENTS_ENABLED = "false"
     }
@@ -527,8 +551,12 @@ if ($DevFrontend -and -not (Test-PortListening -Port $FrontendPort)) {
 Start-Sleep -Seconds 3
 
 $health = Wait-HttpReady -Url "http://127.0.0.1:$BackendPort/health" -Attempts 40
-Invoke-ProductWarmup
-Wait-VoiceWarmupComplete | Out-Null
+if (-not $SkipProductTest) {
+    Invoke-ProductWarmup
+    Wait-VoiceWarmupComplete | Out-Null
+} else {
+    Wait-VoiceWarmupComplete -Attempts 25 | Out-Null
+}
 
 $tunnelUrl = $null
 if (-not $NoTunnel) {

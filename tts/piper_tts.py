@@ -1,8 +1,10 @@
 import asyncio
 import base64
+import html
 import logging
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +15,9 @@ from threading import Lock, get_ident
 from typing import Optional
 
 import requests
+
+from backend.tts_pacing import natural_baseline_emotion_config
+from tts.tts_readiness import is_neural_tts_ready
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +53,11 @@ ESPEAK_VOICE_MAP = {
 }
 
 EDGE_TTS_VOICES = {
-    "en": "en-US-AriaNeural",
+    "en": "en-US-AvaNeural",
     "es": "es-MX-DaliaNeural",
     "fr": "fr-FR-DeniseNeural",
     "de": "de-DE-KatjaNeural",
-    "it": "it-IT-ElsaNeural",
+    "it": "it-IT-IsabellaNeural",
     "pt": "pt-BR-FranciscaNeural",
     "nl": "nl-NL-ColetteNeural",
     "ru": "ru-RU-SvetlanaNeural",
@@ -61,9 +66,25 @@ EDGE_TTS_VOICES = {
     "ko": "ko-KR-SunHiNeural",
     "ar": "ar-SA-ZariyahNeural",
     "hi": "hi-IN-SwaraNeural",
-    # Microsoft Edge TTS has no Haitian Creole voice. French is the closest
-    # available neural voice, and it is much better than silence.
-    "ht": "fr-FR-DeniseNeural",
+    # No HT neural voice — Canadian French reads Creole more naturally than Parisian.
+    "ht": "fr-CA-SylvieNeural",
+}
+
+GOOGLE_TTS_NEURAL_VOICES = {
+    "en": "en-US-Neural2-F",
+    "es": "es-ES-Neural2-A",
+    "fr": "fr-FR-Neural2-A",
+    "de": "de-DE-Neural2-F",
+    "it": "it-IT-Neural2-A",
+    "pt": "pt-BR-Neural2-A",
+    "nl": "nl-NL-Neural2-F",
+    "ru": "ru-RU-Neural2-A",
+    "zh": "cmn-CN-Wavenet-A",
+    "ja": "ja-JP-Neural2-B",
+    "ko": "ko-KR-Neural2-A",
+    "ar": "ar-XA-Wavenet-A",
+    "hi": "hi-IN-Neural2-A",
+    "ht": "ht-HT-Standard-A",
 }
 
 # Google Cloud Text-to-Speech is faster than local Piper on the Railway CPU
@@ -171,33 +192,60 @@ def edge_tts_controls_from_emotion(emotion_config: Optional[dict]) -> tuple[str,
     return rate, pitch, volume
 
 
-def _piper_synthesis_config_from_emotion(emotion_config: Optional[dict]):
-    """Build a piper SynthesisConfig from an emotion tts_config, or None.
+def _merge_emotion_config(emotion_config: Optional[dict]) -> dict:
+    merged = dict(natural_baseline_emotion_config())
+    if emotion_config:
+        merged.update(emotion_config)
+    return merged
 
-    Returns None when there is nothing to apply or piper's SynthesisConfig is
-    unavailable, so callers fall back to the default synthesis path.
+
+def _edge_ssml_enabled() -> bool:
+    return os.getenv("TTS_EDGE_SSML_PAUSES", "1").strip().lower() not in FALSE_VALUES
+
+
+FALSE_VALUES = {"0", "false", "no", "off"}
+
+
+def _edge_ssml_text(text: str) -> str:
+    """Insert short pauses at punctuation so neural TTS breathes like a person."""
+    stripped = (text or "").strip()
+    if not stripped or not _edge_ssml_enabled():
+        return stripped
+    if stripped.startswith("<speak"):
+        return stripped
+    body = html.escape(stripped, quote=False)
+    body = re.sub(r"([.!?])(\s+)", r'\1<break time="240ms"/>\2', body)
+    body = re.sub(r"([,;:])(\s+)", r'\1<break time="130ms"/>\2', body)
+    return (
+        '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis">'
+        f"{body}</speak>"
+    )
+
+
+def _piper_synthesis_config_from_emotion(emotion_config: Optional[dict]):
+    """Build a piper SynthesisConfig from an emotion tts_config.
+
+    Always applies a slightly slower length_scale so Piper sounds less rushed.
     """
-    if not emotion_config:
-        return None
+    emotion_config = _merge_emotion_config(emotion_config)
     try:
         from piper import SynthesisConfig
     except Exception:
         return None
     kwargs: dict = {}
     speed = emotion_config.get("speed")
-    if isinstance(speed, (int, float)) and speed > 0 and float(speed) != 1.0:
-        # length_scale is the inverse of speed: >1 slower, <1 faster.
+    if isinstance(speed, (int, float)) and speed > 0:
         kwargs["length_scale"] = round(_clamp(1.0 / float(speed), 0.25, 4.0), 3)
+    else:
+        kwargs["length_scale"] = 1.07
     volume = emotion_config.get("volume")
-    if isinstance(volume, (int, float)) and volume > 0 and float(volume) != 1.0:
+    if isinstance(volume, (int, float)) and volume > 0:
         kwargs["volume"] = round(_clamp(float(volume), 0.0, 4.0), 3)
-    if not kwargs:
-        return None
     try:
         return SynthesisConfig(**kwargs)
     except TypeError:
         try:
-            return SynthesisConfig(length_scale=kwargs.get("length_scale", 1.0))
+            return SynthesisConfig(length_scale=kwargs.get("length_scale", 1.07))
         except Exception:
             return None
 
@@ -265,18 +313,28 @@ class PiperTextToSpeech:
         normalized = _normalize_language(lang)
         if normalized not in EDGE_TTS_VOICES:
             return False
-        return os.getenv("PREFER_EDGE_TTS", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+        if os.getenv("PREFER_EDGE_TTS", "1").strip().lower() in FALSE_VALUES:
+            return False
+        return is_neural_tts_ready()
 
-    def _finalize_audio(self, path, lang):
+    def _try_edge_tts(self, text, out_path, lang, emotion_config=None):
+        if not self._prefer_edge_tts(lang):
+            return None
+        try:
+            rendered = self._synthesize_edge_tts(text, out_path, lang, emotion_config=emotion_config)
+            return self._finalize_audio(rendered, lang, engine="edge")
+        except Exception as exc:
+            logger.warning("Edge TTS failed for %s: %s", lang, exc)
+            return None
+
+    def _allow_espeak_fallback(self) -> bool:
+        return os.getenv("ALLOW_ESPEAK_FALLBACK", "0").strip().lower() not in FALSE_VALUES
+
+    def _finalize_audio(self, path, lang, engine=None):
         try:
             from backend.voice_effects import postprocess_tts_wav
 
-            return postprocess_tts_wav(path, language=lang)
+            return postprocess_tts_wav(path, language=lang, engine=engine)
         except Exception as exc:
             logger.warning("tts_softening_failed language=%s path=%s error=%s", lang, path, exc)
             return str(path)
@@ -299,16 +357,23 @@ class PiperTextToSpeech:
         if not language_code:
             raise RuntimeError("Google Cloud TTS language is not configured: %s" % lang)
 
+        normalized = _normalize_language(lang)
+        voice_name = GOOGLE_TTS_NEURAL_VOICES.get(normalized)
+        voice_spec = {"languageCode": language_code}
+        if voice_name:
+            voice_spec["name"] = voice_name
         payload = {
             "input": {"text": text},
-            "voice": {"languageCode": language_code},
+            "voice": voice_spec,
             "audioConfig": {
                 "audioEncoding": "LINEAR16",
-                "sampleRateHertz": 22050,
+                "sampleRateHertz": 24000,
+                "effectsProfileId": ["handset-class-device"],
             },
         }
-        # Apply emotional tone (speaking rate / pitch / volume) when provided.
-        payload["audioConfig"].update(google_audio_config_from_emotion(emotion_config))
+        payload["audioConfig"].update(
+            google_audio_config_from_emotion(_merge_emotion_config(emotion_config))
+        )
         
         for attempt in range(MAX_RETRIES):
             try:
@@ -389,13 +454,15 @@ class PiperTextToSpeech:
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
         mp3_path = out_path.with_name(f"{out_path.stem}.edge-{get_ident()}-{int(time.time() * 1000)}.mp3")
-        rate, pitch, volume = edge_tts_controls_from_emotion(emotion_config)
+        merged_emotion = _merge_emotion_config(emotion_config)
+        rate, pitch, volume = edge_tts_controls_from_emotion(merged_emotion)
+        edge_text = _edge_ssml_text(text)
 
         async def render_edge_audio() -> None:
             import edge_tts
 
             communicator = edge_tts.Communicate(
-                text,
+                edge_text,
                 voice=voice,
                 rate=rate,
                 pitch=pitch,
@@ -419,7 +486,7 @@ class PiperTextToSpeech:
                     "-ac",
                     "1",
                     "-ar",
-                    "22050",
+                    "24000",
                     "-sample_fmt",
                     "s16",
                     str(out_path),
@@ -443,51 +510,47 @@ class PiperTextToSpeech:
 
         self._synthesis_count += 1
         lang = _normalize_language(language)
+        emotion_config = _merge_emotion_config(emotion_config)
         out_path = Path(output_path)
-        prefer_edge_first = self._prefer_edge_tts(lang)
-
         try:
-            if prefer_edge_first:
-                try:
-                    rendered = self._synthesize_edge_tts(text, out_path, lang, emotion_config=emotion_config)
-                    return self._finalize_audio(rendered, lang)
-                except Exception as exc:
-                    logger.warning(f"Preferred Edge TTS failed for {lang}, falling back: {exc}")
+            edge_audio = self._try_edge_tts(text, out_path, lang, emotion_config=emotion_config)
+            if edge_audio:
+                logger.info("tts_engine=edge_neural lang=%s chars=%d", lang, len(text.strip()))
+                return edge_audio
 
-            # Languages with no Piper voice → try Google Cloud TTS first if key is set,
-            # otherwise fall back to eSpeak NG (currently: ht).
+            # Languages with no Piper voice → Google Cloud, then Edge, then eSpeak (last resort).
             if lang in ESPEAK_LANGUAGES:
                 if self._use_cloud_tts(lang, google_api_key=google_api_key):
                     try:
                         rendered = self._synthesize_google(text, out_path, lang, google_api_key=google_api_key, emotion_config=emotion_config)
-                        return self._finalize_audio(rendered, lang)
+                        return self._finalize_audio(rendered, lang, engine="google")
                     except (requests.RequestException, ConnectionError, TimeoutError) as exc:
-                        logger.warning(f"Google TTS failed for {lang}, falling back to eSpeak: {exc}")
-                if lang in EDGE_TTS_VOICES:
-                    try:
-                        rendered = self._synthesize_edge_tts(text, out_path, lang, emotion_config=emotion_config)
-                        return self._finalize_audio(rendered, lang)
-                    except Exception as exc:
-                        logger.warning(f"Edge TTS failed for {lang}, falling back to eSpeak: {exc}")
+                        logger.warning(f"Google TTS failed for {lang}, falling back: {exc}")
+                edge_audio = self._try_edge_tts(text, out_path, lang, emotion_config=emotion_config)
+                if edge_audio:
+                    return edge_audio
+                if not self._allow_espeak_fallback():
+                    raise RuntimeError(
+                        f"Neural TTS unavailable for {lang}. Install edge-tts + ffmpeg "
+                        "(pip install edge-tts) or set GOOGLE_TTS_API_KEY."
+                    )
+                logger.warning("Using eSpeak for %s — voice will sound robotic. Install edge-tts.", lang)
                 rendered = self._synthesize_espeak(text, out_path, lang, emotion_config=emotion_config)
                 return self._finalize_audio(rendered, lang)
 
             if self._use_cloud_tts(lang, google_api_key=google_api_key):
                 try:
                     rendered = self._synthesize_google(text, out_path, lang, google_api_key=google_api_key, emotion_config=emotion_config)
-                    return self._finalize_audio(rendered, lang)
+                    return self._finalize_audio(rendered, lang, engine="google")
                 except (requests.RequestException, ConnectionError, TimeoutError) as exc:
                     logger.warning(f"Google TTS failed for {lang}, falling back to Piper: {exc}")
 
+            edge_audio = self._try_edge_tts(text, out_path, lang, emotion_config=emotion_config)
+            if edge_audio:
+                return edge_audio
+
             model_path = Path(self._voice_path(lang))
             if not model_path.exists():
-                if lang in EDGE_TTS_VOICES:
-                    try:
-                        rendered = self._synthesize_edge_tts(text, out_path, lang, emotion_config=emotion_config)
-                        return self._finalize_audio(rendered, lang)
-                    except Exception as exc:
-                        logger.warning(f"Edge TTS failed for {lang}, falling back to English voice: {exc}")
-
                 # Fall back to English if requested language voice is missing
                 fallback = Path(self.voices["en"])
                 if not fallback.exists():
@@ -503,6 +566,10 @@ class PiperTextToSpeech:
 
             voice = self._load_voice(lang)
             if voice is not None:
+                logger.warning(
+                    "tts_engine=piper_fallback lang=%s — voice may sound robotic. Install edge-tts.",
+                    lang,
+                )
                 # Non-blocking for partials: if the lock is already held (another
                 # synthesis running), skip rather than queue — keeps audio responsive.
                 acquired = self._lock.acquire(blocking=False)

@@ -21,6 +21,7 @@ class TextTranslationRequest(BaseModel):
     speaker_name: str | None = None
     speaker_mode: str = "auto"
     translation_mode: str | None = None
+    translation_quality: str | None = None  # fast (default) | quality
     translation_provider: str | None = None
     google_tts_api_key: str | None = None
     speaker: str | None = None  # AILang speaker identifier

@@ -38,20 +38,39 @@ def test_chunk_text_for_tts_empty_returns_original():
     assert chunks == [""]
 
 
-def test_chunk_text_for_tts_splits_at_punctuation():
+def test_chunk_text_for_tts_splits_at_punctuation(monkeypatch):
+    monkeypatch.setenv("TTS_NATURAL_VOICE", "0")
     text = "Hello. How are you? I am fine."
     chunks = chunk_text_for_tts(text, max_chars=20)
     assert len(chunks) >= 2
     assert all(len(c) <= 20 for c in chunks)
 
 
-def test_chunk_text_for_tts_first_chunk_is_short():
+def test_chunk_text_for_tts_first_chunk_is_short(monkeypatch):
     """The first chunk should be capped at TTS_FIRST_CHUNK_CHARS for faster playback start."""
+    monkeypatch.setenv("TTS_NATURAL_VOICE", "0")
     long_text = "The quick brown fox jumps over the lazy dog and then runs away into the forest."
     with patch("backend.streaming_helpers.get_tts_first_chunk_chars", return_value=10), \
          patch("backend.streaming_helpers.get_tts_chunk_chars", return_value=80):
         chunks = chunk_text_for_tts(long_text)
     assert len(chunks[0]) <= 10
+
+
+def test_chunk_text_for_tts_natural_keeps_short_text_whole(monkeypatch):
+    monkeypatch.setenv("TTS_NATURAL_VOICE", "1")
+    text = "Hello. How are you today? I hope you are well."
+    chunks = chunk_text_for_tts(text, natural=True)
+    assert chunks == [text]
+
+
+def test_chunk_text_for_tts_natural_splits_on_sentences_only(monkeypatch):
+    monkeypatch.setenv("TTS_NATURAL_VOICE", "1")
+    with patch("backend.streaming_helpers.get_tts_max_single_pass_chars", return_value=40):
+        text = "First sentence here. Second sentence follows."
+        chunks = chunk_text_for_tts(text, natural=True)
+    assert len(chunks) == 2
+    assert chunks[0] == "First sentence here."
+    assert chunks[1] == "Second sentence follows."
 
 
 def test_chunk_text_for_tts_no_empty_chunks():

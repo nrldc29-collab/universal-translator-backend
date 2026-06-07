@@ -1,19 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const STORAGE_KEY = 'ut_settings_v1';
-const SETTINGS_VERSION = 2;
+const SETTINGS_VERSION = 6;
 
 const DEFAULTS = {
   // Language
   uiLanguage: 'en',
   // Audio
-  volume: 0.8,
+  volume: 0.84,
   ttsSpeed: 1.0,
-  ttsVoice: 'auto',
+  ttsVoice: 'backend',
   micDeviceId: 'default',
   // Translation
   translationMode: 'fast',
-  partialTts: true,
+  partialTts: false,
   translationProvider: 'hybrid',
   // Display
   theme: 'dark',
@@ -37,7 +37,26 @@ function load() {
     if (raw) {
       const loaded = { ...DEFAULTS, ...JSON.parse(raw) };
       if ((loaded.settingsVersion || 0) < SETTINGS_VERSION) {
-        loaded.partialTts = true;
+        if ((loaded.settingsVersion || 0) < 2) {
+          loaded.partialTts = true;
+        }
+        if ((loaded.settingsVersion || 0) < 3) {
+          if (!loaded.ttsSpeed || loaded.ttsSpeed === 1) loaded.ttsSpeed = 0.94;
+          loaded.partialTts = false;
+        }
+        if ((loaded.settingsVersion || 0) < 4) {
+          if (!loaded.ttsVoice || loaded.ttsVoice === 'auto') loaded.ttsVoice = 'backend';
+        }
+        if ((loaded.settingsVersion || 0) < 5) {
+          loaded.ttsVoice = 'backend';
+          loaded.partialTts = false;
+          if (!loaded.ttsSpeed || loaded.ttsSpeed >= 1) loaded.ttsSpeed = 0.94;
+        }
+        if ((loaded.settingsVersion || 0) < 6) {
+          loaded.ttsVoice = 'backend';
+          loaded.partialTts = false;
+          loaded.ttsSpeed = 1.0;
+        }
         loaded.lowBandwidthMode = false;
         loaded.settingsVersion = SETTINGS_VERSION;
         save(loaded);

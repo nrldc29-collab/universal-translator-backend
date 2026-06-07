@@ -10,6 +10,50 @@ import numpy as np
 
 FALSE_VALUES = {"0", "false", "no", "off"}
 
+_VOICE_PROFILES = {
+  # Warm, roomier — default for live interpretation.
+  "natural": {
+    "low_pass_hz": 5800.0,
+    "target_rms": 0.120,
+    "peak_limit": 0.79,
+    "room": 0.13,
+    "air": 0.0030,
+    "fade_ms": 22.0,
+  },
+  "soothing": {
+    "low_pass_hz": 5600.0,
+    "target_rms": 0.122,
+    "peak_limit": 0.78,
+    "room": 0.15,
+    "air": 0.0032,
+    "fade_ms": 24.0,
+  },
+  "plain": {
+    "low_pass_hz": 6200.0,
+    "target_rms": 0.115,
+    "peak_limit": 0.82,
+    "room": 0.08,
+    "air": 0.0022,
+    "fade_ms": 16.0,
+  },
+  # Light touch for Microsoft Edge / Google neural — already lifelike; avoid synthetic reverb.
+  "neural": {
+    "low_pass_hz": 7200.0,
+    "target_rms": 0.118,
+    "peak_limit": 0.85,
+    "room": 0.0,
+    "air": 0.0,
+    "fade_ms": 12.0,
+  },
+}
+
+
+def _active_voice_profile(*, engine: str | None = None) -> dict:
+    profile = (os.getenv("TTS_VOICE_PROFILE") or "neural").strip().lower()
+    if engine in {"edge", "google", "neural"}:
+        profile = "neural"
+    return dict(_VOICE_PROFILES.get(profile, _VOICE_PROFILES["neural"]))
+
 
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
@@ -96,6 +140,20 @@ def _one_pole_lowpass(audio: np.ndarray, sample_rate: int, cutoff_hz: float) -> 
         state = state + alpha * (filtered[index] - state)
         filtered[index] = state
     return filtered
+
+
+def _subtle_prosody_warmth(audio: np.ndarray, sample_rate: int) -> np.ndarray:
+    """Very gentle amplitude shimmer — reduces flat synthetic TTS timbre."""
+    if audio.size == 0 or not _env_bool("TTS_PROSODY_WARMTH", True):
+        return audio
+    depth = _env_float("TTS_PROSODY_WARMTH_DEPTH", 0.018, 0.0, 0.06)
+    if depth <= 0:
+        return audio
+    mono = audio.mean(axis=1) if audio.ndim > 1 else audio.reshape(-1)
+    t = np.arange(mono.size, dtype=np.float32) / float(sample_rate)
+    wobble = 1.0 + depth * np.sin(2.0 * math.pi * 3.2 * t)
+    shaped = audio * wobble.reshape(-1, 1) if audio.ndim > 1 else audio * wobble
+    return shaped.astype(np.float32)
 
 
 def _soft_room(audio: np.ndarray, sample_rate: int, amount: float) -> np.ndarray:
@@ -199,7 +257,7 @@ def ensure_tts_wav_quality(path: str | Path, language: str | None = None) -> str
     return str(wav_path)
 
 
-def postprocess_tts_wav(path: str | Path, language: str | None = None) -> str:
+def postprocess_tts_wav(path: str | Path, language: str | None = None, *, engine: str | None = None) -> str:
     """Make generated TTS less harsh while keeping the words intelligible."""
     if not _env_bool("TTS_SOFTENING_ENABLED", True):
         return str(path)
@@ -213,15 +271,30 @@ def postprocess_tts_wav(path: str | Path, language: str | None = None) -> str:
     digest = hashlib.sha256(audio[: min(len(audio), sample_rate)].tobytes()).digest()
     seed = int.from_bytes(digest[:8], "little", signed=False)
 
+    profile = _active_voice_profile(engine=engine)
+    neural_engine = engine in {"edge", "google", "neural"}
+    if neural_engine and _env_bool("TTS_NEURAL_MINIMAL_PROCESSING", True):
+        fade_ms = _env_float("TTS_SOFTENING_FADE_MS", profile["fade_ms"], 2.0, 60.0)
+        audio = _apply_fades(audio, sample_rate, fade_ms)
+        _write_wav(wav_path, sample_rate, audio)
+        return str(wav_path)
+
     audio = audio - np.mean(audio, axis=0, keepdims=True)
-    low_cut = _env_float("TTS_SOFTENING_LOW_PASS_HZ", 6200.0, 2600.0, sample_rate / 2 - 100)
-    target_rms = _env_float("TTS_SOFTENING_TARGET_RMS", 0.115, 0.04, 0.35)
-    peak_limit = _env_float("TTS_SOFTENING_PEAK_LIMIT", 0.82, 0.2, 0.98)
-    room = _env_float("TTS_SOFTENING_ROOM", 0.08, 0.0, 0.35)
-    air = _env_float("TTS_SOFTENING_BACKGROUND_AIR", 0.0022, 0.0, 0.012)
-    fade_ms = _env_float("TTS_SOFTENING_FADE_MS", 16.0, 2.0, 60.0)
+    low_cut = _env_float(
+        "TTS_SOFTENING_LOW_PASS_HZ",
+        profile["low_pass_hz"],
+        2600.0,
+        sample_rate / 2 - 100,
+    )
+    target_rms = _env_float("TTS_SOFTENING_TARGET_RMS", profile["target_rms"], 0.04, 0.35)
+    peak_limit = _env_float("TTS_SOFTENING_PEAK_LIMIT", profile["peak_limit"], 0.2, 0.98)
+    room = _env_float("TTS_SOFTENING_ROOM", profile["room"], 0.0, 0.35)
+    air = _env_float("TTS_SOFTENING_BACKGROUND_AIR", profile["air"], 0.0, 0.012)
+    fade_ms = _env_float("TTS_SOFTENING_FADE_MS", profile["fade_ms"], 2.0, 60.0)
 
     audio = _one_pole_lowpass(audio, sample_rate, low_cut)
+    if not neural_engine:
+        audio = _subtle_prosody_warmth(audio, sample_rate)
     audio = _soft_room(audio, sample_rate, room)
     audio = _add_background_air(audio, sample_rate, air, seed)
     audio = _shape_dynamics(audio, target_rms, peak_limit)

@@ -11,7 +11,7 @@ from tts.piper_tts import (
     google_audio_config_from_emotion,
     _piper_synthesis_config_from_emotion,
 )
-from backend.tts_pacing import build_tts_pacing, emotion_config_from_style
+from backend.tts_pacing import build_tts_pacing, emotion_config_from_style, natural_baseline_emotion_config
 
 
 # ── Google Cloud TTS mapping ──────────────────────────────────────────────────
@@ -62,8 +62,10 @@ def test_espeak_clamps_ranges():
 
 # ── Piper SynthesisConfig (graceful when piper unavailable) ───────────────────
 
-def test_piper_config_none_for_empty():
-    assert _piper_synthesis_config_from_emotion(None) is None
+def test_piper_config_applies_natural_baseline_when_empty():
+    result = _piper_synthesis_config_from_emotion(None)
+    if result is not None:
+        assert getattr(result, "length_scale", None) is not None
 
 
 def test_piper_config_is_safe_regardless_of_piper_install():
@@ -83,16 +85,18 @@ def test_synthesize_forwards_emotion_config_to_google(monkeypatch, tmp_path):
         captured["emotion_config"] = emotion_config
         return str(out_path)
 
+    monkeypatch.setattr(tts, "_prefer_edge_tts", lambda *a, **k: False)
     monkeypatch.setattr(tts, "_use_cloud_tts", lambda *a, **k: True)
     monkeypatch.setattr(tts, "_synthesize_google", fake_google)
 
     emotion = {"speed": 1.3, "pitch_shift": 2, "volume": 1.1}
     tts.synthesize("hello", str(tmp_path / "out.wav"), language="es", emotion_config=emotion)
 
-    assert captured["emotion_config"] == emotion
+    assert captured["emotion_config"]["speed"] == emotion["speed"]
+    assert captured["emotion_config"]["pitch_shift"] == emotion["pitch_shift"]
 
 
-def test_synthesize_without_emotion_passes_none(monkeypatch, tmp_path):
+def test_synthesize_without_emotion_uses_natural_baseline(monkeypatch, tmp_path):
     tts = PiperTextToSpeech()
     captured = {}
 
@@ -100,22 +104,33 @@ def test_synthesize_without_emotion_passes_none(monkeypatch, tmp_path):
         captured["emotion_config"] = emotion_config
         return str(out_path)
 
+    monkeypatch.setattr(tts, "_prefer_edge_tts", lambda *a, **k: False)
     monkeypatch.setattr(tts, "_use_cloud_tts", lambda *a, **k: True)
     monkeypatch.setattr(tts, "_synthesize_google", fake_google)
 
     tts.synthesize("hello", str(tmp_path / "out.wav"), language="es")
 
-    assert captured["emotion_config"] is None
+    assert captured["emotion_config"] == natural_baseline_emotion_config()
 
 
 # ── Pacing style -> emotion_config (live streaming path) ──────────────────────
 
-def test_pacing_style_none_returns_none():
-    assert emotion_config_from_style(None) is None
+def test_pacing_style_none_returns_baseline():
+    assert emotion_config_from_style(None) == natural_baseline_emotion_config()
 
 
-def test_pacing_neutral_style_returns_none():
-    assert emotion_config_from_style({"speed": 1.0, "pitch": 1.0}) is None
+def test_pacing_neutral_style_uses_conversational_defaults(monkeypatch):
+    monkeypatch.delenv("TTS_NEURAL_MINIMAL_PROCESSING", raising=False)
+    cfg = emotion_config_from_style({"speed": 1.0, "pitch": 1.0})
+    assert cfg["speed"] == 1.0
+    assert "pitch_shift" in cfg
+
+
+def test_neural_minimal_baseline_avoids_artificial_slowdown(monkeypatch):
+    monkeypatch.setenv("TTS_NEURAL_MINIMAL_PROCESSING", "1")
+    cfg = emotion_config_from_style({"speed": 0.94, "pitch": 0.98})
+    assert cfg["speed"] == 1.0
+    assert cfg["pitch_shift"] == 0
 
 
 def test_pacing_excited_style_maps_speed_and_pitch():
@@ -133,7 +148,8 @@ def test_pacing_apologetic_style_lowers_pitch():
 
 
 def test_pacing_energy_maps_to_volume():
-    assert emotion_config_from_style({"speed": 1.0, "pitch": 1.0, "energy": 1.3}) == {"volume": 1.3}
+    cfg = emotion_config_from_style({"speed": 1.0, "pitch": 1.0, "energy": 1.3})
+    assert cfg["volume"] == 1.3
 
 
 def test_apologetic_utterance_produces_applied_emotion_config():

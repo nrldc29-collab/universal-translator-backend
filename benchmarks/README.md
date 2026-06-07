@@ -31,8 +31,8 @@ trustworthy out of the gate because its references are English.
 ## Setup
 
 ```bash
-pip install sacrebleu          # metrics
-pip install requests           # only needed for --mode http
+pip install -r requirements.txt   # includes sacrebleu
+pip install requests              # only needed for --mode http
 ```
 
 ## Running it
@@ -66,7 +66,35 @@ Useful flags:
 ```bash
 --direction en-ht     # or ht-en; run only one side
 --limit 10            # quick smoke run on the first 10 items
+--verified-only       # only items with review_status=verified (use after native review)
+--tier marian         # marian | hybrid | ollama (direct mode or HTTP provider hint)
+--quality             # wider beam search (TRANSLATION_QUALITY_NUM_BEAMS, default 4)
+--min-chrf 30         # exit 1 if overall chrF2 is below floor (CI gate)
+--testset testset_en_ht_extended.json   # 200+ sentence extended set
 --out-dir results     # where JSON/CSV land (default ./results)
+```
+
+Extended test set (200+ items, still unverified HT):
+
+```bash
+python scripts/expand_en_ht_testset.py
+python run_benchmark.py --mode direct --testset testset_en_ht_extended.json --limit 20
+```
+
+Quality A/B (Phase 2 tuning — compare chrF vs latency):
+
+```bash
+# Baseline (600M, beam=1)
+python run_benchmark.py --mode direct --direction en-ht
+
+# Wider beams
+python run_benchmark.py --mode direct --direction en-ht --quality
+
+# Larger NLLB model (config swap, no code change)
+NLLB_MODEL=facebook/nllb-200-1.3B python run_benchmark.py --mode direct --direction en-ht
+
+# LLM path (requires Ollama)
+python run_benchmark.py --mode direct --tier ollama --direction en-ht --limit 10
 ```
 
 ## What you get
@@ -107,12 +135,33 @@ outputs in the CSV.
 6. Expand the test set toward 200+ verified sentences for stable scores; small
    sets swing a lot per sentence.
 
+## CI quality gate
+
+The `integration-live` CI job runs a smoke benchmark after models are warmed:
+
+```bash
+python benchmarks/run_benchmark.py --mode direct --direction en-ht --limit 5 --min-chrf 12
+```
+
+Raise `--min-chrf` as verified references improve.
+
+## Phase 5 — field validation (streaming path)
+
+After the backend is LIVE, run the two-person EN↔HT dialogue over WebSocket:
+
+```bash
+python scripts/en_ht_field_validation.py --base-url http://127.0.0.1:8000
+```
+
+Reports chrF on translations, STT word-error rate, and first-translation / end-to-end latency.
+
 ## Files
 
 ```
 benchmarks/
-├── run_benchmark.py        # the harness (http + direct modes)
-├── testset_en_ht.json      # ~50 EN<->HT pairs, references need native review
-├── README.md               # this file
-└── results/                # generated JSON + CSV reports
+├── run_benchmark.py              # the harness (http + direct modes)
+├── testset_en_ht.json            # ~56 EN<->HT pairs (starter set)
+├── testset_en_ht_extended.json    # 200+ pairs (generate via scripts/expand_en_ht_testset.py)
+├── README.md                     # this file
+└── results/                      # generated JSON + CSV reports
 ```
