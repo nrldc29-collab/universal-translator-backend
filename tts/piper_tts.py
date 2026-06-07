@@ -41,7 +41,8 @@ DEFAULT_VOICES = {
 # Languages with no Piper voice — synthesized via eSpeak NG (free, no API key).
 # eSpeak works offline for all of these. Google TTS is used instead when
 # GOOGLE_TTS_API_KEY is set (better quality).
-ESPEAK_LANGUAGES = {"ht", "ja", "ko"}
+# Only Haitian Creole lacks a dedicated Edge voice — ja/ko use Edge neural directly.
+ESPEAK_LANGUAGES = {"ht"}
 
 # eSpeak voice names that differ from the ISO language code
 ESPEAK_VOICE_MAP = {
@@ -516,6 +517,16 @@ class PiperTextToSpeech:
         emotion_config = _merge_emotion_config(emotion_config)
         out_path = Path(output_path)
         try:
+            if lang == "ht" and self._use_cloud_tts(lang, google_api_key=google_api_key):
+                try:
+                    rendered = self._synthesize_google(
+                        text, out_path, lang, google_api_key=google_api_key, emotion_config=emotion_config,
+                    )
+                    logger.info("tts_engine=google_neural lang=ht chars=%d", len(text.strip()))
+                    return self._finalize_audio(rendered, lang, engine="google")
+                except (requests.RequestException, ConnectionError, TimeoutError, RuntimeError) as exc:
+                    logger.warning("Google TTS failed for ht, falling back to Edge: %s", exc)
+
             edge_audio = self._try_edge_tts(text, out_path, lang, emotion_config=emotion_config)
             if edge_audio:
                 logger.info("tts_engine=edge_neural lang=%s chars=%d", lang, len(text.strip()))

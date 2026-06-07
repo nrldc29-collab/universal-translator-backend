@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Activity, ArrowLeftRight, Check, Clock3, Copy, Download, Keyboard, Languages, Mic, Radio, Repeat2, Share2, Sparkles, Trash2, UserRound, Volume2 } from 'lucide-react';
 import './styles.css';
 import './beauty-polish.css';
+import './speech-first.css';
 import { registerServiceWorker } from './pwa';
 import Assistant from './Assistant';
 // ConversationMode removed — unified single-view handles both solo and multi-speaker.
@@ -277,6 +278,7 @@ function App() {
   const { micPermission, setMicPermission, requestMicPermission } = useMicPermission({
     onStatus: (message) => setStatus(message),
   });
+  const { sessionId, setSessionId, updateSessionId, sharedSession, setSharedSession, speakerMode, setSpeakerMode } = useStreamSession();
   // Pipeline-stage flags: one reducer, individual shim setters keep
   // existing call sites unchanged. See hooks/useInterpreterState.js.
   const {
@@ -324,8 +326,17 @@ function App() {
     authToken,
     sourceLanguage,
     targetLanguage,
+    sessionId,
+    deviceId: INITIAL_DEVICE_ID,
     withAuthToken,
+    backendReady: connectionStatus === 'online' || connectionStatus === 'warming',
+    onStatus: setStatus,
+    onNeedAudioStream: () => {
+      if (socketRef.current) return;
+      toggleStreaming({ interpreter: true, speakerMode: 'auto' });
+    },
   });
+  const autoTurnSyncRef = useRef(0);
   const lowBandwidthMode = !!settings.lowBandwidthMode;
   const [showDebugPanel, setShowDebugPanel] = useState(() => !!settings.debugMode);
   const [showAILangConfig, setShowAILangConfig] = useState(false);
@@ -368,6 +379,47 @@ function App() {
   const [showFriendlyStatus, setShowFriendlyStatus] = useState(() => {
     try { return localStorage.getItem('anai_friendly_status') !== 'false'; } catch { return true; }
   });
+  const [interpreterSocketOpen, setInterpreterSocketOpen] = useState(false);
+  const [liveSpeechSession, setLiveSpeechSession] = useState(false);
+  const liveSpeechSessionRef = useRef(false);
+  const autoListenBootRef = useRef(false);
+  const partialTranscriptRafRef = useRef(null);
+  const liveTranslationRafRef = useRef(null);
+  const statusRafRef = useRef(null);
+  const pendingStatusRef = useRef(null);
+
+  useEffect(() => {
+    liveSpeechSessionRef.current = liveSpeechSession;
+  }, [liveSpeechSession]);
+
+  function scheduleStatusUpdate(stage, nextStatus) {
+    pendingStatusRef.current = { stage, status: nextStatus };
+    if (statusRafRef.current) return;
+    statusRafRef.current = window.requestAnimationFrame(() => {
+      statusRafRef.current = null;
+      const pending = pendingStatusRef.current;
+      pendingStatusRef.current = null;
+      if (!pending) return;
+      if (pending.stage) setPipelineStage(pending.stage);
+      if (pending.status) setStatus(pending.status);
+    });
+  }
+
+  function schedulePartialTranscript(text) {
+    if (partialTranscriptRafRef.current) window.cancelAnimationFrame(partialTranscriptRafRef.current);
+    partialTranscriptRafRef.current = window.requestAnimationFrame(() => {
+      partialTranscriptRafRef.current = null;
+      setPartialTranscript(text);
+    });
+  }
+
+  function scheduleLiveTranslation(text) {
+    if (liveTranslationRafRef.current) window.cancelAnimationFrame(liveTranslationRafRef.current);
+    liveTranslationRafRef.current = window.requestAnimationFrame(() => {
+      liveTranslationRafRef.current = null;
+      setLiveTranslation(text);
+    });
+  }
 
   useEffect(() => {
     if (micPermission === 'available') setMicBannerDismissed(false);
@@ -376,6 +428,20 @@ function App() {
   useEffect(() => {
     if (connectionStatus === 'online') setOfflineBannerDismissed(false);
   }, [connectionStatus]);
+
+  // Returning users: resume continuous listening without tapping again each visit.
+  useEffect(() => {
+    if (connectionStatus !== 'online' || micPermission !== 'available') return;
+    if (autoListenBootRef.current || liveSpeechSessionRef.current || socketRef.current) return;
+    let enabled = false;
+    try { enabled = sessionStorage.getItem('anai_auto_listen_enabled') === '1'; } catch {}
+    if (!enabled) return;
+    autoListenBootRef.current = true;
+    const timer = window.setTimeout(() => {
+      handleMicClick().catch(() => { autoListenBootRef.current = false; });
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [connectionStatus, micPermission]);
 
   useEffect(() => {
     const openKeyboardHelp = () => setShowKeyboardHelp(true);
@@ -451,9 +517,25 @@ function App() {
     authToken,
     onStatus: (message) => setStatus(message),
   });
-  const { sessionId, setSessionId, updateSessionId, sharedSession, setSharedSession, speakerMode, setSpeakerMode } = useStreamSession();
   const [appMode, setAppMode] = React.useState('solo'); // 'solo' | 'conversation'
   const [conversationTurns, setConversationTurns, appendConversationTurn] = useConversationHistory(50, { normalizeConversationTurn });
+  useEffect(() => {
+    const turns = autoConversation.turns;
+    if (turns.length <= autoTurnSyncRef.current) return;
+    const fresh = turns.slice(autoTurnSyncRef.current);
+    autoTurnSyncRef.current = turns.length;
+    fresh.forEach((turn) => {
+      appendConversationTurn({
+        speaker: turn.conversationSpeaker || turn.speaker || 'A',
+        speaker_label: turn.speaker_label,
+        source_text: turn.source_text || '',
+        translated_text: turn.translated_text || '',
+        source_language: turn.srcLang,
+        target_language: turn.tgtLang,
+        created_at: (turn.timestamp || Date.now()) / 1000,
+      });
+    });
+  }, [autoConversation.turns, appendConversationTurn]);
   const { analytics, setAnalytics, loadAnalytics } = useAnalytics({ apiUrl: liveApiUrl, authToken, onStatus: setStatus });
   const { diagnostics, diagnosticsStatus, loadDiagnostics } = useDiagnostics(liveApiUrl);
   const { wsDebug, setWsDebug } = useWsDebug(WS_AUDIO_URL);
@@ -631,6 +713,16 @@ function App() {
 
 
   function clearInterpreterScreen() {
+    if (autoConversation.active) {
+      haptic(14);
+      autoConversation.clearTurns();
+      autoTurnSyncRef.current = 0;
+      setConversationTurns([]);
+      setPartialTranscript('');
+      setLiveTranslation('');
+      setResult(null);
+      return;
+    }
     if (streaming || processing || playing || ttsPlaying) return;
     haptic(14);
     resetBrainRuntimeUi();
@@ -841,6 +933,10 @@ function App() {
       } finally {
         restorePausedTracks();
         micPausedForVoiceRef.current = false;
+        if (socketRef.current?.readyState === WebSocket.OPEN && shouldKeepContinuousStream(socketRef.current)) {
+          setStreaming(true);
+          setInstantListening(true);
+        }
       }
     }, 80);
   }
@@ -859,6 +955,10 @@ function App() {
     if (pending && socketRef.current?.readyState === WebSocket.OPEN) {
       window.setTimeout(() => speakTranslatedTextWithBrowser(pending.text, pending.sourceText, pending.utteranceId, pending.languageOverride), 80);
     } else if (socketRef.current?.readyState === WebSocket.OPEN) {
+      if (shouldKeepContinuousStream(socketRef.current)) {
+        setStreaming(true);
+        setInstantListening(true);
+      }
       setPipelineStage('Listening');
       setStatus('Listening for the next speaker...');
     }
@@ -1291,7 +1391,7 @@ function App() {
 
 
 
-  function resetStreamState() {
+  function resetStreamState({ preserveInterpreter = false } = {}) {
     if (streamSafetyTimeoutRef.current) {
       window.clearTimeout(streamSafetyTimeoutRef.current);
       streamSafetyTimeoutRef.current = null;
@@ -1305,7 +1405,10 @@ function App() {
     setInstantListening(false);
     setProcessing(false);
     setPlaying(false);
-    setInterpreterMode(false);
+    if (!preserveInterpreter) {
+      setInterpreterMode(false);
+      setInterpreterSocketOpen(false);
+    }
     setLiveAssistActive(false);
     ttsPlayingRef.current = false;
     liveTtsPlaybackRef.current = false;
@@ -1332,6 +1435,32 @@ function App() {
 
   function activePacketMs() {
     return activePacketMsUtil({ lowBandwidthMode, streamPacketMs: STREAM_PACKET_MS, experimentalIosStreaming: EXPERIMENTAL_IOS_STREAMING });
+  }
+
+  function restoreLiveListeningAfterVoice() {
+    if (!liveSpeechSessionRef.current) return;
+    setPlaying(false);
+    if (!resumeInterpreterListeningUI('Listening — speak anytime')) {
+      setStreaming(true);
+      setInstantListening(true);
+      setPipelineStage('Listening');
+      setStatus('Listening — speak anytime');
+    }
+  }
+
+  function resumeInterpreterListeningUI(message = 'Listening — speak anytime') {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    if (!shouldKeepContinuousStream(socket) && !(appStateRef.current.interpreterMode && appStateRef.current.speakerMode === 'auto')) {
+      return false;
+    }
+    setStreaming(true);
+    setInstantListening(true);
+    setPlaying(false);
+    setProcessing(false);
+    setPipelineStage('Listening');
+    setStatus(message);
+    return true;
   }
 
 
@@ -1406,11 +1535,13 @@ function App() {
   }
 
   function shouldKeepContinuousStream(socket) {
+    if (liveSpeechSessionRef.current) return socketRef.current === socket;
     const options = streamReconnectRef.current.options || {};
+    const current = appStateRef.current;
     return (
       socketRef.current === socket &&
-      options.interpreter === true &&
-      options.speakerMode === 'auto' &&
+      (options.interpreter === true || current.interpreterMode) &&
+      (options.speakerMode === 'auto' || current.speakerMode === 'auto') &&
       options.holdToTalk !== true &&
       !holdToTalkActiveRef.current
     );
@@ -1454,6 +1585,8 @@ function App() {
     setTtsPlaying(false);
     liveTtsPlaybackRef.current = false;
     setInterpreterMode(false);
+    setInterpreterSocketOpen(false);
+    setLiveSpeechSession(false);
     setPipelineStage('Stopped');
     setStatus(nextStatus);
     return true;
@@ -1555,7 +1688,7 @@ function App() {
     setPartialTranscript('');
     setLiveTranslation('');
     setStreaming(true);
-    setInstantListening(false);
+    setInstantListening(true);
     setProcessing(false);
     setPipelineStage('Listening');
     setStatus('Listening live...');
@@ -1687,14 +1820,26 @@ function App() {
       return;
     }
 
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      resumeMicAfterVoicePlayback();
+      setStreaming(true);
+      setInstantListening(true);
+      setPipelineStage('Listening');
+      setStatus('Listening — speak anytime');
+      return;
+    }
+
     setStatus('Ready to listen');
     setPipelineStage('Ready to listen');
-    window.setTimeout(() => {
-      const latest = appStateRef.current;
-      if (!latest.interpreterMode || latest.speakerMode !== 'auto') return;
-      if (socketRef.current || speechFastPathActiveRef.current || latest.recording || latest.processing || latest.playing) return;
-      toggleStreaming({ interpreter: true, speakerMode: 'auto' });
-    }, 450);
+    ensureAuthToken()
+      .then(() => toggleStreaming({ interpreter: true, speakerMode: 'auto' }))
+      .catch(() => {});
+  }
+
+  function handleStopListening() {
+    if (!socketRef.current && !liveSpeechSessionRef.current) return;
+    haptic(8);
+    stopContinuousStream();
   }
 
   async function handleMicClick() {
@@ -1704,22 +1849,73 @@ function App() {
       return;
     }
     synchronousAudioUnlock();
+    if (autoConversation.active) {
+      haptic(8);
+      if (socketRef.current) stopContinuousStream();
+      stopBrowserSpeechFastPath();
+      autoConversation.stop();
+      autoTurnSyncRef.current = 0;
+      setInstantListening(false);
+      setStreaming(false);
+      setInterpreterMode(false);
+      setProcessing(false);
+      setPlaying(false);
+      setPipelineStage('Stopped');
+      setStatus('Interpreter stopped');
+      setLiveSpeechSession(false);
+      return;
+    }
+    if (socketRef.current && liveSpeechSessionRef.current) {
+      haptic(6);
+      scheduleStatusUpdate('Listening', 'Still listening — just speak');
+      restoreLiveListeningAfterVoice();
+      return;
+    }
     if (socketRef.current) {
       haptic(8);
       setInstantListening(false);
       stopContinuousStream();
       return;
     }
-    if (stopBrowserSpeechFastPath()) return;
-    if (isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING) {
-      haptic(recording ? 8 : 14);
-      if (recording) stopRecording();
-      else startRecording();
+    if (liveSpeechSessionRef.current) {
+      haptic(14);
+      setInstantListening(true);
+      setInterpreterMode(true);
+      setSpeakerMode('auto');
+      try {
+        await ensureAuthToken();
+        await requestMicPermission();
+        toggleStreaming({ interpreter: true, speakerMode: 'auto' });
+      } catch (error) {
+        setStatus(error?.message || 'Could not resume live speech recognition');
+        setLiveSpeechSession(false);
+      }
+      return;
+    }
+    stopBrowserSpeechFastPath();
+    if (connectionStatus !== 'online' && connectionStatus !== 'warming') {
+      setStatus('Connect to the server first');
+      setPipelineStage('Offline');
       return;
     }
     haptic(14);
+    setLiveSpeechSession(true);
     setInstantListening(true);
-    toggleStreaming({ interpreter: true, speakerMode: 'auto' });
+    setInterpreterMode(true);
+    setSpeakerMode('auto');
+    try {
+      await ensureAuthToken();
+      await requestMicPermission();
+      requestWakeLock();
+      if (autoConversation.active) autoConversation.stop();
+      toggleStreaming({ interpreter: true, speakerMode: 'auto' });
+    } catch (error) {
+      setStatus(error?.message || 'Could not start live speech recognition');
+      setPipelineStage('Mic unavailable');
+      setInstantListening(false);
+      setInterpreterMode(false);
+      setLiveSpeechSession(false);
+    }
   }
 
   async function handleMicPointerDown(event) {
@@ -1744,7 +1940,6 @@ function App() {
       holdToTalkTimerRef.current = null;
     }
     if (!holdToTalkActiveRef.current) {
-      setInstantListening(false);
       return;
     }
     haptic([8, 24, 8]);
@@ -2029,12 +2224,16 @@ function App() {
       if (streamFinalizePendingRef.current && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'finalize' }));
       }
-      stopTracks(stream);
+      const intentionalStop = !liveSpeechSessionRef.current || streamFinalizePendingRef.current;
+      if (intentionalStop) {
+        stopTracks(stream);
+      }
     };
     socket.onopen = () => {
       if (streamSafetyTimeoutRef.current) window.clearTimeout(streamSafetyTimeoutRef.current);
       streamSafetyTimeoutRef.current = window.setTimeout(() => {
-        resetStreamState();
+        const preserveInterpreter = streamReconnectRef.current.enabled && Boolean(streamReconnectRef.current.options?.interpreter);
+        resetStreamState({ preserveInterpreter });
         disableStreamReconnect();
         clearStreamHeartbeat();
         audioSendQueueRef.current = [];
@@ -2048,8 +2247,11 @@ function App() {
       }, 15000);
       streamFinalizePendingRef.current = false;
       setConnectionStatus('online');
+      setInterpreterSocketOpen(true);
+      setLiveSpeechSession(true);
+      try { sessionStorage.setItem('anai_auto_listen_enabled', '1'); } catch {}
       setStreaming(true);
-      setInstantListening(false);
+      setInstantListening(Boolean(cleanOptions.interpreter || selectedSpeakerMode === 'auto'));
       setResult(null);
       setPartialTranscript('');
       setLiveTranslation('');
@@ -2156,11 +2358,14 @@ function App() {
       }
       if (data.type === 'partial_transcription') {
         rememberSpeaker(data);
-        setPartialTranscript(data.text);
+        const text = String(data.text || '').trim();
+        if (text && !/^(waiting for speech|preparing audio)/i.test(text)) {
+          schedulePartialTranscript(text);
+        }
       }
       if (data.type === 'partial_translation') {
         rememberSpeaker(data);
-        setLiveTranslation(data.text);
+        scheduleLiveTranslation(data.text);
         setPipelineStage('Live translation');
       }
       if (data.type === 'final_transcription') {
@@ -2226,9 +2431,10 @@ function App() {
         setPlaying(true);
         setPipelineStage(`Streaming voice: 0/${data.chunks}`);
         if (!data.partial && isIosOrSafariRecorder() && EXPERIMENTAL_IOS_STREAMING && !shouldKeepContinuousStream(socket)) {
-          // Pause mic capture to route audio to speaker reliably on iOS
           resumeAfterTtsRef.current = true;
           finalizeCurrentStream('Playing voice...', { delay: false });
+        } else if (shouldKeepContinuousStream(socket)) {
+          pauseMicForVoicePlayback();
         }
       }
       if (data.type === 'tts_audio_chunk') {
@@ -2295,10 +2501,7 @@ function App() {
               // Nothing played — update UI to reflect completion
               setPlaying(false);
               setTtsPlaying(false);
-              if (shouldKeepContinuousStream(socket)) {
-                setPipelineStage('Listening');
-                setStatus('Listening for the next speaker...');
-              } else {
+              if (!resumeInterpreterListeningUI('Listening for the next speaker...')) {
                 setPipelineStage('Voice played');
                 setStatus('Voice played');
               }
@@ -2313,10 +2516,7 @@ function App() {
                 setPlaying(false);
                 setTtsPlaying(false);
                 resumeMicAfterVoicePlayback();
-                if (shouldKeepContinuousStream(socket)) {
-                  setPipelineStage('Listening');
-                  setStatus('Listening for the next speaker...');
-                } else {
+                if (!resumeInterpreterListeningUI('Listening for the next speaker...')) {
                   setPipelineStage('Voice played');
                   setStatus('Voice played');
                 }
@@ -2365,6 +2565,7 @@ function App() {
         audioSendQueueRef.current = [];
         releaseWakeLock();
         resetStreamState();
+        setLiveSpeechSession(false);
         setPipelineStage('Hold and speak longer');
         setStatus(message || 'Stream failed');
         streamFinalizePendingRef.current = false;
@@ -2376,7 +2577,9 @@ function App() {
       }
       if (data.type === 'vad' && data.speech_detected) setStatus('Streaming audio... speech detected');
       if (data.type === 'final') {
-        const keepContinuous = shouldKeepContinuousStream(socket);
+        const keepContinuous = liveSpeechSessionRef.current
+          || shouldKeepContinuousStream(socket)
+          || (appStateRef.current.interpreterMode && appStateRef.current.speakerMode === 'auto');
         if (!keepContinuous) {
           disableStreamReconnect();
           clearStreamHeartbeat();
@@ -2395,18 +2598,41 @@ function App() {
         streamFinalizePendingRef.current = false;
         if (keepContinuous) {
           setStreaming(true);
-          setInstantListening(false);
+          setInstantListening(true);
           if (!ttsPlayingRef.current && !appStateRef.current.playing) {
-            setPipelineStage(data.clarify ? 'Clarification needed' : 'Listening');
-            setStatus(brainUpdate?.message || (data.clarify ? 'Clarification needed. Listening...' : 'Listening for the next speaker...'));
+            scheduleStatusUpdate(
+              data.clarify ? 'Clarification needed' : 'Listening',
+              brainUpdate?.message || (data.clarify ? 'Clarification needed. Keep speaking...' : 'Listening — speak anytime'),
+            );
+          }
+          const activeRecorder = streamRecorderRef.current;
+          if (activeRecorder?.state === 'paused' && typeof activeRecorder.resume === 'function') {
+            try { activeRecorder.resume(); } catch {}
+          } else if (activeRecorder?.state === 'inactive' && activeRecorder.stream) {
+            try {
+              const replacement = createAudioRecorder(activeRecorder.stream);
+              replacement.ondataavailable = (event) => {
+                sendRecorderChunk(socket, event, replacement).catch((err) => {
+                  console.error('sendRecorderChunk error:', err);
+                });
+              };
+              replacement.onstop = recorder.onstop;
+              replacement.start(activePacketMs());
+              streamRecorderRef.current = replacement;
+              startMicMeter(activeRecorder.stream);
+            } catch (restartErr) {
+              console.warn('Live recorder restart failed:', restartErr);
+            }
           }
           return;
         }
         setPipelineStage('Complete');
         setStatus(brainUpdate?.message || 'Stream translated');
+        setLiveSpeechSession(false);
         if (streamRecorderRef.current?.state === 'recording') {
           streamRecorderRef.current.stop();
         }
+        setInterpreterSocketOpen(false);
         socket.close();
         socketRef.current = null;
       }
@@ -2417,7 +2643,8 @@ function App() {
       setPipelineStage('Connection error');
       releaseWakeLock();
       stopBrowserSpeechFastPath();
-      resetStreamState();
+      const preserveInterpreter = streamReconnectRef.current.enabled && Boolean(streamReconnectRef.current.options?.interpreter);
+      resetStreamState({ preserveInterpreter });
       if (streamRecorderRef.current?.state === 'recording') streamRecorderRef.current.stop();
       else stopTracks(stream);
     };
@@ -2429,7 +2656,8 @@ function App() {
       clearStreamHeartbeat();
       releaseWakeLock();
       stopBrowserSpeechFastPath();
-      resetStreamState();
+      const preserveInterpreter = streamReconnectRef.current.enabled && Boolean(streamReconnectRef.current.options?.interpreter);
+      resetStreamState({ preserveInterpreter });
       streamFinalizePendingRef.current = false;
       holdToTalkReleasePendingRef.current = false;
       if (streamRecorderRef.current === recorder) {
@@ -2443,12 +2671,16 @@ function App() {
         stopTracks(stream);
       }
       if (socketRef.current === socket) socketRef.current = null;
-      if (!streamReconnectRef.current.enabled) return;
+      if (!streamReconnectRef.current.enabled) {
+        setInterpreterSocketOpen(false);
+        return;
+      }
 
       if (streamReconnectRef.current.attempts >= STREAM_RECONNECT_MAX_ATTEMPTS) {
         disableStreamReconnect();
         audioSendQueueRef.current = [];
         releaseWakeLock();
+        setLiveSpeechSession(false);
         setStatus('Connection lost. Tap to restart.');
         setPipelineStage('Connection lost');
         setConnectionStatus('offline');
@@ -2457,15 +2689,22 @@ function App() {
 
       streamReconnectRef.current.attempts += 1;
       const attempt = streamReconnectRef.current.attempts;
-      const exponentialDelay = Math.min(
-        STREAM_RECONNECT_MS * Math.pow(2, attempt - 1),
-        STREAM_RECONNECT_MAX_DELAY_MS
+      const fastReconnect = liveSpeechSessionRef.current;
+      const exponentialDelay = fastReconnect
+        ? 120
+        : Math.min(STREAM_RECONNECT_MS * Math.pow(2, attempt - 1), STREAM_RECONNECT_MAX_DELAY_MS);
+      scheduleStatusUpdate(
+        fastReconnect ? 'Listening' : `Reconnecting ${attempt}/${STREAM_RECONNECT_MAX_ATTEMPTS}`,
+        fastReconnect ? 'Reconnecting — keep speaking...' : 'Reconnecting stream...',
       );
-      setStatus('Reconnecting stream...');
-      setPipelineStage(`Reconnecting ${attempt}/${STREAM_RECONNECT_MAX_ATTEMPTS} (${Math.round(exponentialDelay / 1000)}s)`);
       window.setTimeout(() => {
         if (!streamReconnectRef.current.enabled || socketRef.current) return;
-        toggleStreaming({ ...(streamReconnectRef.current.options || {}), reconnect: true });
+        toggleStreaming({
+          ...(streamReconnectRef.current.options || {}),
+          interpreter: true,
+          speakerMode: 'auto',
+          reconnect: true,
+        });
       }, exponentialDelay);
     };
   }
@@ -2551,6 +2790,7 @@ function App() {
       }
       resumeMicAfterVoicePlayback();
       playNextTtsChunk();
+      restoreLiveListeningAfterVoice();
     };
     const finishBrowserFallback = () => {
       if (finished) return;
@@ -2574,15 +2814,7 @@ function App() {
         return;
       }
       resumeMicAfterVoicePlayback();
-      if (socketRef.current && shouldKeepContinuousStream(socketRef.current)) {
-        setPlaying(false);
-        setPipelineStage('Listening');
-        setStatus('Listening live...');
-      } else {
-        setPlaying(false);
-        setPipelineStage('Ready to listen');
-        setStatus('Ready to listen');
-      }
+      restoreLiveListeningAfterVoice();
     };
     const tryBrowserSpeechFallback = (error) => {
       const fallbackText = String(item.text || '').trim();
@@ -3160,10 +3392,7 @@ function App() {
         setPlaying(false);
         gainNode.gain.setValueAtTime(0, context.currentTime);
         resumeMicAfterVoicePlayback();
-        if (socketRef.current && shouldKeepContinuousStream(socketRef.current)) {
-          setPipelineStage('Listening');
-          setStatus('Listening live...');
-        } else {
+        if (!resumeInterpreterListeningUI('Listening live...')) {
           setPipelineStage('Ready to listen');
           setStatus('Ready to listen');
         }
@@ -3187,10 +3416,7 @@ function App() {
       if (!ttsPlayingRef.current && appStateRef.current.playing) {
         setPlaying(false);
         setTtsQueueLength(0);
-        if (socketRef.current && shouldKeepContinuousStream(socketRef.current)) {
-          setPipelineStage('Listening');
-          setStatus('Listening live...');
-        } else {
+        if (!resumeInterpreterListeningUI('Listening live...')) {
           setPipelineStage('Ready to listen');
           setStatus('Ready to listen');
         }
@@ -3443,7 +3669,9 @@ function App() {
   const hasTranslatedText = Boolean(liveTranslation || result?.translated_text);
   const sourceText = partialTranscript || result?.source_text || (hasSourceText ? '' : 'Your words will appear here');
   const translatedText = liveTranslation || result?.translated_text || (hasTranslatedText ? '' : 'Translation will appear here');
-  const perceivedListening = streaming || instantListening;
+  const interpreterSessionLive = interpreterMode && speakerMode === 'auto' && interpreterSocketOpen;
+  const perceivedListening = liveSpeechSession || interpreterSessionLive || streaming || instantListening;
+  const displayMicLevel = micLevel;
   const micReady = connectionStatus === 'online' && micPermission !== 'denied' && micPermission !== 'unavailable';
   const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
   const micLabel = connectionStatus === 'checking'
@@ -3453,12 +3681,12 @@ function App() {
       : !micReady
     ? (connectionStatus !== 'online' ? 'Server offline' : 'Mic unavailable')
     : playing
-      ? 'Speaking'
-      : streaming
-        ? 'Listening'
+      ? 'Speaking translation'
+      : perceivedListening
+        ? 'Listening — speak anytime'
         : processing
-          ? 'Processing'
-          : 'Tap to start';
+          ? 'Translating…'
+          : 'Tap mic to start';
   const rawStatusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
   const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
   const activeSpeakerLabel = detectedSpeaker && detectedSpeaker !== '-' && detectedSpeaker !== 'Person' ? detectedSpeaker : '';
@@ -3495,13 +3723,13 @@ function App() {
   const speakerSummary = showFriendlyStatus ? '' : activeSpeakerLabel;
   const displayTimingLabel = showFriendlyStatus ? '' : timingLabel;
   const micHint = perceivedListening
-    ? 'Listening now — speak naturally'
+    ? 'Just speak — use Stop listening below when you are done'
     : processing
       ? 'Translating your speech…'
       : playing
-        ? 'Playing translated voice'
+        ? 'Playing translated voice — mic resumes automatically'
         : connectionStatus === 'online'
-          ? 'Tap the mic, then speak'
+          ? 'Tap once to start live speech recognition'
           : 'Connect to the server to begin';
   const visibleRepairOptions = (brainUi.repairOptions || []).slice(0, 3);
   const visibleHighlightTerms = (brainUi.highlightTerms || []).slice(0, 5);
@@ -3510,19 +3738,19 @@ function App() {
   const transcriptState = hasSourceText ? (perceivedListening ? 'live' : 'filled') : 'empty';
   const translationState = hasTranslatedText ? ((playing || ttsPlaying) ? 'speaking' : 'filled') : 'empty';
   const liveHudItems = [
-    { key: 'listen', label: 'Hear', Icon: Radio, active: perceivedListening, level: micLevel },
+    { key: 'listen', label: 'Hear', Icon: Radio, active: perceivedListening, level: displayMicLevel },
     { key: 'ai', label: 'AI', Icon: Sparkles, active: liveAssistActive || brainUi.visible },
     { key: 'translate', label: 'Text', Icon: Languages, active: Boolean(liveTranslation) || /translat/i.test(rawStatusText || '') },
     { key: 'voice', label: 'Voice', Icon: Volume2, active: playing || ttsPlaying || ttsQueueLength > 0 },
   ];
-  const hasVisibleConversation = hasSourceText || hasTranslatedText || recentConversationTurns.length > 0 || clarifyVisible || brainUi.visible;
+  const hasVisibleConversation = perceivedListening || hasSourceText || hasTranslatedText || recentConversationTurns.length > 0 || clarifyVisible || brainUi.visible;
   const isTextTranslating = processing && textInputMode;
   const showConnectionQuality =
     connectionStatus !== 'online' ||
-    (Number.isFinite(latencySummary.average) && latencySummary.average >= 450);
+    (streamReconnectRef.current?.attempts > 0 && connectionStatus === 'online');
   const showInstallNudge = showInstallAction && hasTranslatedText && !installNudgeDismissed;
   const showIosMicHint = isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING && connectionStatus === 'online';
-  const quickActions = [
+  const quickActions = perceivedListening ? [] : [
     {
       key: 'type',
       label: 'Type',
@@ -3595,64 +3823,71 @@ function App() {
           try { sessionStorage.setItem('anai_ios_mic_hint_dismissed', '1'); } catch {}
         }}
       />
-      <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
-        <AppHeader
-          connectionStatus={connectionStatus}
-          shareConversationRoom={shareConversationRoom}
-          copiedKey={copiedKey}
-          showInstallAction={showInstallAction}
-          installApp={installApp}
-          volume={volume}
-          onVolumeChange={handleVolumeChange}
-          onOpenSettings={() => setSettingsOpen(true)}
-          updateAvailable={updateAvailable}
-          apiUrl={liveApiUrl}
-          diagnostics={diagnostics}
-        />
-        {showConnectionQuality && (
-          <ConnectionQualityIndicator
+      <section
+        className={`phone-frame${hasVisibleConversation ? ' has-conversation' : ''}${perceivedListening ? ' is-listening' : ''}`}
+        data-connection={connectionStatus}
+        data-smoke-check="Self Test"
+        id="main-content"
+      >
+        <div className="phone-top-bar">
+          <AppHeader
             connectionStatus={connectionStatus}
-            latencyMs={latencySummary.average}
-            reconnectAttempt={streamReconnectRef.current || 0}
-            maxReconnectAttempts={STREAM_RECONNECT_MAX_ATTEMPTS}
-            isReconnecting={streaming && connectionStatus !== 'online'}
+            shareConversationRoom={shareConversationRoom}
+            copiedKey={copiedKey}
+            showInstallAction={showInstallAction}
+            installApp={installApp}
+            volume={volume}
+            onVolumeChange={handleVolumeChange}
+            onOpenSettings={() => setSettingsOpen(true)}
+            updateAvailable={updateAvailable}
+            apiUrl={liveApiUrl}
+            diagnostics={diagnostics}
           />
-        )}
-
-        {currentError && (
-          <UserFriendlyError
-            errorCode={currentError}
-            onDismiss={handleDismissError}
-            onRetry={handleRetryError}
+          {showConnectionQuality && (
+            <ConnectionQualityIndicator
+              connectionStatus={connectionStatus}
+              latencyMs={latencySummary.average}
+              reconnectAttempt={streamReconnectRef.current || 0}
+              maxReconnectAttempts={STREAM_RECONNECT_MAX_ATTEMPTS}
+              isReconnecting={streaming && connectionStatus !== 'online'}
+            />
+          )}
+          {currentError && (
+            <UserFriendlyError
+              errorCode={currentError}
+              onDismiss={handleDismissError}
+              onRetry={handleRetryError}
+            />
+          )}
+          <LanguageDock
+            sourceLanguageLabel={sourceLanguageLabel}
+            targetLanguageLabel={targetLanguageLabel}
+            sourceLanguage={sourceLanguage}
+            targetLanguage={targetLanguage}
+            setSourceLanguage={setSourceLanguage}
+            setTargetLanguage={setTargetLanguage}
+            recording={recording}
+            processing={processing}
+            streaming={perceivedListening}
+            brainUi={brainUi}
+            quickActions={quickActions}
           />
-        )}
-
-        {/* Unified view: mic + translation + conversation history — auto speaker detection */}
-        <LanguageDock
-          sourceLanguageLabel={sourceLanguageLabel}
-          targetLanguageLabel={targetLanguageLabel}
-          sourceLanguage={sourceLanguage}
-          targetLanguage={targetLanguage}
-          setSourceLanguage={setSourceLanguage}
-          setTargetLanguage={setTargetLanguage}
-          recording={recording}
-          processing={processing}
-          brainUi={brainUi}
-          quickActions={quickActions}
-        />
+        </div>
+        <div className="speech-workspace">
         <MicPanel
           micState={micState}
-          micLevel={micLevel}
+          micLevel={displayMicLevel}
           perceivedListening={perceivedListening}
           micReady={micReady}
           micLabel={micLabel}
           micHint={micHint}
           handleMicClick={handleMicClick}
-          handleMicPointerDown={handleMicPointerDown}
-          handleMicPointerUp={handleMicPointerUp}
+          onStopListening={handleStopListening}
+          handleMicPointerDown={null}
+          handleMicPointerUp={null}
           playing={playing}
           processing={processing}
-          streaming={streaming}
+          streaming={perceivedListening}
           recording={recording}
           liveHudMode={liveHudMode}
           liveHudItems={liveHudItems}
@@ -3708,11 +3943,11 @@ function App() {
           setPipelineStage={setPipelineStage}
           setStatus={setStatus}
           haptic={haptic}
-          streaming={streaming}
+          streaming={perceivedListening}
           processing={processing}
           handleMicClick={handleMicClick}
-          enableTypingAnimation={true}
-          isTranslationActive={processing && !streaming}
+          enableTypingAnimation={!perceivedListening}
+          isTranslationActive={processing && !perceivedListening}
           onTextTranslate={(inputText) => translateText(inputText)}
           textInputMode={textInputMode}
           onTextInputModeChange={setTextInputMode}
@@ -3723,6 +3958,7 @@ function App() {
           onOpenSettings={() => setSettingsOpen(true)}
           onOfflineRetry={retryBackendConnection}
         />
+        </div>
         <SettingsPanel
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}

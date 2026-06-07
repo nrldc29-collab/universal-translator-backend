@@ -46,7 +46,34 @@ def _get_ollama_models() -> list:
         return []
 
 
+def _ollama_generate_works() -> bool:
+    """Tags can succeed while /api/generate is broken — gate LLM-dependent tests."""
+    if not _ollama_is_reachable():
+        return False
+    try:
+        from urllib.request import Request, urlopen
+        model = (_get_ollama_models() or ["llama3.2:3b"])[0].split(":")[0]
+        payload = json.dumps({
+            "model": model,
+            "prompt": "Reply with exactly: ok",
+            "stream": False,
+            "options": {"num_predict": 8},
+        }).encode("utf-8")
+        req = Request(
+            "http://localhost:11434/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "AnaiTranslator/test"},
+            method="POST",
+        )
+        with urlopen(req, timeout=20.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return bool((data.get("response") or "").strip())
+    except Exception:
+        return False
+
+
 OLLAMA_REACHABLE = _ollama_is_reachable()
+OLLAMA_GENERATE_WORKS = _ollama_generate_works()
 OLLAMA_MODELS = _get_ollama_models()
 
 
@@ -117,7 +144,7 @@ class TestOllamaBridgeRouting:
 
         bridge._try_ollama = original_try_ollama
 
-    @pytest.mark.skipif(not OLLAMA_REACHABLE, reason="Ollama not running")
+    @pytest.mark.skipif(not OLLAMA_GENERATE_WORKS, reason="Ollama generate API unavailable")
     def test_try_ollama_real_call(self):
         """Real Ollama call returns a non-empty response."""
         from ailang_integration.runtime.bridge import AILangBridge
@@ -319,7 +346,7 @@ class TestOllamaWarmup:
             result = await _warm_ollama()
             assert result["status"] == "cloud_mode"
 
-    @pytest.mark.skipif(not OLLAMA_REACHABLE, reason="Ollama not running")
+    @pytest.mark.skipif(not OLLAMA_GENERATE_WORKS, reason="Ollama generate API unavailable")
     @pytest.mark.asyncio
     async def test_warmup_active_real(self):
         """With Ollama running, warmup returns active status."""
@@ -361,7 +388,7 @@ class TestOllamaHealthEndpoint:
         assert "model" in data
         assert "warmup" in data
 
-    @pytest.mark.skipif(not OLLAMA_REACHABLE, reason="Ollama not running")
+    @pytest.mark.skipif(not OLLAMA_GENERATE_WORKS, reason="Ollama generate API unavailable")
     def test_health_ollama_reachable(self, client):
         """When Ollama is running, endpoint shows reachable and model loaded."""
         resp = client.get("/health/ollama")

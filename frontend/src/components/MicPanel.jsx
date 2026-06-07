@@ -7,7 +7,7 @@ import ThinkingIndicator from './ThinkingIndicator';
 
 export default function MicPanel({
   micState, micLevel, perceivedListening, micLabel, micHint, micReady = true,
-  handleMicClick, handleMicPointerDown, handleMicPointerUp,
+  handleMicClick, onStopListening, handleMicPointerDown, handleMicPointerUp,
   playing, processing, streaming, recording,
   liveHudMode, liveHudItems = [],
   statusTone, statusText, statusDetail, speakerSummary, timingLabel,
@@ -25,11 +25,12 @@ export default function MicPanel({
         className={`mic-orb ${micState} ${perceivedListening ? 'listening-pulse' : ''} ${!micReady ? 'unavailable' : ''}`}
         style={{ '--voice-level': Math.max(0.02, Math.min(1, micLevel || 0)) }}
         onClick={handleMicClick}
-        onPointerDown={handleMicPointerDown}
-        onPointerUp={handleMicPointerUp}
-        onPointerCancel={handleMicPointerUp}
+        onPointerDown={handleMicPointerDown || undefined}
+        onPointerUp={handleMicPointerUp || undefined}
+        onPointerCancel={handleMicPointerUp || undefined}
         onContextMenu={e => e.preventDefault()}
-        disabled={!micReady || playing || (processing && !streaming)}
+        disabled={!micReady}
+        aria-pressed={streaming || recording}
         aria-label={micLabel}
         aria-live="polite"
         type="button"
@@ -58,22 +59,37 @@ export default function MicPanel({
         <ThinkingIndicator stage="translating" message="Working on your translation…" className="mic-thinking" />
       )}
 
-      {/* Live HUD */}
-      <LiveHud mode={liveHudMode} items={liveHudItems} />
+      {!perceivedListening && (
+        <LiveHud mode={liveHudMode} items={liveHudItems} />
+      )}
 
-      {/* Voice meter */}
-      {(streaming || recording) && <VoiceMeter micLevel={micLevel} />}
+      {!perceivedListening && (streaming || recording) && <VoiceMeter micLevel={micLevel} />}
 
-      {/* Status */}
-      <StatusPanel
-        tone={statusTone}
-        text={statusText}
-        detail={statusDetail}
-        speakerSummary={speakerSummary}
-        timingLabel={timingLabel}
-        onToggle={onStatusToggle}
-        showFriendlyStatus={showFriendlyStatus}
-      />
+      {!perceivedListening ? (
+        <StatusPanel
+          tone={statusTone}
+          text={statusText}
+          detail={statusDetail}
+          speakerSummary={speakerSummary}
+          timingLabel={timingLabel}
+          onToggle={onStatusToggle}
+          showFriendlyStatus={showFriendlyStatus}
+        />
+      ) : (
+        <>
+          <div className="status-panel status-panel-live" data-tone="listening" aria-live="polite">
+            <div className="status-primary">
+              <Activity size={13} strokeWidth={2.6} aria-hidden="true" />
+              <span>Live — speak anytime</span>
+            </div>
+          </div>
+          {onStopListening && (
+            <button type="button" className="stop-listening-btn" onClick={onStopListening}>
+              Stop listening
+            </button>
+          )}
+        </>
+      )}
 
       {/* Replay fallback */}
       {audioReplayAvailable && autoPlayFailed && (

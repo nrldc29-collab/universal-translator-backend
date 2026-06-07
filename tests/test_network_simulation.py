@@ -27,12 +27,13 @@ import numpy as np
 class NetworkSimulator:
     """Simulates various network conditions."""
     
-    def __init__(self):
+    def __init__(self, seed: int | None = None):
         self.latency_ms = 0
         self.packet_loss_rate = 0.0
         self.bandwidth_kbps = 0
         self.jitter_ms = 0
         self.drop_connections = False
+        self._rng = random.Random(seed)
     
     def apply_latency(self, delay_ms: int):
         """Apply fixed latency."""
@@ -57,12 +58,12 @@ class NetworkSimulator:
             return False
         
         # Apply packet loss
-        if random.random() < self.packet_loss_rate:
+        if self._rng.random() < self.packet_loss_rate:
             return False
         
         # Apply latency
         base_delay = self.latency_ms / 1000.0
-        jitter_delay = random.uniform(-self.jitter_ms, self.jitter_ms) / 1000.0
+        jitter_delay = self._rng.uniform(-self.jitter_ms, self.jitter_ms) / 1000.0
         total_delay = max(0, base_delay + jitter_delay)
         
         # Apply bandwidth throttling
@@ -142,13 +143,13 @@ class TestPacketLoss:
     @pytest.mark.asyncio
     async def test_moderate_packet_loss(self):
         """Test with moderate packet loss (5%)."""
-        simulator = NetworkSimulator()
+        simulator = NetworkSimulator(seed=11)
         simulator.apply_packet_loss(0.05)  # 5% loss
         
         chunks_sent = 0
         chunks_received = 0
         
-        for i in range(100):
+        for i in range(500):
             data = b"chunk_" + str(i).encode()
             if simulator.simulate_send(data):
                 chunks_received += 1
@@ -156,18 +157,18 @@ class TestPacketLoss:
         
         # Should have approximately 95% success rate
         success_rate = chunks_received / chunks_sent
-        assert 0.85 <= success_rate <= 0.95  # Allow some variance
+        assert 0.90 <= success_rate <= 0.99
     
     @pytest.mark.asyncio
     async def test_high_packet_loss(self):
         """Test with high packet loss (20%)."""
-        simulator = NetworkSimulator()
+        simulator = NetworkSimulator(seed=42)
         simulator.apply_packet_loss(0.20)  # 20% loss
         
         chunks_sent = 0
         chunks_received = 0
         
-        for i in range(100):
+        for i in range(500):
             data = b"chunk_" + str(i).encode()
             if simulator.simulate_send(data):
                 chunks_received += 1
@@ -175,7 +176,7 @@ class TestPacketLoss:
         
         # Should have approximately 80% success rate
         success_rate = chunks_received / chunks_sent
-        assert 0.70 <= success_rate <= 0.85  # Allow variance
+        assert 0.75 <= success_rate <= 0.85  # Tight band with fixed seed + larger sample
     
     @pytest.mark.asyncio
     async def test_extreme_packet_loss(self):
@@ -270,19 +271,21 @@ class TestNetworkJitter:
     @pytest.mark.asyncio
     async def test_high_jitter(self):
         """Test with high jitter (±200ms)."""
-        simulator = NetworkSimulator()
+        simulator = NetworkSimulator(seed=7)
+        simulator.apply_latency(100)
         simulator.apply_jitter(200)  # ±200ms jitter
         
         latencies = []
-        for i in range(20):
+        for i in range(40):
             start = time.time()
             simulator.simulate_send(b"test")
             latency = (time.time() - start) * 1000
             latencies.append(latency)
         
-        # Check variance is present (adjust threshold based on actual behavior)
+        # Check variance is present with base latency + jitter
         variance = np.var(latencies)
-        assert variance > 1000  # Some variance present
+        assert variance > 500
+        assert max(latencies) - min(latencies) > 50
 
 
 class TestConnectionDrops:

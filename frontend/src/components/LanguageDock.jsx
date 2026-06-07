@@ -1,130 +1,125 @@
 /**
- * LanguageDock -- language pair display with grouped dropdowns for both languages.
+ * LanguageDock — compact language pair + bottom-sheet picker (speech-first layout).
  */
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowLeftRight, ChevronDown, Check, Search } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import { ArrowLeftRight, ChevronDown, Check, Search, X } from 'lucide-react';
 import { TARGET_LANGUAGE_OPTIONS } from '../utils';
 
-const GROUPS = [
-  { label: 'Popular',  codes: ['en','es','fr','pt','ht'] },
-  { label: 'European', codes: ['de','it','nl','ru'] },
-  { label: 'Asian',    codes: ['zh','ja','ko','hi'] },
-  { label: 'Other',    codes: ['ar'] },
-];
-
-function buildGrouped() {
-  const byCode = Object.fromEntries(TARGET_LANGUAGE_OPTIONS.map(o => [o.code, o]));
-  return GROUPS.map(g => ({ ...g, options: g.codes.map(c => byCode[c]).filter(Boolean) })).filter(g => g.options.length);
-}
-
-function LangDropdown({ value, onChange, disabled, variant = 'target' }) {
-  const [open, setOpen] = useState(false);
+function LangPickerSheet({ value, onChange, onClose, variant }) {
   const [query, setQuery] = useState('');
-  const ref = useRef(null);
   const searchRef = useRef(null);
-  const allGroups = buildGrouped();
-  const current = TARGET_LANGUAGE_OPTIONS.find(o => o.code === value);
+  const isTarget = variant === 'target';
 
-  const groups = query.trim()
-    ? [{ label: 'Results', options: TARGET_LANGUAGE_OPTIONS.filter(o =>
+  const options = query.trim()
+    ? TARGET_LANGUAGE_OPTIONS.filter((o) =>
         o.label.toLowerCase().includes(query.toLowerCase()) ||
         (o.native && o.native.toLowerCase().includes(query.toLowerCase())) ||
-        o.code.toLowerCase().includes(query.toLowerCase())
-      ) }]
-    : allGroups;
-  const hasOptions = groups.some((g) => g.options.length > 0);
+        o.code.toLowerCase().includes(query.toLowerCase()),
+      )
+    : TARGET_LANGUAGE_OPTIONS;
 
   useEffect(() => {
-    if (!open) { setQuery(''); return; }
-    setTimeout(() => searchRef.current?.focus(), 40);
-    const handleClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    const handleKey = (e) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', handleClick);
-    document.addEventListener('keydown', handleKey);
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyOverflow = document.body.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+    const t = setTimeout(() => searchRef.current?.focus(), 50);
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('mousedown', handleClick);
-      document.removeEventListener('keydown', handleKey);
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.overflow = prevBodyOverflow;
+      clearTimeout(t);
+      document.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [onClose]);
 
+  return createPortal(
+    <>
+      <div className="lang-picker-overlay" onClick={onClose} role="presentation" aria-hidden="true" />
+      <div
+        className={`lang-picker-sheet ${isTarget ? 'target' : 'source'}`}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={isTarget ? 'Choose target language' : 'Choose source language'}
+      >
+        <div className="lang-picker-grab" aria-hidden="true" />
+        <div className="lang-picker-header">
+          <span className="lang-picker-title">
+            {isTarget ? 'Translate to' : 'Speak in'}
+          </span>
+          <button type="button" className="lang-picker-close" onClick={onClose} aria-label="Close">
+            <X size={16} strokeWidth={2.2} />
+          </button>
+        </div>
+        <div className="lang-search-row">
+          <Search size={12} strokeWidth={2.5} className="lang-search-icon" />
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search all 14 languages…"
+            className="lang-search-input"
+          />
+          {query && (
+            <button type="button" className="lang-search-clear" onClick={() => setQuery('')}>×</button>
+          )}
+        </div>
+        <div className="lang-picker-list" role="listbox">
+          {options.length === 0 && (
+            <p className="lang-dropdown-empty" role="status">
+              No languages match &ldquo;{query.trim()}&rdquo;
+            </p>
+          )}
+          {options.map((opt) => {
+            const sel = opt.code === value;
+            return (
+              <button
+                key={opt.code}
+                type="button"
+                role="option"
+                aria-selected={sel}
+                onClick={() => { onChange(opt.code); onClose(); }}
+                className={`lang-option ${sel ? 'selected' : ''}`}
+              >
+                <span className="lang-option-flag">{opt.flag}</span>
+                <div className="lang-option-text">
+                  <div className={`lang-option-name ${sel ? 'selected' : ''}`}>{opt.label}</div>
+                  {opt.native && opt.native !== opt.label && (
+                    <div className="lang-option-native">{opt.native}</div>
+                  )}
+                </div>
+                {sel && <Check size={13} color="#34d399" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+function LangChip({ value, onOpen, disabled, variant = 'target' }) {
+  const current = TARGET_LANGUAGE_OPTIONS.find((o) => o.code === value);
   const isTarget = variant === 'target';
 
   return (
-    <div ref={ref} className="lang-dropdown-wrap">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen(o => !o)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className={`lang-dropdown-trigger ${isTarget ? 'target' : 'source'} ${open ? 'open' : ''}`}
-      >
-        <span className="lang-dropdown-flag">{current?.flag || '🌐'}</span>
-        <span className={`lang-dropdown-label ${isTarget ? 'target' : ''}`}>
-          {current?.label || value}
-        </span>
-        <ChevronDown
-          size={13}
-          strokeWidth={2.2}
-          className={`lang-dropdown-chevron ${open ? 'open' : ''}`}
-        />
-      </button>
-
-      {open && (
-        <div className="lang-dropdown-menu" role="listbox">
-          {/* Search */}
-          <div className="lang-search-row">
-            <Search size={12} strokeWidth={2.5} className="lang-search-icon" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder="Search language…"
-              className="lang-search-input"
-            />
-            {query && (
-              <button type="button" className="lang-search-clear" onClick={() => setQuery('')}>
-                ×
-              </button>
-            )}
-          </div>
-          <div className="lang-dropdown-list">
-            {!hasOptions && (
-              <p className="lang-dropdown-empty" role="status">
-                No languages match &ldquo;{query.trim()}&rdquo;
-              </p>
-            )}
-            {groups.map((g, gi) => (
-              <div key={g.label}>
-                <div className={`lang-group-label ${gi > 0 ? 'bordered' : ''}`}>{g.label}</div>
-                {g.options.map(opt => {
-                  const sel = opt.code === value;
-                  return (
-                    <button
-                      key={opt.code}
-                      type="button"
-                      role="option"
-                      aria-selected={sel}
-                      onClick={() => { onChange(opt.code); setOpen(false); }}
-                      className={`lang-option ${sel ? 'selected' : ''}`}
-                    >
-                      <span className="lang-option-flag">{opt.flag}</span>
-                      <div className="lang-option-text">
-                        <div className={`lang-option-name ${sel ? 'selected' : ''}`}>{opt.label}</div>
-                        {opt.native && opt.native !== opt.label && (
-                          <div className="lang-option-native">{opt.native}</div>
-                        )}
-                      </div>
-                      {sel && <Check size={13} color="#34d399" />}
-                    </button>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onOpen}
+      aria-haspopup="dialog"
+      className={`lang-dropdown-trigger ${isTarget ? 'target' : 'source'}`}
+    >
+      <span className="lang-dropdown-flag">{current?.flag || '🌐'}</span>
+      <span className={`lang-dropdown-label ${isTarget ? 'target' : ''}`}>
+        {current?.label || value}
+      </span>
+      <ChevronDown size={13} strokeWidth={2.2} className="lang-dropdown-chevron" />
+    </button>
   );
 }
 
@@ -137,20 +132,21 @@ export default function LanguageDock({
   setTargetLanguage,
   recording,
   processing,
+  streaming = false,
   brainUi = {},
   quickActions = [],
 }) {
-  const disabled = recording || processing;
+  const disabled = recording;
   const [flipped, setFlipped] = useState(false);
+  const [picker, setPicker] = useState(null);
 
   return (
     <section className="language-dock" data-tour-target="languages" aria-label="Language settings">
       <div className="lang-dock-row">
-        {/* Source language */}
         {setSourceLanguage ? (
-          <LangDropdown
+          <LangChip
             value={sourceLanguage}
-            onChange={setSourceLanguage}
+            onOpen={() => setPicker('source')}
             disabled={disabled}
             variant="source"
           />
@@ -160,7 +156,6 @@ export default function LanguageDock({
           </div>
         )}
 
-        {/* Swap button */}
         <button
           type="button"
           disabled={disabled}
@@ -168,7 +163,7 @@ export default function LanguageDock({
           className="lang-swap-btn"
           onClick={() => {
             if (disabled) return;
-            setFlipped(f => !f);
+            setFlipped((f) => !f);
             if (setSourceLanguage) setSourceLanguage(targetLanguage);
             setTargetLanguage(sourceLanguage);
           }}
@@ -180,16 +175,31 @@ export default function LanguageDock({
           />
         </button>
 
-        {/* Target language */}
-        <LangDropdown
+        <LangChip
           value={targetLanguage}
-          onChange={setTargetLanguage}
+          onOpen={() => setPicker('target')}
           disabled={disabled}
           variant="target"
         />
       </div>
 
-      {/* Quick actions */}
+      {picker === 'source' && setSourceLanguage && (
+        <LangPickerSheet
+          value={sourceLanguage}
+          onChange={setSourceLanguage}
+          onClose={() => setPicker(null)}
+          variant="source"
+        />
+      )}
+      {picker === 'target' && (
+        <LangPickerSheet
+          value={targetLanguage}
+          onChange={setTargetLanguage}
+          onClose={() => setPicker(null)}
+          variant="target"
+        />
+      )}
+
       {quickActions.length > 0 && (
         <div className="quick-actions" aria-label="Quick actions">
           {quickActions.map((action) => (
@@ -201,8 +211,8 @@ export default function LanguageDock({
               aria-label={action.label}
               title={action.label}
               className={[
-                action.active  ? 'active'  : '',
-                action.danger  ? 'danger'  : '',
+                action.active ? 'active' : '',
+                action.danger ? 'danger' : '',
               ].filter(Boolean).join(' ') || undefined}
             >
               <action.Icon size={14} strokeWidth={2.5} aria-hidden="true" />

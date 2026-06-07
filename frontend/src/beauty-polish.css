@@ -1032,6 +1032,7 @@
 /* ── Language dock & swap ────────────────────────────────── */
 .language-dock {
   position: relative;
+  z-index: 120;
 }
 
 .lang-swap-btn:not(:disabled):active {

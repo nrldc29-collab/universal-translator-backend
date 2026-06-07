@@ -42,7 +42,7 @@ function Test-Step {
 }
 
 Write-Host "============================================" -ForegroundColor Yellow
-Write-Host "  Universal Translator — Local Verification" -ForegroundColor Yellow
+Write-Host "  Universal Translator - Local Verification" -ForegroundColor Yellow
 Write-Host "============================================" -ForegroundColor Yellow
 Write-Host "Backend: $BackendUrl"
 Write-Host ""
@@ -61,7 +61,7 @@ Test-Step "Backend health check" {
 # -------------------------------------------------------
 # 2. Text translation (lightweight phrase table)
 # -------------------------------------------------------
-Test-Step "Text translation — 'hello' -> Spanish" {
+Test-Step "Text translation - 'hello' -> Spanish" {
     $body = @{ text = "hello"; source_language = "en"; target_language = "es" } | ConvertTo-Json
     $resp = Invoke-RestMethod -Uri "$BackendUrl/translate/text" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 10
     Write-Host "  Source: $($resp.source_text)"
@@ -70,16 +70,16 @@ Test-Step "Text translation — 'hello' -> Spanish" {
 }
 
 # -------------------------------------------------------
-# 3. Text translation (longer phrase — tests remote/marian tier)
+# 3. Text translation (longer phrase - tests remote/marian tier)
 # -------------------------------------------------------
-Test-Step "Text translation — longer phrase" {
+Test-Step "Text translation - longer phrase" {
     $body = @{ text = "The weather is beautiful today and I am very happy"; source_language = "en"; target_language = "es" } | ConvertTo-Json
     $resp = Invoke-RestMethod -Uri "$BackendUrl/translate/text" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 15
     Write-Host "  Source: $($resp.source_text)"
     Write-Host "  Translated: $($resp.translated_text)"
     $isPlaceholder = $resp.translated_text -match "^\[en->es\]"
     if ($isPlaceholder) {
-        Write-Host "  WARNING: Got placeholder — remote and local ML both unavailable" -ForegroundColor Yellow
+        Write-Host "  WARNING: Got placeholder - remote and local ML both unavailable" -ForegroundColor Yellow
     }
     return ($resp.translated_text.Length -gt 0)
 }
@@ -163,7 +163,7 @@ Test-Step "Full text pipeline (translate + TTS)" {
 # -------------------------------------------------------
 # 9. Reverse translation (Spanish -> English)
 # -------------------------------------------------------
-Test-Step "Reverse translation — 'hola' -> English" {
+Test-Step "Reverse translation - 'hola' -> English" {
     $body = @{ text = "hola"; source_language = "es"; target_language = "en" } | ConvertTo-Json
     $resp = Invoke-RestMethod -Uri "$BackendUrl/translate/text" -Method POST -Body $body -ContentType "application/json" -TimeoutSec 10
     Write-Host "  Translated: $($resp.translated_text)"
@@ -175,7 +175,7 @@ Test-Step "Reverse translation — 'hola' -> English" {
 # -------------------------------------------------------
 Test-Step "Latency report (post-translation)" {
     $resp = Invoke-RestMethod -Uri "$BackendUrl/latency" -TimeoutSec 5
-    Write-Host "  Health: $($resp.health.status) — $($resp.health.message)"
+    Write-Host "  Health: $($resp.health.status) - $($resp.health.message)"
     if ($resp.summary.total_runs -gt 0) {
         Write-Host "  Avg end-to-end: $($resp.summary.avg_total_ms) ms"
         Write-Host "  P50: $($resp.summary.p50_total_ms) ms"
@@ -184,7 +184,7 @@ Test-Step "Latency report (post-translation)" {
     foreach ($stage in @("stt", "translation", "tts")) {
         $s = $resp.stages.$stage
         if ($s -and $s.count -gt 0) {
-            Write-Host "  $stage — avg: $($s.avg_ms)ms, p95: $($s.p95_ms)ms ($($s.count) calls)"
+            Write-Host "  $stage - avg: $($s.avg_ms)ms, p95: $($s.p95_ms)ms ($($s.count) calls)"
         }
     }
     return $true
@@ -212,6 +212,6 @@ if ($failed -eq 0) {
     Write-Host "  4. If Ollama is running: set OLLAMA_ENABLED=1, OLLAMA_URL=http://localhost:11434"
     Write-Host "  5. Deploy: .\deploy-railway.sh"
 } else {
-    Write-Host "  $failed TEST(S) FAILED — check output above" -ForegroundColor Red
+    Write-Host "  $failed TEST(S) FAILED - check output above" -ForegroundColor Red
 }
 Write-Host ""

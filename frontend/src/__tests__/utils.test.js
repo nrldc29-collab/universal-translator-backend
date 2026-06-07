@@ -222,6 +222,8 @@ describe('speechRecognitionLanguage', () => {
     expect(speechRecognitionLanguage('ht')).toBe('ht-HT');
     expect(speechRecognitionLanguage('fr')).toBe('fr-FR');
     expect(speechRecognitionLanguage('pt')).toBe('pt-BR');
+    expect(speechRecognitionLanguage('nl')).toBe('nl-NL');
+    expect(speechRecognitionLanguage('hi')).toBe('hi-IN');
   });
 
   it('normalizes codes with region suffix', () => {
@@ -250,6 +252,14 @@ describe('detectLanguagePair', () => {
   it('keeps last language on ambiguous short text', () => {
     expect(detectLanguagePair('bezwen èd', 'en', 'ht', 'en')).toBe('ht');
   });
+
+  it('detects Japanese script in a JA↔EN pair', () => {
+    expect(detectLanguagePair('こんにちは', 'en', 'ja', 'en')).toBe('ja');
+  });
+
+  it('detects Spanish in an ES↔FR pair', () => {
+    expect(detectLanguagePair('Hola, gracias por su ayuda', 'es', 'fr', 'fr')).toBe('es');
+  });
 });
 
 // ---------- languagePairNeedsBackendStt ----------
@@ -260,8 +270,15 @@ describe('languagePairNeedsBackendStt', () => {
     expect(languagePairNeedsBackendStt('ht', 'en')).toBe(true);
   });
 
-  it('returns false for non-HT pairs', () => {
+  it('returns true when a script-language side is in the pair', () => {
+    expect(languagePairNeedsBackendStt('en', 'zh')).toBe(true);
+    expect(languagePairNeedsBackendStt('ja', 'es')).toBe(true);
+    expect(languagePairNeedsBackendStt('fr', 'ar')).toBe(true);
+  });
+
+  it('returns false for latin-language pairs', () => {
     expect(languagePairNeedsBackendStt('en', 'es')).toBe(false);
+    expect(languagePairNeedsBackendStt('fr', 'de')).toBe(false);
   });
 });
 

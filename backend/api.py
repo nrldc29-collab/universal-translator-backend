@@ -27,7 +27,7 @@ from slowapi.errors import RateLimitExceeded
 from backend.conversation import ConversationBrain
 from backend.memory import ConversationMemory
 from backend.refine import refine_translation
-from backend.speakers import SpeakerMemory, detect_language_heuristic
+from backend.speakers import SpeakerMemory, detect_language_heuristic, resolve_barrier_route
 from backend.config import (
     LANGUAGES,
     get_allowed_origin_regex,
@@ -63,7 +63,7 @@ from backend.observability import observability
 from backend.security import WEBSOCKET_AUTH_RELEASE, authenticate_http, authenticate_user, authenticate_websocket, usage_limiter
 from backend.sessions import session_registry
 from backend.streaming import websocket_audio_translation, websocket_text_translation
-from backend.streaming_helpers import audio_suffix_for_bytes
+from backend.streaming_helpers import audio_suffix_for_bytes, is_internal_translation_artifact
 from speech import SileroVoiceActivityDetector
 from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
 from backend.cip_client import call_cip_brain, cip_health_snapshot, cip_settings
@@ -135,14 +135,11 @@ def _translator_for_request(mode: str | None, provider: str | None):
         return LightweightTranslator()
     if p in ("hybrid",) or m == "balanced":
         return HybridTranslator()
+    if p in ("remote",):
+        return MarianTranslator()
     return None
 
 
-VOICE_WARMUP_TEXTS = {
-    "es": ["Hola, ¿cómo estás?"],
-    "ht": ["Bonjou, kijan ou ye?"],
-    "ru": ["Привет, как дела?"],
-}
 VOICE_WARMUP_TEXTS = {
     "en": ["Hello", "Hello."],
     "es": ["Hola", "Hola.", "Hola, como estas?"],
@@ -159,10 +156,75 @@ VOICE_WARMUP_TEXTS = {
     "ar": ["\u0645\u0631\u062d\u0628\u0627."],
     "hi": ["\u0928\u092e\u0938\u094d\u0924\u0947."],
 }
+_CONFIGURED_LANGUAGE_CODES = tuple(LANGUAGES.keys())
+
 TRANSLATION_WARMUP_TEXTS = [
-    ("en", "es", "hello"),
-    ("en", "ru", "hello how are you today"),
-    ("ht", "ru", "Bonjou kijan ou ye"),
+    *((lang, "en", "hello") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *((lang, "en", "thank you") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "I need help") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    ("ht", "es", "Mwen bezwen èd"),
+    ("es", "ht", "Necesito ayuda"),
+    ("fr", "de", "J'ai besoin d'aide"),
+    ("de", "fr", "Ich brauche Hilfe"),
+    ("ja", "ko", "助けが必要です"),
+    ("ar", "hi", "أحتاج إلى مساعدة"),
+    *(( "en", lang, "Turn left") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "I need a taxi") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    ("es", "zh", "Gire a la izquierda"),
+    ("fr", "ht", "Tournez à gauche"),
+    ("de", "ar", "Ich brauche ein Taxi"),
+    ("ht", "es", "Mwen bezwen yon taksi"),
+]
+
+REMOTE_TRANSLATION_WARMUP_TEXTS = [
+    *(( "en", lang, "I need help with directions") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "Where is the bathroom?") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "Help") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "I need a doctor") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "Call the police") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    ("ht", "es", "Mwen pa konprann"),
+    ("ht", "fr", "Mwen bezwen èd"),
+    ("es", "ht", "Necesito ayuda"),
+    ("es", "fr", "No entiendo"),
+    ("fr", "de", "J'ai besoin d'aide"),
+    ("de", "ht", "Ich brauche Hilfe"),
+    ("ru", "de", "Мне нужна помощь"),
+    ("zh", "ja", "我需要帮助"),
+    ("ko", "ar", "도움이 필요합니다"),
+    ("ja", "en", "助けが必要です"),
+    ("ar", "ht", "أحتاج إلى مساعدة"),
+    *(( "en", lang, "Turn left") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "Where is the bus stop?") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    ("es", "ht", "Necesito un taxi"),
+    ("ht", "fr", "Vire a goch"),
+    ("zh", "es", "向左转"),
+    ("ja", "ko", "タクシーが必要です"),
+    ("ko", "en", "택시가 필요해요"),
+    ("ar", "de", "أحتاج إلى سيارة أجرة"),
+    *(( "en", lang, "I am hungry") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "I feel sick") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    ("ht", "es", "Mwen grangou"),
+    ("es", "ht", "Tengo hambre"),
+    ("fr", "zh", "J'ai faim"),
+    ("ja", "ko", "気分が悪いです"),
+    *(( "en", lang, "I have a reservation") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "How much is this?") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    ("ht", "fr", "Mwen gen yon rezèvasyon"),
+    ("es", "de", "¿Cuánto cuesta esto?"),
+    ("zh", "ht", "今天"),
+    *(( "en", lang, "I lost my passport") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "Five") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    ("ht", "es", "Mwen pèdi paspò mwen"),
+    ("es", "fr", "Cinco"),
+    ("de", "ht", "Drei"),
+    *(( "en", lang, "I cannot breathe") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "Where is the embassy?") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    ("ht", "fr", "Mwen pa ka respire"),
+    ("es", "zh", "Buenas noches"),
+    *(( "en", lang, "I have no money") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    *(( "en", lang, "Where is the ATM?") for lang in _CONFIGURED_LANGUAGE_CODES if lang != "en"),
+    ("ht", "es", "Mwen pa gen lajan"),
+    ("fr", "de", "Ma femme"),
 ]
 logger = logging.getLogger("anai_translator")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -221,6 +283,7 @@ async def lifespan(app_instance: FastAPI):
     ollama_warmup_task = asyncio.create_task(_run_ollama_warmup())
 
     translation_warmup_task = None
+    remote_translation_warmup_task = None
     skip_translation_warmup = os.getenv("SKIP_TRANSLATION_WARMUP", "true").strip().lower() in {
         "1", "true", "yes", "on",
     }
@@ -234,6 +297,19 @@ async def lifespan(app_instance: FastAPI):
         runtime_state["translation_warmup"] = {"status": "queued", "started_at": time()}
         translation_warmup_task = asyncio.create_task(_warm_translation_cache("startup"))
 
+    remote_warmup_enabled = os.getenv("REMOTE_TRANSLATION_WARMUP", "1").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if remote_warmup_enabled:
+        runtime_state["remote_translation_warmup"] = {"status": "queued", "started_at": time()}
+        remote_translation_warmup_task = asyncio.create_task(_warm_remote_translation_cache("startup"))
+    else:
+        runtime_state["remote_translation_warmup"] = {
+            "status": "skipped",
+            "reason": "REMOTE_TRANSLATION_WARMUP",
+            "items": [],
+        }
+
     runtime_state["voice_warmup"] = {"status": "queued", "started_at": time()}
     voice_warmup_task = asyncio.create_task(_warm_voice_cache("startup"))
     try:
@@ -241,6 +317,8 @@ async def lifespan(app_instance: FastAPI):
     finally:
         if voice_warmup_task:
             voice_warmup_task.cancel()
+        if remote_translation_warmup_task:
+            remote_translation_warmup_task.cancel()
         if translation_warmup_task:
             translation_warmup_task.cancel()
         if ollama_warmup_task:
@@ -511,6 +589,8 @@ def diagnostics(request: Request):
         "frontend": frontend,
         "models": runtime_state["models"],
         "voice_warmup": runtime_state.get("voice_warmup"),
+        "translation_warmup": runtime_state.get("translation_warmup"),
+        "remote_translation_warmup": runtime_state.get("remote_translation_warmup"),
         "translation": {
             "runtime": runtime_state["models"].get("translation_runtime"),
             "backend": runtime_state["models"].get("translation_backend"),
@@ -874,6 +954,72 @@ async def _warm_translation_cache(reason: str) -> dict:
     return result
 
 
+async def _warm_remote_translation_cache(reason: str) -> dict:
+    """Prime the cloud translation cache without loading heavy local models."""
+    if os.getenv("HYBRID_ENABLE_REMOTE", "1").strip().lower() in {"0", "false", "no", "off"}:
+        result = {
+            "status": "skipped",
+            "reason": "HYBRID_ENABLE_REMOTE",
+            "message": "Remote translation warmup disabled",
+            "items": [],
+        }
+        runtime_state["remote_translation_warmup"] = result
+        return result
+
+    from translation.remote_translator import RemoteTranslator
+
+    started_at = time()
+    remote = RemoteTranslator()
+    warmed = []
+    runtime_state["remote_translation_warmup"] = {"status": "running", "started_at": started_at, "reason": reason}
+    for source_language, target_language, text in REMOTE_TRANSLATION_WARMUP_TEXTS:
+        try:
+            translated = await run_in_threadpool(
+                remote.translate,
+                text,
+                source_language,
+                target_language,
+            )
+            warmed.append({
+                "source_language": source_language,
+                "target_language": target_language,
+                "text": text,
+                "translated": translated[:120],
+                "ok": bool(translated) and not translated.startswith(f"[{source_language}->"),
+            })
+            observability.record_event(
+                "remote_translation_warmup",
+                source_language=source_language,
+                target_language=target_language,
+                reason=reason,
+            )
+        except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
+            logger.warning(
+                "remote_translation_warmup_failed source=%s target=%s reason=%s error=%s",
+                source_language,
+                target_language,
+                reason,
+                exc,
+            )
+            warmed.append({
+                "source_language": source_language,
+                "target_language": target_language,
+                "text": text,
+                "ok": False,
+                "error": exc.__class__.__name__,
+            })
+    result = {
+        "status": "complete",
+        "reason": reason,
+        "latency_seconds": round(time() - started_at, 3),
+        "items": warmed,
+        "ok_count": sum(1 for item in warmed if item.get("ok")),
+        "total": len(warmed),
+    }
+    runtime_state["remote_translation_warmup"] = result
+    return result
+
+
 async def _warm_voice_cache(reason: str) -> None:
     started_at = time()
     warmed = []
@@ -950,7 +1096,15 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
     usage_limiter.track(identity, "http_requests")
     usage_limiter.track(identity, "text_translations")
     request.source_language = _normalize_language(request.source_language, "en")
-    request.target_language = _normalize_language(request.target_language, "es")
+    request.target_language = _normalize_language(request.target_language, "ht")
+    route = resolve_barrier_route(
+        request.text,
+        request.source_language,
+        request.target_language,
+        enabled=True,
+    )
+    request.source_language = route["source_language"]
+    request.target_language = route["target_language"]
     logger.info(
         "text_translation identity=%s source=%s target=%s mode=%s provider=%s",
         identity, request.source_language, request.target_language,
@@ -983,29 +1137,30 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         if request.glossary:
             pipeline.set_glossary(request.glossary)
         
+        translate_kwargs = dict(
+            text=request.text,
+            source_language=request.source_language,
+            target_language=request.target_language,
+            tone=request.tone,
+            synthesize_audio=False,
+            speaker=speaker,
+            confidence=confidence,
+            quality=use_quality,
+        )
         if req_translator:
-            interim = pipeline.translate_text_with(
-                req_translator,
-                text=request.text,
-                source_language=request.source_language,
-                target_language=request.target_language,
-                tone=request.tone,
-                synthesize_audio=False,
-                speaker=speaker,
-                confidence=confidence,
-                quality=use_quality,
-            )
+            interim = pipeline.translate_text_with(req_translator, **translate_kwargs)
         else:
-            interim = pipeline.translate_text(
-                text=request.text,
-                source_language=request.source_language,
-                target_language=request.target_language,
-                tone=request.tone,
-                synthesize_audio=False,
-                speaker=speaker,
-                confidence=confidence,
-                quality=use_quality,
-            )
+            interim = pipeline.translate_text(**translate_kwargs)
+        if (
+            not use_quality
+            and interim.translated_text
+            and is_internal_translation_artifact(interim.translated_text)
+        ):
+            translate_kwargs["quality"] = True
+            if req_translator:
+                interim = pipeline.translate_text_with(req_translator, **translate_kwargs)
+            else:
+                interim = pipeline.translate_text(**translate_kwargs)
         user_profile = profiles.get(identity)
         # Let the UT pipeline produce the translation first, then let CIP make
         # confidence, clarification, and conversation-routing decisions.
@@ -1106,6 +1261,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 request.source_language,
                 request.target_language,
                 request.speaker_name,
+                connected=False,
             )
             shared_session = session_registry.record_turn(
                 request.session_id,
@@ -1142,7 +1298,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
 async def translate_audio(
     audio: UploadFile = File(...),
     source_language: str = Form("en"),
-    target_language: str = Form("es"),
+    target_language: str = Form("ht"),
     synthesize_audio: bool = Form(True),
     identity: str = Depends(authenticate_http),
 ):
@@ -1150,7 +1306,7 @@ async def translate_audio(
     metrics["http_requests"] += 1
     usage_limiter.track(identity, "http_requests")
     source_language = _normalize_language(source_language, "en")
-    target_language = _normalize_language(target_language, "es")
+    target_language = _normalize_language(target_language, "ht")
     logger.info("audio_translation identity=%s source=%s target=%s", identity, source_language, target_language)
     max_bytes = get_max_audio_mb() * 1024 * 1024
     audio_bytes = await _read_limited_upload(audio, max_bytes)

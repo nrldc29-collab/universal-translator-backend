@@ -40,6 +40,7 @@ def test_port_env_wins_over_backend_port(monkeypatch):
 
 def test_railway_bootstrap_fills_missing_production_defaults(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("HYBRID_ENABLE_REMOTE", raising=False)
     monkeypatch.delenv("JWT_SECRET", raising=False)
     monkeypatch.setenv("USERS", "demo:demo")
     monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)
@@ -61,6 +62,7 @@ def test_railway_bootstrap_fills_missing_production_defaults(monkeypatch):
 
 def test_railway_bootstrap_without_public_domain(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.delenv("HYBRID_ENABLE_REMOTE", raising=False)
     monkeypatch.delenv("JWT_SECRET", raising=False)
     monkeypatch.setenv("USERS", "demo:demo")
     monkeypatch.delenv("ALLOWED_ORIGINS", raising=False)

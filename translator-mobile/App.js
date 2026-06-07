@@ -422,10 +422,10 @@ export default function App() {
   const primaryActionLabel = isPlayingTts
     ? "Stop spoken translation"
     : isInterpreterActive
-      ? "Pause interpreter"
-      : "Start interpreter";
-  const primaryButtonText = isPlayingTts ? "Stop" : isInterpreterActive ? "Pause" : "Start";
-  const primaryIcon = isPlayingTts ? "stop" : isInterpreterActive ? (isStreaming ? "pause" : "radio") : "mic";
+      ? "Live speech recognition is on"
+      : "Start live speech recognition";
+  const primaryButtonText = isPlayingTts ? "Stop" : isInterpreterActive ? (isStreaming ? "Listening" : "Starting") : "Start";
+  const primaryIcon = isPlayingTts ? "stop" : isInterpreterActive ? "radio" : "mic";
   const showOfflineCta = authLoaded && !showSetup && !isConnected && validateUrl(wsUrl);
 
   useEffect(() => {
@@ -951,8 +951,14 @@ export default function App() {
           setLatencyMetrics((previous) => ({ ...previous, endToEndLatency, lastUpdate: now }));
           delete latencyStartRef.current.endToEnd;
         }
-        if (resumeAfterTtsRef.current && isInterpreterActiveRef.current) {
-          setStatus("Ready to listen");
+        if (isInterpreterActiveRef.current) {
+          resumeAfterTtsRef.current = true;
+          setStatus("Listening — speak anytime");
+          setTimeout(() => {
+            if (isInterpreterActiveRef.current && !isStreamingRef.current && !isPlayingTtsRef.current) {
+              startListening();
+            }
+          }, 200);
         } else {
           resumeAfterTtsRef.current = false;
         }
@@ -1096,11 +1102,15 @@ export default function App() {
     }
     if (isInterpreterActive) {
       await tapHaptic("light");
-      await pauseInterpreter();
-    } else {
-      await tapHaptic("medium");
-      activateInterpreter();
+      setStatus("Still listening — just speak");
+      setStatusType("success");
+      if (!isStreamingRef.current && !startingStreamRef.current && !isPlayingTtsRef.current) {
+        startListening();
+      }
+      return;
     }
+    await tapHaptic("medium");
+    activateInterpreter();
   }
 
   function applyLanguageSelection(side, code) {
@@ -1480,6 +1490,16 @@ export default function App() {
                 </Text>
               </View>
             </Pressable>
+            {isInterpreterActive ? (
+              <Pressable
+                onPress={pauseInterpreter}
+                style={({ pressed }) => [styles.stopListeningBtn, pressed && styles.stopListeningBtnPressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Stop listening"
+              >
+                <Text style={styles.stopListeningText}>Stop listening</Text>
+              </Pressable>
+            ) : null}
           </View>
 
           <View style={[styles.flowRail, compactLayout && styles.flowRailCompact]}>

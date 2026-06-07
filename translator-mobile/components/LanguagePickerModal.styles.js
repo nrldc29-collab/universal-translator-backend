@@ -10,9 +10,12 @@ export default StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
   sheetWrap: {
-    maxHeight: "78%",
+    maxHeight: "94%",
+    width: "100%",
+    alignSelf: "flex-end",
   },
   sheet: {
+    flex: 1,
     backgroundColor: "#0a0f1d",
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,

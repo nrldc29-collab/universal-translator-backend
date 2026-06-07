@@ -360,17 +360,17 @@ class TestEnvironmentVariableConfiguration:
 class TestDiagnosticsIntegration:
     """Test that diagnostics endpoint includes advanced features."""
     
-    @pytest.mark.asyncio
-    async def test_diagnostics_includes_cache_stats(self):
-        """Test that /diagnostics includes predictive cache statistics."""
+    def test_diagnostics_includes_cache_stats(self, monkeypatch):
+        """Test that preload includes predictive cache statistics without loading Whisper."""
         from backend.pipeline import AnaiTranslatorPipeline
-        
+
         pipeline = AnaiTranslatorPipeline(
             enable_predictive_cache=True,
             enable_ailang=False,
         )
-        
-        # Get preload stats
+        monkeypatch.setattr(pipeline.stt, "preload", lambda: {"status": "mocked"})
+        monkeypatch.setattr(pipeline.tts, "preload", lambda: {"status": "mocked"})
+
         preload_result = pipeline.preload()
         
         # Should include cache stats

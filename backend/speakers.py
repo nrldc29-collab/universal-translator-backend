@@ -56,7 +56,32 @@ LANGUAGE_WORDS = {
     },
     "ht": {
         "bonjou", "mesi", "anpil", "mwen", "ou", "nou", "yo", "kijan", "sak", "pase",
-        "tanpri", "wi", "non", "byen", "zanmi",
+        "tanpri", "wi", "non", "byen", "zanmi", "eskize", "orevwa", "bezwen", "ed",
+        "konprann", "kote", "twalet", "pale", "angle",
+    },
+    "it": {
+        "ciao", "grazie", "prego", "buongiorno", "buonasera", "come", "stai", "sono",
+        "si", "no", "per", "con", "buona", "notte", "favore", "scusi", "arrivederci",
+        "perfavore", "capisco", "aiuto", "dov", "bagno", "ospedale", "taxi", "sinistra",
+        "destra", "dritto", "ferma", "quanto", "costa", "parla", "inglese",
+    },
+    "ja": {
+        "konnichiwa", "arigato", "ohayo", "oyasumi", "hai", "iie", "desu", "masu",
+        "sumimasen", "gomen", "kudasai", "doko", "ikura", "tabemono", "mizu",
+        "byoin", "kusuri", "taxi", "basu", "migi", "hidari", "massugu",
+    },
+    "ko": {
+        "annyeong", "gamsa", "ne", "ani", "jebal", "mian", "eotteoke", "jinaeyo",
+        "annyeonghaseyo", "gamsahabnida", "sillye", "eodi", "eolma", "bap",
+        "mul", "byeongwon", "yakguk", "taeksi", "beoseu", "oreun", "oen",
+    },
+    "ar": {
+        "marhaba", "shukran", "naam", "la", "min", "fadlik", "keef", "halak", "ana",
+        "anta", "kayf",
+    },
+    "hi": {
+        "namaste", "dhanyavad", "haan", "nahin", "kripya", "maaf", "kaise", "hain",
+        "main", "aap",
     },
     "fr": {
         "le", "la", "les", "des", "et", "de", "bonjour", "bonsoir", "avec", "pour",
@@ -66,17 +91,26 @@ LANGUAGE_WORDS = {
         "hallo", "danke", "bitte", "und", "ich", "du", "sie", "wir", "nicht", "guten",
         "morgen", "abend", "ja", "nein",
     },
-    "it": {
-        "ciao", "grazie", "prego", "buongiorno", "buonasera", "come", "stai", "sono",
-        "si", "no", "per", "con",
-    },
     "pt": {
         "ola", "olá", "obrigado", "obrigada", "por", "favor", "voce", "você", "nao",
-        "não", "sim", "bom", "dia", "como",
+        "não", "sim", "bom", "dia", "como", "adeus", "obrigada", "preciso", "ajuda",
+        "banheiro", "hospital", "taxi", "esquerda", "direita", "frente", "onde",
+        "quanto", "custa", "fala", "ingles",
     },
     "nl": {
         "hallo", "dank", "bedankt", "alsjeblieft", "goed", "morgen", "avond", "ja",
-        "nee", "ik", "jij", "wij",
+        "nee", "ik", "jij", "wij", "alstublieft", "tot", "ziens", "hoe", "gaat",
+        "toilet", "ziekenhuis", "taxi", "links", "rechts", "rechtdoor", "waar",
+        "kost", "spreekt", "engels",
+    },
+    "ru": {
+        "da", "net", "privet", "spasibo", "pozhaluysta", "izvinite", "kak", "dela",
+        "ya", "vy", "my", "gde", "eto", "pomogite", "vrach", "politsiya", "bolnitsa",
+        "taksi", "nalevo", "napravo", "pryamo", "skolko", "govorite", "angliyski",
+    },
+    "zh": {
+        "ni", "hao", "ma", "wo", "shi", "de", "bu", "xie", "xie", "qing", "zai",
+        "jian", "nimen", "women",
     },
 }
 
@@ -92,7 +126,9 @@ SCRIPT_LANGUAGES = (
 ACCENT_LANGUAGES = (
     ("es", re.compile(r"[\u00e1\u00ed\u00f3\u00fa\u00f1\u00bf\u00a1]")),
     ("pt", re.compile(r"[\u00e3\u00f5]")),
+    ("de", re.compile(r"[\u00e4\u00f6\u00fc\u00df]")),
     ("fr", re.compile(r"[\u00e0\u00e2\u00e7\u00e8\u00ea\u00eb\u00ee\u00ef\u00f4\u00f9\u00fb\u00fc\u00ff\u0153]")),
+    ("ht", re.compile(r"[\u00e8\u00f2\u00ea\u00e0\u00e9]")),
 )
 
 
@@ -109,11 +145,15 @@ def detect_language_with_confidence(text: str) -> Dict[str, Any]:
         if pattern.search(t):
             return {"language": language, "confidence": 0.96, "reason": "script"}
 
+    tokens = set(re.findall(r"[a-z\u00c0-\u024f]+", t))
+    ht_markers = len(tokens & LANGUAGE_WORDS["ht"])
+    if ht_markers >= 2:
+        return {"language": "ht", "confidence": 0.9, "reason": "creole_markers"}
+
     for language, pattern in ACCENT_LANGUAGES:
         if pattern.search(t):
             return {"language": language, "confidence": 0.84, "reason": "accent"}
 
-    tokens = set(re.findall(r"[a-z\u00c0-\u024f]+", t))
     scores = {
         language: len(tokens & words)
         for language, words in LANGUAGE_WORDS.items()

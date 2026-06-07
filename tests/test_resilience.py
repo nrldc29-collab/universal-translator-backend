@@ -186,11 +186,13 @@ class TestConversationBrainDuplex:
         assert d2.behavior == "overlap"
 
     def test_turn_shift(self):
+        from time import monotonic
+
         from backend.conversation import ConversationBrain
         brain = ConversationBrain()
         brain.soft_overlap_seconds = 0.0
         brain.request_turn("A")
-        time.sleep(0.01)
+        brain.active_since = monotonic() - 0.5
         d2 = brain.request_turn("B")
         assert d2.allowed
         assert d2.behavior == "turn_shift"

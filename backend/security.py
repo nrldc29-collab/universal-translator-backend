@@ -77,6 +77,20 @@ class UsageLimiter:
                 qs.seed_audio(identity, self.audio_usage)
             self._audio_seeded.add(identity)
 
+    def check_connection(self, identity: str) -> tuple[bool, int]:
+        """Apply per-minute burst limits for WebSocket connects without hourly quota."""
+        with self._lock:
+            now = time()
+            minute_start = now - 60
+            minute_requests = [ts for ts in self.minute_usage[identity] if ts >= minute_start]
+            self.minute_usage[identity] = minute_requests
+            limit = get_requests_per_minute()
+            if len(minute_requests) >= limit:
+                return False, 0
+            minute_requests.append(now)
+            self.minute_usage[identity] = minute_requests
+            return True, limit - len(minute_requests)
+
     def check(self, identity: str) -> tuple[bool, int]:
         with self._lock:
             now = time()

@@ -35,8 +35,64 @@ class MarianTranslator:
         }
         return codes.get(language, "eng_Latn")
 
+    _OPUS_MT_OVERRIDES = {
+        ("en", "es"): "Helsinki-NLP/opus-mt-en-es",
+        ("es", "en"): "Helsinki-NLP/opus-mt-es-en",
+        ("en", "fr"): "Helsinki-NLP/opus-mt-en-fr",
+        ("fr", "en"): "Helsinki-NLP/opus-mt-fr-en",
+        ("en", "de"): "Helsinki-NLP/opus-mt-en-de",
+        ("de", "en"): "Helsinki-NLP/opus-mt-de-en",
+        ("en", "it"): "Helsinki-NLP/opus-mt-en-it",
+        ("it", "en"): "Helsinki-NLP/opus-mt-it-en",
+        ("en", "pt"): "Helsinki-NLP/opus-mt-en-pt",
+        ("pt", "en"): "Helsinki-NLP/opus-mt-pt-en",
+        ("en", "nl"): "Helsinki-NLP/opus-mt-en-nl",
+        ("nl", "en"): "Helsinki-NLP/opus-mt-nl-en",
+        ("en", "ru"): "Helsinki-NLP/opus-mt-en-ru",
+        ("ru", "en"): "Helsinki-NLP/opus-mt-ru-en",
+        ("en", "zh"): "Helsinki-NLP/opus-mt-en-zh",
+        ("zh", "en"): "Helsinki-NLP/opus-mt-zh-en",
+        ("en", "ja"): "Helsinki-NLP/opus-mt-en-jap",
+        ("ja", "en"): "Helsinki-NLP/opus-mt-jap-en",
+        ("en", "ar"): "Helsinki-NLP/opus-mt-en-ar",
+        ("ar", "en"): "Helsinki-NLP/opus-mt-ar-en",
+        ("en", "hi"): "Helsinki-NLP/opus-mt-en-hi",
+        ("hi", "en"): "Helsinki-NLP/opus-mt-hi-en",
+        ("es", "fr"): "Helsinki-NLP/opus-mt-es-fr",
+        ("fr", "es"): "Helsinki-NLP/opus-mt-fr-es",
+        ("de", "fr"): "Helsinki-NLP/opus-mt-de-fr",
+        ("fr", "de"): "Helsinki-NLP/opus-mt-fr-de",
+        ("es", "de"): "Helsinki-NLP/opus-mt-es-de",
+        ("de", "es"): "Helsinki-NLP/opus-mt-de-es",
+        ("it", "es"): "Helsinki-NLP/opus-mt-it-es",
+        ("es", "it"): "Helsinki-NLP/opus-mt-es-it",
+        ("pt", "es"): "Helsinki-NLP/opus-mt-ROMANCE",
+        ("es", "pt"): "Helsinki-NLP/opus-mt-ROMANCE",
+        ("it", "fr"): "Helsinki-NLP/opus-mt-ROMANCE",
+        ("fr", "it"): "Helsinki-NLP/opus-mt-ROMANCE",
+        ("pt", "fr"): "Helsinki-NLP/opus-mt-ROMANCE",
+        ("fr", "pt"): "Helsinki-NLP/opus-mt-ROMANCE",
+    }
+
     def _model_name(self, source_language: str, target_language: str) -> str:
-        return f"Helsinki-NLP/opus-mt-{source_language}-{target_language}"
+        key = (source_language, target_language)
+        return self._OPUS_MT_OVERRIDES.get(
+            key,
+            f"Helsinki-NLP/opus-mt-{source_language}-{target_language}",
+        )
+
+    def _should_use_nllb_direct(self, source_language: str, target_language: str) -> bool:
+        """Skip a doomed opus-mt download when NLLB already covers the pair."""
+        key = (source_language, target_language)
+        if key in self._OPUS_MT_OVERRIDES:
+            return False
+        if source_language == "ht" or target_language == "ht":
+            return True
+        if source_language == "ko" or target_language == "ko":
+            return True
+        if source_language != "en" and target_language != "en":
+            return True
+        return False
 
     def _load_model(self, source_language: str, target_language: str):
         key = (source_language, target_language)
@@ -50,6 +106,8 @@ class MarianTranslator:
                 raise RuntimeError("transformers is not installed. Install requirements to enable translation.") from exc
 
             try:
+                if self._should_use_nllb_direct(source_language, target_language):
+                    raise OSError("direct NLLB route")
                 model_name = self._model_name(source_language, target_language)
                 tokenizer = AutoTokenizer.from_pretrained(model_name)
                 model = AutoModelForSeq2SeqLM.from_pretrained(model_name, use_safetensors=False)

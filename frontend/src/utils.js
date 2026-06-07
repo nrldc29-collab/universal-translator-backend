@@ -57,6 +57,11 @@ export const BACKEND_TTS_LANGS = new Set([
   'en', 'es', 'ht', 'fr', 'de', 'it', 'pt', 'nl', 'ru', 'zh', 'ja', 'ko', 'ar', 'hi',
 ]);
 
+/** Languages that should use backend Whisper STT instead of browser speech recognition. */
+export const BACKEND_STT_LANGS = new Set([
+  'ht', 'zh', 'ja', 'ko', 'ar', 'hi', 'ru',
+]);
+
 const LANG_DETECT_PATTERNS = {
   es: /\b(el|la|los|las|un|una|que|es|en|de|y|no|lo|le|su|por|con|para|como|pero|más|este|bien|hola|gracias|cómo|qué|estás|soy|quiero|puedo|tiene|hace|usted|también|cuando|porque|donde|nosotros|ellos|aquí|allí)\b/i,
   fr: /\b(le|la|les|un|une|des|de|du|et|est|pas|je|tu|il|nous|avec|pour|sur|dans|mais|merci|bonjour|oui|non|très|bien|voilà|c'est|j'ai|vous|ils|mon|ma|ici|là|aussi|quand|comment|pourquoi|où)\b/i,
@@ -85,6 +90,7 @@ export function detectLanguagePair(text, langA, langB, lastLang) {
         if (langA === lang) return langA;
         if (langB === lang) return langB;
       }
+      return lastLang || langA;
     }
   }
   const scoreA = LANG_DETECT_PATTERNS[langA] ? (text.match(LANG_DETECT_PATTERNS[langA]) || []).length : 0;
@@ -433,7 +439,7 @@ export const VOICE_WARMUP_COOLDOWN_MS = 5 * 60 * 1000;
 export const VOICE_PREFETCH_TIMEOUT_MS = 4000;
 export const HOLD_TO_TALK_DELAY_MS = 260;
 export const EXPECTED_BACKEND_RELEASE = '2026-05-13-active-speaker-v19';
-export const FRONTEND_BUILD_ID = 'continuous-interpreter-v32-soothing-voice';
+export const FRONTEND_BUILD_ID = 'continuous-interpreter-v46-audit';
 export const EXPERIMENTAL_IOS_STREAMING = true;
 
 // ---------- Persistence ----------
@@ -582,7 +588,7 @@ export function languagePairNeedsBackendStt(sourceLanguage, targetLanguage) {
   const normalize = (code) => String(code || '').toLowerCase().split(/[-_]/)[0];
   const source = normalize(sourceLanguage);
   const target = normalize(targetLanguage);
-  return source === 'ht' || target === 'ht';
+  return BACKEND_STT_LANGS.has(source) || BACKEND_STT_LANGS.has(target);
 }
 
 export function speechRecognitionConstructor() {
@@ -622,6 +628,9 @@ export function speechRecognitionLanguage(code) {
       'ar-AE': 'ar-AE',
       'ar-TN': 'ar-TN',
       ru: 'ru-RU',
+      nl: 'nl-NL',
+      'nl-BE': 'nl-BE',
+      hi: 'hi-IN',
     }[code] || (
       {
         en: 'en-US',
@@ -636,6 +645,8 @@ export function speechRecognitionLanguage(code) {
         ko: 'ko-KR',
         ar: 'ar-SA',
         ru: 'ru-RU',
+        nl: 'nl-NL',
+        hi: 'hi-IN',
       }[normalized] || normalized
     )
   );

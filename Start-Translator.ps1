@@ -516,6 +516,12 @@ if (-not (Test-PortListening -Port $BackendPort)) {
     $env:PRELOAD_MODELS = "false"
     $env:SKIP_TRANSLATION_WARMUP = "true"
     $env:OLLAMA_ENABLED = "false"
+    $env:HYBRID_ENABLE_REMOTE = "1"
+    $env:HYBRID_ENABLE_MARIAN_FALLBACK = "1"
+    $env:REMOTE_TRANSLATION_WARMUP = "1"
+    if (-not $env:REMOTE_TRANSLATION_TIMEOUT_SECONDS) {
+        $env:REMOTE_TRANSLATION_TIMEOUT_SECONDS = "3"
+    }
     if (-not $env:REQUESTS_PER_MINUTE) {
         $env:REQUESTS_PER_MINUTE = "240"
     }

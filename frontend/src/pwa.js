@@ -1,4 +1,4 @@
-const SW_VERSION = 'v32-soothing-voice';
+const SW_VERSION = 'v42-tap-once';
 const SW_RELOAD_KEY = `translator_sw_reloaded_${SW_VERSION}`;
 
 function reloadForUpdatedServiceWorker() {
@@ -7,34 +7,20 @@ function reloadForUpdatedServiceWorker() {
   window.location.reload();
 }
 
-function activateWaitingWorker(registration) {
-  if (registration.waiting) {
-    registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-  }
-}
-
+/**
+ * Service worker disabled while speech-first UX stabilizes.
+ * Stale cached CSS was causing the old upward language menu and choppy layout.
+ */
 export function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
 
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    reloadForUpdatedServiceWorker();
-  });
+  navigator.serviceWorker.getRegistrations()
+    .then((regs) => Promise.all(regs.map((reg) => reg.unregister())))
+    .catch(() => {});
 
-  window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('/sw.js')
-      .then((registration) => {
-        registration.update().catch(() => {});
-        activateWaitingWorker(registration);
-        registration.addEventListener('updatefound', () => {
-          const worker = registration.installing;
-          worker?.addEventListener('statechange', () => {
-            if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-              activateWaitingWorker(registration);
-            }
-          });
-        });
-      })
+  if ('caches' in window) {
+    caches.keys()
+      .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
       .catch(() => {});
-  });
+  }
 }

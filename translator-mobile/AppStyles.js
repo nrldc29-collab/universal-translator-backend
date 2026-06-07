@@ -881,6 +881,23 @@ export default StyleSheet.create({
     alignSelf: "center",
     alignItems: "center",
     justifyContent: "center",
+    gap: 10,
+  },
+  stopListeningBtn: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(248, 113, 113, 0.4)",
+    backgroundColor: "rgba(127, 29, 29, 0.28)",
+  },
+  stopListeningBtnPressed: {
+    opacity: 0.85,
+  },
+  stopListeningText: {
+    color: "#fecaca",
+    fontSize: 13,
+    fontWeight: "800",
   },
   voicePulseRing: {
     position: "absolute",

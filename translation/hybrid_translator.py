@@ -62,7 +62,7 @@ class OllamaTranslator:
         if not text.strip():
             return ""
         source = source_language or "en"
-        target = target_language or "es"
+        target = target_language or "ht"
         if source == target:
             return text
 
@@ -138,6 +138,7 @@ class HybridTranslator:
         self.ollama = OllamaTranslator()
         self._ollama_enabled = os.getenv("OLLAMA_ENABLED", "1" if os.getenv("OLLAMA_URL") else "0") == "1"
         self._marian_enabled = os.getenv("HYBRID_ENABLE_MARIAN_FALLBACK", "1") == "1"
+        self._remote_enabled = os.getenv("HYBRID_ENABLE_REMOTE", "1") == "1"
         self._forced_tier = os.getenv("TRANSLATION_TIER", "auto").lower()
         self._metrics = {
             "ollama_hits": 0, "ollama_misses": 0,
@@ -152,7 +153,7 @@ class HybridTranslator:
         if not text:
             return False
         source = source_language or "en"
-        target = target_language or "es"
+        target = target_language or "ht"
         return text.startswith(f"[{source}->{target}]")
 
     def get_metrics(self):
@@ -165,11 +166,11 @@ class HybridTranslator:
             if key in self._metrics:
                 self._metrics[key] += 1
 
-    def translate(self, text, source_language=None, target_language=None):
+    def translate(self, text, source_language=None, target_language=None, *, quality=False):
         if not text.strip():
             return ""
         source = source_language or "en"
-        target = target_language or "es"
+        target = target_language or "ht"
         if source == target:
             return text
 
@@ -181,7 +182,7 @@ class HybridTranslator:
         if self._forced_tier == "ollama":
             return self._try_ollama(text, source, target) or lightweight_result
         if self._forced_tier == "local":
-            return self._try_marian(text, source, target) or lightweight_result
+            return self._try_marian(text, source, target, quality=quality) or lightweight_result
         if self._forced_tier == "remote":
             return self._try_remote(text, source, target) or lightweight_result
 
@@ -190,14 +191,20 @@ class HybridTranslator:
             if ollama_result:
                 return ollama_result
 
+        if not quality and self._remote_enabled:
+            remote_result = self._try_remote(text, source, target)
+            if remote_result:
+                return remote_result
+
         if self._marian_enabled:
             marian_result = self._try_marian(text, source, target, quality=quality)
             if marian_result:
                 return marian_result
 
-        remote_result = self._try_remote(text, source, target)
-        if remote_result:
-            return remote_result
+        if quality and self._remote_enabled:
+            remote_result = self._try_remote(text, source, target)
+            if remote_result:
+                return remote_result
 
         return lightweight_result
 
@@ -226,6 +233,8 @@ class HybridTranslator:
             return None
 
     def _try_remote(self, text, source, target):
+        if not self._remote_enabled:
+            return None
         try:
             result = self.remote.translate(text, source, target)
             if result and not self.is_placeholder_translation(result, source, target):

@@ -40,6 +40,7 @@ export default function AppHeader({
           <span className="neo-conn-label">
             {isWarming ? 'STARTING' : isChecking ? 'CONNECTING' : isOnline ? 'LIVE' : 'OFFLINE'}
           </span>
+          <span className="neo-build-stamp" title="UI build">v46</span>
           <AILangStatusBadge apiUrl={apiUrl} />
           <NeuralVoiceBadge diagnostics={diagnostics} connectionStatus={connectionStatus} />
         </div>

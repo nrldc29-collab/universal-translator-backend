@@ -1,0 +1,99 @@
+/**
+ * Speech-first overrides — loaded last so live translator UX wins over legacy styles.
+ */
+
+/* Never show legacy upward dropdown (removed from JSX; guard against stale CSS) */
+.lang-dropdown-menu {
+  display: none !important;
+}
+
+/* Language bottom sheet — always from bottom, full list */
+.lang-picker-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 100000 !important;
+}
+
+.lang-picker-sheet {
+  position: fixed !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  top: auto !important;
+  margin: 0 auto !important;
+  width: 100% !important;
+  max-width: 440px !important;
+  height: min(94dvh, 760px) !important;
+  max-height: 94dvh !important;
+  transform: none !important;
+  border-radius: 20px 20px 0 0 !important;
+  animation: sheetSlideUp .2s ease both !important;
+}
+
+.lang-picker-list {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+/* Stable shell — header/languages never jump */
+.phone-top-bar {
+  flex-shrink: 0 !important;
+}
+
+.speech-workspace {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+.translation-stack {
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+
+/* Mic area stable while listening */
+.phone-frame.is-listening .mic-orb {
+  width: min(226px, 28vh) !important;
+  height: min(226px, 28vh) !important;
+}
+
+.stop-listening-btn {
+  margin-top: 4px;
+  padding: 8px 14px;
+  border: 1px solid rgba(248, 113, 113, .35);
+  border-radius: 999px;
+  background: rgba(127, 29, 29, .25);
+  color: #fecaca;
+  font-size: .76rem;
+  font-weight: 800;
+  letter-spacing: .02em;
+  cursor: pointer;
+}
+
+.stop-listening-btn:hover {
+  background: rgba(153, 27, 27, .38);
+}
+
+/* Reduce motion churn during live session */
+.phone-frame.is-listening .translation-card,
+.phone-frame.is-listening .empty-state {
+  animation: none !important;
+}
+
+.neo-build-stamp {
+  font-size: .58rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  color: rgba(148, 163, 184, .55);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(148, 163, 184, .2);
+}
+
+.empty-state-cta.primary {
+  font-size: 1rem !important;
+  padding: 14px 22px !important;
+}

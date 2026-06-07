@@ -243,7 +243,8 @@ def main() -> int:
                 )
             )
     except Exception as exc:
-        print(json.dumps({"status": "fail", "error": str(exc)}, ensure_ascii=True))
+        message = str(exc).strip() or f"{type(exc).__name__}: {exc!r}"
+        print(json.dumps({"status": "fail", "error": message}, ensure_ascii=True))
         return 1
 
     print(json.dumps({"status": "pass", "http": http_result, "websocket": ws_result}, ensure_ascii=True))

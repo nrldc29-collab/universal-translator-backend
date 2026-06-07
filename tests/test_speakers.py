@@ -6,6 +6,11 @@ def test_detect_language_heuristic_handles_spanish_accents():
     assert detect_language_heuristic("Hola, \u00bfcomo estas?") == "es"
 
 
+def test_detect_language_heuristic_handles_german_umlauts():
+    assert detect_language_heuristic("Guten Tag, wie geht es Ihnen?") == "de"
+    assert detect_language_heuristic("Schöne Grüße aus München") == "de"
+
+
 def test_detect_language_heuristic_handles_supported_voice_scripts():
     assert detect_language_heuristic("Привет") == "ru"
     assert detect_language_heuristic("你好") == "zh"

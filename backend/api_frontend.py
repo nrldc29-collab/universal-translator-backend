@@ -73,6 +73,14 @@ def frontend_asset_path(full_path: str) -> Path | None:
     return None
 
 
+def _frontend_no_cache_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
+
 def embedded_frontend_response(full_path: str = "") -> FileResponse | None:
     """Return a FileResponse for an embedded asset, or None when not embedded."""
 
@@ -80,12 +88,13 @@ def embedded_frontend_response(full_path: str = "") -> FileResponse | None:
     if not index_path:
         return None
 
+    no_cache = _frontend_no_cache_headers()
     if full_path:
         asset_path = frontend_asset_path(full_path)
         if asset_path:
-            return FileResponse(asset_path)
+            return FileResponse(asset_path, headers=no_cache)
 
-    return FileResponse(index_path)
+    return FileResponse(index_path, headers=no_cache)
 
 
 def frontend_launcher(frontend_url: str) -> HTMLResponse:

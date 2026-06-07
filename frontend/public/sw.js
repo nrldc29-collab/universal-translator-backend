@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'v32-soothing-voice';
+const CACHE_VERSION = 'v43-no-sw-cache';
 const CACHE_NAME = `anai-translator-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `anai-translator-runtime-${CACHE_VERSION}`;
 const OFFLINE_URL = '/offline.html';
@@ -86,17 +86,16 @@ self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
   if (requestUrl.origin !== self.location.origin || shouldBypass(requestUrl)) return;
 
-  // Always go to network for the HTML shell + JS bundle so iOS picks up new builds.
-  if (event.request.mode === 'navigate' || event.request.destination === 'script') {
+  // Always network-first for shell + bundles so UI fixes reach every device immediately.
+  const networkFirst =
+    event.request.mode === 'navigate' ||
+    event.request.destination === 'script' ||
+    event.request.destination === 'style' ||
+    requestUrl.pathname.startsWith('/assets/');
+  if (networkFirst) {
     event.respondWith(
       fetch(event.request, { cache: 'no-store' })
-        .then((response) => {
-          if (response.ok && event.request.destination === 'script') {
-            const copy = response.clone();
-            caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
+        .then((response) => response)
         .catch(() => caches.match(event.request).then((cached) => cached || caches.match(OFFLINE_URL)))
     );
     return;

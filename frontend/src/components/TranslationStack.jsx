@@ -131,34 +131,37 @@ export default function TranslationStack({
     .join(' ');
 
   return (
-    <section className="translation-stack" id="main-content">
+    <section className="translation-stack">
 
       {showEmptyTips && (
         <div className="empty-state translation-empty-state" data-connection={connectionStatus} aria-live="polite">
           <div className="empty-state-icon">
             <Sparkles size={26} strokeWidth={1.8} />
           </div>
-          <h3 className="empty-state-title">Ready when you are</h3>
+          <h3 className="empty-state-title">Live speech translator</h3>
           <p className="empty-state-description">
-            {connectionStatus === 'online'
-              ? 'Tap the microphone to speak, or use Type to enter text manually.'
+            {streaming
+              ? 'Listening now — speak in either language and we translate automatically.'
+              : connectionStatus === 'online'
+              ? 'Tap Start once, then keep talking. Do not tap the mic between phrases — use Stop listening when done.'
               : connectionStatus === 'checking' || connectionStatus === 'warming'
                 ? 'Hang tight — we are getting the translator ready for you.'
-                : 'Connect to the server, then tap the mic to start translating.'}
+                : 'Connect to the server, then tap the mic once to start live recognition.'}
           </p>
           <div className="empty-state-tips">
             <span className="empty-state-tip">
               <Languages size={14} strokeWidth={2.2} />
-              Pick languages above
+              Choose your two languages above
             </span>
             <span className="empty-state-tip">
-              <Keyboard size={14} strokeWidth={2.2} />
-              Type instead of speaking
+              <Radio size={14} strokeWidth={2.2} />
+              {streaming ? 'Always listening' : 'One tap starts continuous listening'}
             </span>
           </div>
           <div className="empty-state-actions">
             {connectionStatus === 'online' ? (
               <>
+                {!streaming && (
                 <button
                   type="button"
                   className="empty-state-cta primary"
@@ -167,6 +170,7 @@ export default function TranslationStack({
                   <Mic size={15} strokeWidth={2.4} />
                   Start speaking
                 </button>
+                )}
                 <button
                   type="button"
                   className="empty-state-cta"

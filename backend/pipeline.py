@@ -122,14 +122,17 @@ class AnaiTranslatorPipeline:
         self,
         text: str,
         source_language: str = "en",
-        target_language: str = "es",
+        target_language: str = "ht",
         tone: str | None = None,
         synthesize_audio: bool = False,
         output_audio_path: str = "models/output.wav",
+        output_path: str | None = None,
         speaker: str | None = None,
         confidence: float = 0.0,
         quality: bool = False,
     ) -> TranslationResult:
+        if output_path is not None:
+            output_audio_path = output_path
         if not text.strip():
             return TranslationResult(
                 source_text=text,
@@ -293,7 +296,7 @@ class AnaiTranslatorPipeline:
         translator,
         text: str,
         source_language: str = "en",
-        target_language: str = "es",
+        target_language: str = "ht",
         tone: str | None = None,
         synthesize_audio: bool = False,
         output_audio_path: str = "models/output.wav",
@@ -418,7 +421,32 @@ class AnaiTranslatorPipeline:
             ailang_metadata=ailang_metadata if ailang_metadata else None,
         )
 
-    def translate_audio(self, audio_path, source_language="en", target_language="es", tone=None, synthesize_audio=True, output_audio_path="models/output.wav", speaker=None, confidence=0.0):
+    def translate_local(
+        self,
+        text: str,
+        source_language: str,
+        target_language: str,
+        *,
+        original_source_text: str | None = None,
+        strict_medical: bool = True,
+    ) -> str:
+        from backend.glossary import finalize_translation, prepare_for_translation
+
+        source_text = original_source_text or text
+        prepared, metadata = prepare_for_translation(text, strict_medical=strict_medical)
+        translated = self.translator.translate(prepared, source_language, target_language)
+        final, _ = finalize_translation(
+            source_text,
+            translated,
+            session_id=self.session_id,
+            source_lang=source_language,
+            target_lang=target_language,
+            strict_medical=strict_medical,
+            metadata=metadata,
+        )
+        return final
+
+    def translate_audio(self, audio_path, source_language="en", target_language="ht", tone=None, synthesize_audio=True, output_audio_path="models/output.wav", speaker=None, confidence=0.0):
         source_text = self.stt.transcribe(audio_path, source_language)
         return self.translate_text(source_text, source_language=source_language, target_language=target_language, tone=tone, synthesize_audio=synthesize_audio, output_audio_path=output_audio_path, speaker=speaker, confidence=confidence)
     

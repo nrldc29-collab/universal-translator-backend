@@ -5,7 +5,7 @@ class FakeMarianTranslator:
     def __init__(self):
         self.calls = []
 
-    def translate(self, text, source_language=None, target_language=None):
+    def translate(self, text, source_language=None, target_language=None, *, quality=False):
         self.calls.append((text, source_language, target_language))
         return "hola, \u00bfc\u00f3mo est\u00e1s hoy?"
 
@@ -41,7 +41,7 @@ def test_hybrid_uses_lightweight_phrase_without_marian():
 
 def test_hybrid_falls_back_to_marian_for_placeholder():
     translator = HybridTranslator()
-    fake_remote = FakeRemoteTranslator()
+    fake_remote = FakeFailingRemoteTranslator()
     fake_marian = FakeMarianTranslator()
     translator.remote = fake_remote
     translator.marian = fake_marian
@@ -50,7 +50,22 @@ def test_hybrid_falls_back_to_marian_for_placeholder():
 
     assert result == "hola, \u00bfc\u00f3mo est\u00e1s hoy?"
     assert fake_marian.calls == [("hello how are you today", "en", "es")]
-    assert fake_remote.calls == []
+    assert fake_remote.calls == [("hello how are you today", "en", "es")]
+
+
+def test_hybrid_prefers_remote_before_marian_for_fast_path(monkeypatch):
+    monkeypatch.setenv("HYBRID_ENABLE_REMOTE", "1")
+    translator = HybridTranslator()
+    fake_remote = FakeRemoteTranslator()
+    fake_marian = FakeMarianTranslator()
+    translator.remote = fake_remote
+    translator.marian = fake_marian
+
+    result = translator.translate("hello how are you today", "en", "es", quality=False)
+
+    assert result == "hola, \u00bfc\u00f3mo est\u00e1s hoy?"
+    assert fake_remote.calls == [("hello how are you today", "en", "es")]
+    assert fake_marian.calls == []
 
 
 def test_hybrid_uses_remote_only_when_explicitly_enabled(monkeypatch):
@@ -70,7 +85,7 @@ def test_hybrid_uses_remote_only_when_explicitly_enabled(monkeypatch):
 
 
 class FailingMarianTranslator(FakeMarianTranslator):
-    def translate(self, text, source_language=None, target_language=None):
+    def translate(self, text, source_language=None, target_language=None, *, quality=False):
         self.calls.append((text, source_language, target_language))
         raise RuntimeError("marian unavailable")
 
@@ -86,7 +101,25 @@ def test_hybrid_keeps_placeholder_when_local_paths_fail():
 
     assert result == "[en->es] hello how are you today"
     assert fake_marian.calls == [("hello how are you today", "en", "es")]
-    assert fake_remote.calls == []
+    assert fake_remote.calls == [("hello how are you today", "en", "es")]
+
+
+def test_translate_accepts_quality_flag_without_error(monkeypatch):
+    translator = HybridTranslator()
+    calls = []
+
+    def fake_marian(text, source, target, *, quality=False):
+        calls.append(quality)
+        return "translated phrase"
+
+    monkeypatch.setattr(translator, "_try_ollama", lambda *args, **kwargs: None)
+    monkeypatch.setattr(translator, "_try_marian", fake_marian)
+    monkeypatch.setattr(translator, "_try_remote", lambda *args, **kwargs: None)
+    monkeypatch.setenv("OLLAMA_ENABLED", "0")
+
+    result = translator.translate("quantum computing", "en", "fr", quality=True)
+    assert result == "translated phrase"
+    assert calls == [True]
 
 
 def test_placeholder_detection():

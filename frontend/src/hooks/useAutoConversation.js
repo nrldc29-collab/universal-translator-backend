@@ -235,6 +235,7 @@ export function useAutoConversation({
   withAuthToken,
   backendReady = true,
   onStatus,
+  onNeedAudioStream,
 }) {
   const [active, setActive]       = useState(false);
   const [phase, setPhase]         = useState('idle'); // idle|listening|ready|processing|speaking
@@ -345,7 +346,7 @@ export function useAutoConversation({
         setPhaseR('listening');
         startRecognition();
       }
-    }, 600);
+    }, 180);
   }
 
   // ── Open both translation sockets ────────────────────────────────────
@@ -525,7 +526,7 @@ export function useAutoConversation({
     window.setTimeout(() => {
       if (!activeRef.current) return;
       openSockets();
-      if (languagePairNeedsBackendStt(srcRef.current, tgtRef.current)) {
+      if (shouldUseBackendSttPath()) {
         startBackendSttListening();
       } else {
         startRecognition();
@@ -571,7 +572,6 @@ export function useAutoConversation({
             device_id: `${deviceRef.current}-conv-stt`,
             speaker_mode: 'auto',
             speaker: 'auto',
-            stt_only: true,
             mime_type: preferredAudioMimeType(),
           }));
           return;
@@ -585,14 +585,17 @@ export function useAutoConversation({
         }
         if (d.type === 'partial_transcription' && !lockedRef.current && activeRef.current) {
           const visible = String(d.text || '').trim();
-          if (visible) {
+          if (visible && !/^(waiting for speech|preparing audio)/i.test(visible)) {
             setLiveText(visible);
             liveTextRef.current = visible;
           }
           return;
         }
-        if (d.type === 'stt_only' && d.text && !lockedRef.current && activeRef.current) {
-          handleUtterance(String(d.text).trim());
+        if ((d.type === 'stt_only' || d.type === 'final_transcription') && d.text && !lockedRef.current && activeRef.current) {
+          const text = String(d.text).trim();
+          if (text && !/^(waiting for speech|preparing audio)/i.test(text)) {
+            handleUtterance(text);
+          }
         }
       } catch {}
     };
@@ -637,10 +640,15 @@ export function useAutoConversation({
     }
   }
 
+  function shouldUseBackendSttPath() {
+    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    return !Rec && languagePairNeedsBackendStt(srcRef.current, tgtRef.current);
+  }
+
   // ── Speech recognition ────────────────────────────────────────────────
   function startRecognition() {
     if (!activeRef.current || lockedRef.current) return;
-    if (languagePairNeedsBackendStt(srcRef.current, tgtRef.current)) {
+    if (shouldUseBackendSttPath()) {
       startBackendSttListening();
       return;
     }
@@ -648,7 +656,11 @@ export function useAutoConversation({
 
     const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Rec) {
-      onStatus?.('Speech recognition unavailable in this browser');
+      if (typeof onNeedAudioStream === 'function') {
+        onNeedAudioStream();
+        return;
+      }
+      onStatus?.('Speech recognition unavailable — use Chrome or Edge');
       setPhaseR('idle');
       return;
     }
@@ -658,7 +670,7 @@ export function useAutoConversation({
     const useAltLang = lastLangRef.current === srcRef.current;
     rec.lang = speechRecognitionLanguage(useAltLang ? tgtRef.current : srcRef.current);
     rec.interimResults = true;
-    rec.continuous = false;
+    rec.continuous = true;
     rec.maxAlternatives = 3; // get alternatives for better detection
     recogRef.current = rec;
     setPhaseR('listening');
@@ -811,7 +823,7 @@ export function useAutoConversation({
   const clearTurns = useCallback(() => setTurns([]), []);
 
   useEffect(() => {
-    if (activeRef.current && !backendReady) {
+    if (activeRef.current && backendReady === false) {
       onStatus?.('Models still loading — wait for LIVE');
       stop();
     }
