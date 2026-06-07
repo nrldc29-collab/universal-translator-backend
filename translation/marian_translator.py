@@ -1,6 +1,9 @@
+import logging
 from threading import Lock
 
 from backend.config import get_translation_device
+
+logger = logging.getLogger(__name__)
 
 
 class MarianTranslator:
@@ -10,6 +13,7 @@ class MarianTranslator:
         self._models = {}
         self._model_lock = Lock()
         self._cache = {}
+        self._cache_lock = Lock()
         self.nllb_model = "facebook/nllb-200-distilled-600M"
 
     def _nllb_language(self, language: str) -> str:
@@ -50,7 +54,11 @@ class MarianTranslator:
                 tokenizer = AutoTokenizer.from_pretrained(model_name)
                 model = AutoModelForSeq2SeqLM.from_pretrained(model_name, use_safetensors=False)
                 uses_nllb = False
-            except (OSError, ValueError, RuntimeError):
+            except (OSError, ValueError, RuntimeError) as exc:
+                logger.info(
+                    "No direct MarianMT model for %s->%s (%s); falling back to NLLB %s",
+                    source_language, target_language, type(exc).__name__, self.nllb_model,
+                )
                 tokenizer = AutoTokenizer.from_pretrained(self.nllb_model)
                 model = AutoModelForSeq2SeqLM.from_pretrained(self.nllb_model)
                 uses_nllb = True
@@ -89,7 +97,10 @@ class MarianTranslator:
         inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
         if translator.get("device") == "cuda":
             inputs = {key: value.to("cuda") for key, value in inputs.items()}
-        max_new_tokens = min(80, max(16, len(text.split()) * 3 + 8))
+        # Greedy decoding (num_beams=1) stops at the EOS token, so this ceiling
+        # only bounds pathological inputs — short sentences finish well before it.
+        # Keeping it generous prevents long sentences from being truncated mid-thought.
+        max_new_tokens = min(256, max(24, len(text.split()) * 3 + 16))
         generate_kwargs = {"max_new_tokens": max_new_tokens, "num_beams": 1, "do_sample": False}
 
         if translator["uses_nllb"]:
@@ -111,11 +122,14 @@ class MarianTranslator:
         source = source_language or self.default_source_language
         target = target_language or self.default_target_language
         cache_key = (source, target, " ".join(text.lower().split()))
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
         translator = self._load_model(source, target)
         translated = self._generate_translation(text, translator)
-        self._cache[cache_key] = translated
-        if len(self._cache) > 500:
-            self._cache.pop(next(iter(self._cache)))
+        with self._cache_lock:
+            self._cache[cache_key] = translated
+            if len(self._cache) > 500:
+                self._cache.pop(next(iter(self._cache)))
         return translated

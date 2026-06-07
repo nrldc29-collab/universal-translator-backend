@@ -34,6 +34,7 @@ class OllamaTranslator:
         self._check_interval = 30.0
         self._lock = Lock()
         self._cache = {}
+        self._cache_lock = Lock()
 
     def is_available(self):
         now = time.monotonic()
@@ -66,8 +67,10 @@ class OllamaTranslator:
             return text
 
         cache_key = (source, target, " ".join(text.lower().split()))
-        if cache_key in self._cache:
-            return self._cache[cache_key]
+        with self._cache_lock:
+            cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         lang_names = {
             "en": "English", "es": "Spanish", "fr": "French", "de": "German",
@@ -114,9 +117,10 @@ class OllamaTranslator:
                 raise RuntimeError("Ollama returned empty translation")
 
             logger.info("ollama_translation ok model=%s elapsed=%.2fs", self.model, elapsed)
-            self._cache[cache_key] = translated
-            if len(self._cache) > 500:
-                self._cache.pop(next(iter(self._cache)))
+            with self._cache_lock:
+                self._cache[cache_key] = translated
+                if len(self._cache) > 500:
+                    self._cache.pop(next(iter(self._cache)))
             return translated
 
         except (URLError, HTTPError, TimeoutError, OSError, json.JSONDecodeError, KeyError) as exc:

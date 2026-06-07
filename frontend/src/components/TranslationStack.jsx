@@ -7,8 +7,8 @@
  * stays under ~80 lines. All state and handlers flow through props.
  */
 
-import React, { useState, useRef, useCallback } from 'react';
-import { ArrowRight, Check, Copy, Keyboard, Languages, Radio, X } from 'lucide-react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { ArrowRight, Check, Copy, Keyboard, Languages, Loader2, Mic, Radio, Share2, Sparkles, X } from 'lucide-react';
 
 import { compactRepairLabel } from '../utils';
 import TypingText from './TypingText';
@@ -64,20 +64,37 @@ export default function TranslationStack({
   // text-input translate
   textTranslateReady = true,
   onTextTranslate,
+  textInputMode: textInputModeProp,
+  onTextInputModeChange,
+  connectionStatus = 'online',
+  isTextTranslating = false,
+  onNotify,
+  onOpenSettings,
+  onOfflineRetry,
 }) {
   const [typingComplete, setTypingComplete] = useState(false);
-  const [textInputMode, setTextInputMode] = useState(false);
+  const [localTextInputMode, setLocalTextInputMode] = useState(false);
+  const textInputMode = textInputModeProp ?? localTextInputMode;
+  const setTextInputMode = onTextInputModeChange ?? setLocalTextInputMode;
   const [textInputValue, setTextInputValue] = useState('');
   const textareaRef = useRef(null);
   const MAX_CHARS = 400;
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  const showEmptyTips = !hasSourceText && !hasTranslatedText && !textInputMode && !brainUi.visible;
+
+  useEffect(() => {
+    if (textInputMode) {
+      setTimeout(() => textareaRef.current?.focus(), 40);
+    } else {
+      setTextInputValue('');
+    }
+  }, [textInputMode]);
 
   const handleTextSubmit = useCallback(() => {
     const trimmed = textInputValue.trim();
-    if (!trimmed || !onTextTranslate || !textTranslateReady) return;
+    if (!trimmed || !onTextTranslate || !textTranslateReady || isTextTranslating) return;
     onTextTranslate(trimmed);
-    setTextInputValue('');
-    setTextInputMode(false);
-  }, [textInputValue, onTextTranslate, textTranslateReady]);
+  }, [textInputValue, onTextTranslate, textTranslateReady, isTextTranslating]);
 
   const handleTextKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -85,7 +102,22 @@ export default function TranslationStack({
       handleTextSubmit();
     }
     if (e.key === 'Escape') setTextInputMode(false);
-  }, [handleTextSubmit]);
+  }, [handleTextSubmit, setTextInputMode]);
+
+  const shareText = useCallback(async (text, label) => {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) return;
+    if (canShare) {
+      try {
+        await navigator.share({ title: label, text: trimmed });
+        onNotify?.('Shared', 'success');
+      } catch {
+        // User cancelled
+      }
+      return;
+    }
+    copyToClipboard(trimmed, label === 'Translation' ? 'tr' : 'src');
+  }, [canShare, copyToClipboard, onNotify]);
   const aiRecoveryClass = [
     'ai-recovery',
     brainUi.hints?.language_auto_repaired
@@ -99,7 +131,66 @@ export default function TranslationStack({
     .join(' ');
 
   return (
-    <section className="translation-stack">
+    <section className="translation-stack" id="main-content">
+
+      {showEmptyTips && (
+        <div className="empty-state translation-empty-state" data-connection={connectionStatus} aria-live="polite">
+          <div className="empty-state-icon">
+            <Sparkles size={26} strokeWidth={1.8} />
+          </div>
+          <h3 className="empty-state-title">Ready when you are</h3>
+          <p className="empty-state-description">
+            {connectionStatus === 'online'
+              ? 'Tap the microphone to speak, or use Type to enter text manually.'
+              : connectionStatus === 'checking' || connectionStatus === 'warming'
+                ? 'Hang tight — we are getting the translator ready for you.'
+                : 'Connect to the server, then tap the mic to start translating.'}
+          </p>
+          <div className="empty-state-tips">
+            <span className="empty-state-tip">
+              <Languages size={14} strokeWidth={2.2} />
+              Pick languages above
+            </span>
+            <span className="empty-state-tip">
+              <Keyboard size={14} strokeWidth={2.2} />
+              Type instead of speaking
+            </span>
+          </div>
+          <div className="empty-state-actions">
+            {connectionStatus === 'online' ? (
+              <>
+                <button
+                  type="button"
+                  className="empty-state-cta primary"
+                  onClick={handleMicClick}
+                >
+                  <Mic size={15} strokeWidth={2.4} />
+                  Start speaking
+                </button>
+                <button
+                  type="button"
+                  className="empty-state-cta"
+                  onClick={() => setTextInputMode(true)}
+                >
+                  <Keyboard size={15} strokeWidth={2.4} />
+                  Type to translate
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="empty-state-cta primary" onClick={onOpenSettings}>
+                  Open settings
+                </button>
+                {onOfflineRetry && (
+                  <button type="button" className="empty-state-cta" onClick={onOfflineRetry}>
+                    Retry connection
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {textInputMode && (
         <div className="text-input-card">
@@ -125,17 +216,31 @@ export default function TranslationStack({
             onKeyDown={handleTextKeyDown}
             placeholder="Enter text to translate…"
             rows={3}
+            disabled={isTextTranslating}
+            aria-busy={isTextTranslating}
           />
           <div className="text-input-actions">
-            <span className="text-input-char-count">{textInputValue.length}/{MAX_CHARS}</span>
+            <span
+              className={[
+                'text-input-char-count',
+                textInputValue.length >= MAX_CHARS ? 'at-limit' : '',
+                textInputValue.length > 350 ? 'near-limit' : '',
+              ].filter(Boolean).join(' ')}
+            >
+              {textInputValue.length}/{MAX_CHARS}
+            </span>
             <button
               type="button"
-              className="text-input-submit"
-              disabled={!textTranslateReady || !textInputValue.trim()}
+              className={`text-input-submit${isTextTranslating ? ' loading' : ''}`}
+              disabled={!textTranslateReady || !textInputValue.trim() || isTextTranslating}
               onClick={handleTextSubmit}
             >
-              <ArrowRight size={13} strokeWidth={2.5} />
-              Translate
+              {isTextTranslating ? (
+                <Loader2 size={14} strokeWidth={2.5} className="spin-icon" />
+              ) : (
+                <ArrowRight size={13} strokeWidth={2.5} />
+              )}
+              {isTextTranslating ? 'Translating…' : 'Translate'}
             </button>
           </div>
         </div>
@@ -176,6 +281,7 @@ export default function TranslationStack({
         </section>
       )}
 
+      {!showEmptyTips && (
       <article
         className={`transcript-card ${hasSourceText ? 'has-text' : ''} ${textInputMode ? 'hidden' : ''}`}
         data-state={transcriptState}
@@ -211,27 +317,42 @@ export default function TranslationStack({
           </div>
         )}
         {hasSourceText && (
-          <button
-            type="button"
-            onClick={() => copyToClipboard(sourceText, 'src')}
-            aria-label="Copy transcript"
-            className={`copy-action ${copiedKey === 'src' ? 'copied' : ''}`}
-          >
-            {copiedKey === 'src' ? (
-              <Check size={15} strokeWidth={2.6} />
-            ) : (
-              <Copy size={15} strokeWidth={2.4} />
+          <div className="card-actions">
+            {canShare && (
+              <button
+                type="button"
+                onClick={() => shareText(sourceText, 'Transcript')}
+                aria-label="Share transcript"
+                className="copy-action"
+              >
+                <Share2 size={15} strokeWidth={2.4} />
+              </button>
             )}
-            <span className="sr-only">
-              {copiedKey === 'src' ? 'Copied transcript' : 'Copy transcript'}
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(sourceText, 'src')}
+              aria-label="Copy transcript"
+              className={`copy-action ${copiedKey === 'src' ? 'copied' : ''}`}
+            >
+              {copiedKey === 'src' ? (
+                <Check size={15} strokeWidth={2.6} />
+              ) : (
+                <Copy size={15} strokeWidth={2.4} />
+              )}
+              <span className="sr-only">
+                {copiedKey === 'src' ? 'Copied transcript' : 'Copy transcript'}
+              </span>
+            </button>
+          </div>
         )}
       </article>
+      )}
 
+      {!showEmptyTips && (
       <article
-        className={`translation-card ${hasTranslatedText ? 'has-text' : ''}`}
+        className={`translation-card ${hasTranslatedText ? 'has-text' : ''} ${(processing || isTextTranslating) && !hasTranslatedText ? 'is-busy' : ''}`}
         data-state={translationState}
+        aria-busy={(processing || isTextTranslating) && !hasTranslatedText}
       >
         <span className="card-kicker">
           <Languages size={13} strokeWidth={2.5} aria-hidden="true" />
@@ -267,20 +388,33 @@ export default function TranslationStack({
           </div>
         )}
         {hasTranslatedText && (
-          <button
-            type="button"
-            onClick={() => copyToClipboard(translatedText, 'tr')}
-            aria-label="Copy translation"
-            className={`copy-action ${copiedKey === 'tr' ? 'copied' : ''}`}
-          >
-            {copiedKey === 'tr' ? (
-              <Check size={15} strokeWidth={2.6} />
-            ) : (
-              <Copy size={15} strokeWidth={2.4} />
+          <div className="card-actions">
+            {canShare && (
+              <button
+                type="button"
+                onClick={() => shareText(translatedText, 'Translation')}
+                aria-label="Share translation"
+                className="copy-action"
+              >
+                <Share2 size={15} strokeWidth={2.4} />
+              </button>
             )}
-          </button>
+            <button
+              type="button"
+              onClick={() => copyToClipboard(translatedText, 'tr')}
+              aria-label="Copy translation"
+              className={`copy-action ${copiedKey === 'tr' ? 'copied' : ''}`}
+            >
+              {copiedKey === 'tr' ? (
+                <Check size={15} strokeWidth={2.6} />
+              ) : (
+                <Copy size={15} strokeWidth={2.4} />
+              )}
+            </button>
+          </div>
         )}
       </article>
+      )}
 
       {confidenceWarningVisible && confidenceWarningMessage && (
         <div className="confidence-warning-pill" role="status">
@@ -303,6 +437,19 @@ export default function TranslationStack({
           <div className="clarify-pill-actions">
             <button
               type="button"
+              className="clarify-yes"
+              onClick={() => {
+                setClarifyVisible(false);
+                setPipelineStage?.('Listening');
+                setStatus?.('Ready to listen');
+                handleMicClick?.();
+                haptic?.(20);
+              }}
+            >
+              Speak again
+            </button>
+            <button
+              type="button"
               className="clarify-no"
               onClick={() => setClarifyVisible(false)}
             >
@@ -321,15 +468,15 @@ export default function TranslationStack({
             <ConversationActions
               conversationTurns={recentConversationTurns}
               onClear={onClearConversation}
-              disabled={false}
+              onCopy={(text) => copyToClipboard(text, 'conversation')}
+              disabled={streaming || processing}
             />
           </div>
           <div className="conversation-turns-list">
             {recentConversationTurns.map((turn, i) => (
               <div
                 key={`${turn.timestamp || i}-${i}`}
-                className="conversation-turn"
-                style={{ animationDelay: `${i * 40}ms` }}
+                className={`conversation-turn${i === recentConversationTurns.length - 1 ? ' latest' : ''}`}
               >
                 <div className="turn-meta">
                   <span>{turn.speaker_label || (turn.conversationSpeaker === 'B' ? 'Person 2' : 'Person 1')}</span>

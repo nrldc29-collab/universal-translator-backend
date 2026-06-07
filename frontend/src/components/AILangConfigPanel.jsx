@@ -144,9 +144,14 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
       <div className="ailang-config-panel">
         <div className="ailang-config-header">
           <h3>AILang Agent Configuration</h3>
-          <button type="button" className="ailang-config-btn close" onClick={onClose}>×</button>
+          <button type="button" className="ailang-config-btn close" onClick={onClose} aria-label="Close">
+            <X size={16} strokeWidth={2.5} />
+          </button>
         </div>
-        <div className="ailang-config-loading">Loading agents...</div>
+        <div className="ailang-config-loading">
+          <RefreshCw size={20} className="spinning" />
+          <span>Loading agents…</span>
+        </div>
       </div>
     );
   }
@@ -156,7 +161,9 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
       <div className="ailang-config-panel">
         <div className="ailang-config-header">
           <h3>AILang Agent Configuration</h3>
-          <button type="button" className="ailang-config-btn close" onClick={onClose}>×</button>
+          <button type="button" className="ailang-config-btn close" onClick={onClose} aria-label="Close">
+            <X size={16} strokeWidth={2.5} />
+          </button>
         </div>
         <div className="ailang-config-error">
           <AlertTriangle size={16} />
@@ -179,7 +186,9 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
           <button type="button" className="ailang-config-btn" onClick={() => setShowMetrics(!showMetrics)}>
             {showMetrics ? 'Hide Metrics' : 'Show Metrics'}
           </button>
-          <button type="button" className="ailang-config-btn close" onClick={onClose}>×</button>
+          <button type="button" className="ailang-config-btn close" onClick={onClose} aria-label="Close">
+            <X size={16} strokeWidth={2.5} />
+          </button>
         </div>
       </div>
       <div className="ailang-config-list">
@@ -187,7 +196,7 @@ export default function AILangConfigPanel({ apiUrl, onClose }) {
           const isEnabled = agents?.[agentName] !== false;
           const isToggling = toggling[agentName];
           return (
-            <div key={agentName} className="ailang-config-item">
+            <div key={agentName} className={`ailang-config-item${isEnabled ? ' enabled' : ' disabled-agent'}`}>
               <div className="ailang-config-item-info">
                 <div className="ailang-config-item-name">{agentName}</div>
                 <div className="ailang-config-item-desc">{agentDescriptions[agentName]}</div>

@@ -2,9 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   X, Languages, Volume2, Mic, Zap, Monitor, Lock, Bell, Settings2, Info,
   ChevronRight, ChevronDown, Sun, Moon, Contrast, Type, Eye, EyeOff,
-  Trash2, Shield, Music, Bug, Server, Key, Check, AlertTriangle, Brain,
+  Trash2, Shield, Music, Bug, Server, Key, Check, AlertTriangle, Brain, CircleHelp, Keyboard, RefreshCw,
 } from 'lucide-react';
 import { TARGET_LANGUAGE_OPTIONS } from '../utils';
+import { ONBOARDING_OPEN_EVENT } from './OnboardingTour';
+import PerformanceDashboard from './PerformanceDashboard';
 
 const FRONTEND_VERSION = '2.0.0';
 
@@ -116,6 +118,8 @@ export default function SettingsPanel({
                 type="button"
                 className={`sp-nav-item${activeSection === id ? ' active' : ''}`}
                 onClick={() => setActiveSection(id)}
+                aria-label={label}
+                aria-current={activeSection === id ? 'page' : undefined}
               >
                 <Icon size={15} strokeWidth={2.1} />
                 <span>{label}</span>
@@ -126,6 +130,7 @@ export default function SettingsPanel({
 
           {/* Content pane */}
           <div className="sp-content">
+            <div key={activeSection} className="sp-section-pane">
             {activeSection === 'language' && (
               <SectionLanguage settings={settings} updateSetting={updateSetting} />
             )}
@@ -165,6 +170,7 @@ export default function SettingsPanel({
             {activeSection === 'about' && (
               <SectionAbout diagnostics={diagnostics} apiUrl={apiUrl} />
             )}
+            </div>
           </div>
         </div>
       </div>
@@ -196,7 +202,7 @@ function SectionLanguage({ settings, updateSetting }) {
 
       <div className="sp-info-box">
         <Info size={13} />
-        <span>Source and target languages are set directly on the main screen using the language selector dock.</span>
+        <span>Source and target languages are set on the main screen. UI language is saved for a future localized interface update.</span>
       </div>
 
       <div className="sp-divider-label">Available Translation Languages</div>
@@ -314,6 +320,10 @@ function SectionTranslation({ settings, updateSetting }) {
           onChange={(v) => updateSetting('partialTts', v)}
         />
       </SettingRow>
+      <div className="sp-info-box">
+        <Info size={13} />
+        <span>Partial speech playback depends on your server configuration. This preference is saved for when the backend supports it.</span>
+      </div>
 
       <SettingRow label="Translation Provider" hint="Backend translation engine" icon={<Zap size={15} />}>
         <select
@@ -396,10 +406,15 @@ function SectionAILang({ apiUrl }) {
         hint={ollamaStatus?.warmup?.message || (ollamaStatus ? 'Checking...' : 'Loading...')}
         icon={<Brain size={15} />}
       >
-        <span className={`ailang-status-badge ${isActive ? 'active' : isDegraded ? 'degraded' : 'offline'}`} style={{ fontSize: '0.72rem' }}>
+        <span className={`ailang-status-badge sp-ailang-badge ${isActive ? 'active' : isDegraded ? 'degraded' : 'offline'}`}>
           {isActive ? 'Active' : isDegraded ? 'Degraded' : ollamaStatus?.enabled ? 'Checking' : 'Offline'}
         </span>
       </SettingRow>
+
+      <button type="button" className="sp-test-btn" onClick={loadStatus}>
+        <RefreshCw size={15} strokeWidth={2.2} />
+        Refresh AILang status
+      </button>
 
       <div className="sp-divider-label">Ollama Model</div>
 
@@ -466,7 +481,7 @@ function SectionAILang({ apiUrl }) {
         <span>
           Switch models instantly without restart. Use <strong>phi3</strong> or <strong>tinyllama</strong> for
           speed, <strong>mistral</strong> or <strong>llama3</strong> for accuracy. Run{' '}
-          <code style={{ fontFamily: 'monospace', fontSize: '0.85em' }}>ollama pull &lt;model&gt;</code> to add models.
+          <code className="sp-code">ollama pull &lt;model&gt;</code> to add models.
         </span>
       </div>
     </div>
@@ -697,6 +712,13 @@ function SectionAdvanced({
         <AlertTriangle size={13} />
         <span>API keys are stored in browser localStorage. Use a restricted key and avoid storing production credentials in shared devices.</span>
       </div>
+
+      {settings.debugMode && (
+        <>
+          <div className="sp-divider-label">Performance metrics</div>
+          <PerformanceDashboard backendUrl={settings.backendUrl || apiUrl} />
+        </>
+      )}
     </div>
   );
 }
@@ -736,6 +758,24 @@ function SectionAbout({ diagnostics, apiUrl }) {
         <InfoRow label="Browser" value={getBrowserName()} />
         <InfoRow label="Online" value={navigator.onLine ? 'Yes' : 'No'} />
       </div>
+
+      <div className="sp-divider-label">Help</div>
+      <button
+        type="button"
+        className="sp-test-btn"
+        onClick={() => window.dispatchEvent(new CustomEvent(ONBOARDING_OPEN_EVENT))}
+      >
+        <CircleHelp size={15} />
+        Show guided tour
+      </button>
+      <button
+        type="button"
+        className="sp-test-btn"
+        onClick={() => window.dispatchEvent(new CustomEvent('anai-open-keyboard-help'))}
+      >
+        <Keyboard size={15} />
+        Keyboard shortcuts
+      </button>
 
       <div className="sp-divider-label">Legal</div>
       <div className="sp-info-box">

@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Wifi, WifiOff, AlertTriangle, Activity, CheckCircle2 } from 'lucide-react';
+import { WifiOff, AlertTriangle, Activity, CheckCircle2 } from 'lucide-react';
 
 export default function ConnectionQualityIndicator({
   connectionStatus = 'unknown',
@@ -24,22 +24,18 @@ export default function ConnectionQualityIndicator({
 
   const quality = getQualityFromLatency(latencyMs);
 
-  const renderStatusIcon = () => {
+  const StatusIcon = (() => {
     switch (connectionStatus) {
       case 'online':
-        return <CheckCircle2 size={14} color="#22d3ee" />;
+        return CheckCircle2;
       case 'offline':
-        return <WifiOff size={14} color="#f87171" />;
-      case 'warming':
-        return <Activity size={14} color="#fbbf24" />;
-      case 'checking':
-        return <Activity size={14} color="#94a3b8" />;
+        return WifiOff;
       case 'error':
-        return <AlertTriangle size={14} color="#fbbf24" />;
+        return AlertTriangle;
       default:
-        return <Activity size={14} color="#94a3b8" />;
+        return Activity;
     }
-  };
+  })();
 
   const renderLatencyBars = () => {
     if (connectionStatus !== 'online') {
@@ -79,12 +75,15 @@ export default function ConnectionQualityIndicator({
   return (
     <div
       className={`connection-quality-indicator ${connectionStatus} ${className}`}
+      data-quality={connectionStatus === 'online' ? quality.level : connectionStatus}
       role="status"
       aria-live="polite"
       aria-label={`Connection status: ${getStatusText()}`}
     >
       <div className="indicator-main">
-        {renderStatusIcon()}
+        <span className={`conn-status-icon status-${connectionStatus}`} aria-hidden="true">
+          <StatusIcon size={14} strokeWidth={2.2} />
+        </span>
         {renderLatencyBars()}
         <span className="status-text">{getStatusText()}</span>
       </div>

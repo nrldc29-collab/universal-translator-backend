@@ -19,6 +19,7 @@ import time
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
 from collections import OrderedDict
+from threading import RLock
 import re
 
 
@@ -47,6 +48,9 @@ class PredictiveCache:
         
         self.cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self.pattern_history: List[str] = []
+        # Single shared instance is read by /metrics while translation writes to
+        # it; RLock (reentrant) lets nested calls like set->_evict stay safe.
+        self._lock = RLock()
         
         # Common phrases for cache warming
         self.common_phrases = {
@@ -82,28 +86,29 @@ class PredictiveCache:
     ) -> Optional[str]:
         """Get cached translation if available."""
         key = self._make_key(text, source_lang, target_lang)
-        
-        if key not in self.cache:
-            return None
-        
-        entry = self.cache[key]
-        
-        # Check TTL
-        if time.time() - entry.timestamp > self.ttl_seconds:
-            del self.cache[key]
-            return None
-        
-        # Update access
-        entry.access_count += 1
-        entry.context.update(context or {})
-        
-        # Move to end (LRU)
-        self.cache.move_to_end(key)
-        
-        # Track pattern
-        self._track_pattern(text)
-        
-        return entry.translation
+
+        with self._lock:
+            if key not in self.cache:
+                return None
+
+            entry = self.cache[key]
+
+            # Check TTL
+            if time.time() - entry.timestamp > self.ttl_seconds:
+                del self.cache[key]
+                return None
+
+            # Update access
+            entry.access_count += 1
+            entry.context.update(context or {})
+
+            # Move to end (LRU)
+            self.cache.move_to_end(key)
+
+            # Track pattern
+            self._track_pattern(text)
+
+            return entry.translation
     
     def set_translation(
         self,
@@ -124,13 +129,14 @@ class PredictiveCache:
             context=context or {},
             priority=priority,
         )
-        
-        # Evict if necessary
-        if len(self.cache) >= self.max_size:
-            self._evict()
-        
-        self.cache[key] = entry
-        self.cache.move_to_end(key)
+
+        with self._lock:
+            # Evict if necessary
+            if len(self.cache) >= self.max_size:
+                self._evict()
+
+            self.cache[key] = entry
+            self.cache.move_to_end(key)
     
     def _evict(self):
         """Evict least important entry."""
@@ -159,9 +165,10 @@ class PredictiveCache:
     
     def _track_pattern(self, text: str):
         """Track usage patterns for predictions."""
-        self.pattern_history.append(text.lower())
-        if len(self.pattern_history) > 1000:
-            self.pattern_history.pop(0)
+        with self._lock:
+            self.pattern_history.append(text.lower())
+            if len(self.pattern_history) > 1000:
+                self.pattern_history.pop(0)
     
     def predict_next(self, context: List[str], source_lang: str) -> List[str]:
         """Predict likely next phrases based on context."""
@@ -170,18 +177,20 @@ class PredictiveCache:
         
         # Simple n-gram prediction
         predictions = []
-        
+
         if len(context) >= 2:
             # Look for patterns ending with last 2 words
             last_two = " ".join(context[-2:])
-            for i in range(len(self.pattern_history) - 2):
-                if self.pattern_history[i] == last_two:
-                    next_phrase = self.pattern_history[i + 2]
+            with self._lock:
+                history = list(self.pattern_history)
+            for i in range(len(history) - 2):
+                if history[i] == last_two:
+                    next_phrase = history[i + 2]
                     if next_phrase not in predictions:
                         predictions.append(next_phrase)
                         if len(predictions) >= 5:
                             break
-        
+
         return predictions
     
     def warm_cache(self, source_lang: str, target_lang: str, translator_func):
@@ -207,27 +216,29 @@ class PredictiveCache:
     
     def get_statistics(self) -> Dict:
         """Get cache statistics."""
-        if not self.cache:
+        with self._lock:
+            if not self.cache:
+                return {
+                    "size": 0,
+                    "hit_rate": 0.0,
+                    "total_accesses": 0,
+                    "total_hits": 0,
+                }
+
+            total_accesses = sum(e.access_count for e in self.cache.values())
+            total_hits = total_accesses - len(self.cache)  # Approximate
+
             return {
-                "size": 0,
-                "hit_rate": 0.0,
-                "total_accesses": 0,
-                "total_hits": 0,
+                "size": len(self.cache),
+                "max_size": self.max_size,
+                "hit_rate": total_hits / max(1, total_accesses),
+                "total_accesses": total_accesses,
+                "total_hits": total_hits,
+                "pattern_history_size": len(self.pattern_history),
             }
-        
-        total_accesses = sum(e.access_count for e in self.cache.values())
-        total_hits = total_accesses - len(self.cache)  # Approximate
-        
-        return {
-            "size": len(self.cache),
-            "max_size": self.max_size,
-            "hit_rate": total_hits / max(1, total_accesses),
-            "total_accesses": total_accesses,
-            "total_hits": total_hits,
-            "pattern_history_size": len(self.pattern_history),
-        }
-    
+
     def clear(self):
         """Clear cache."""
-        self.cache.clear()
-        self.pattern_history = []
+        with self._lock:
+            self.cache.clear()
+            self.pattern_history = []

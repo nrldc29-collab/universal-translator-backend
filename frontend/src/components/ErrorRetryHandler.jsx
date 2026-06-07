@@ -129,7 +129,7 @@ export default function ErrorRetryHandler({
       aria-live="polite"
     >
       <div className="error-content">
-        <div className="error-icon">
+        <div className="error-icon" aria-hidden="true">
           {getErrorIcon()}
         </div>
         
@@ -185,11 +185,9 @@ export default function ErrorRetryHandler({
       {/* Progress bar for countdown */}
       {isRetrying && countdown > 0 && (
         <div className="retry-progress">
-          <div 
+          <div
             className="progress-fill"
-            style={{
-              animation: `shrink ${countdown}s linear forwards`,
-            }}
+            style={{ '--retry-seconds': `${countdown}s` }}
           />
         </div>
       )}

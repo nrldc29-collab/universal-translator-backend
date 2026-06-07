@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { SafeAreaView, View, Text, Pressable, useWindowDimensions, ScrollView, Modal, Linking, ActivityIndicator } from "react-native";
+import { SafeAreaView, View, Text, Pressable, useWindowDimensions, ScrollView, Modal, Linking, ActivityIndicator, Share } from "react-native";
 import Constants from "expo-constants";
 import * as Network from "expo-network";
 import * as Haptics from "expo-haptics";
@@ -22,6 +22,10 @@ import LoadingScreen from "./components/LoadingScreen";
 import Toast from "./components/Toast";
 import HelpTipsModal from "./components/HelpTipsModal";
 import * as Clipboard from "expo-clipboard";
+import * as SecureStore from "expo-secure-store";
+import { getFriendlyPanelState, getFriendlyStatusLine } from "./utils/friendlyStatus";
+
+const HELP_SEEN_KEY = "translator_help_seen";
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl || "";
 const DEBUG_LOGS = Boolean(__DEV__ || process.env.EXPO_PUBLIC_DEBUG_LOGS === "1");
@@ -297,6 +301,7 @@ export default function App() {
     login,
     logout,
     clearAllData,
+    saveRecentUrl,
   } = useMobileAuth({
     defaultUrl: API_URL,
     onStatus: (message, type) => {
@@ -358,17 +363,15 @@ export default function App() {
   const tinyLayout = height < 650;
   const primaryIconSize = tinyLayout ? 32 : compactLayout ? 36 : 42;
   const systemColor = getStatusColor(statusType);
-  const panelState = isPlayingTts
-    ? "Speaking"
-    : isStreaming
-      ? "Listening"
-      : isInterpreterActive && isConnected
-        ? "Ready"
-        : isInterpreterActive
-          ? "Connecting"
-          : isConnected
-            ? "Standby"
-            : "Offline";
+  const isConnecting = statusType === "connecting";
+  const panelState = getFriendlyPanelState({
+    isPlayingTts,
+    isStreaming,
+    isInterpreterActive,
+    isConnected,
+    isConnecting,
+  });
+  const friendlyStatusLine = getFriendlyStatusLine(status);
   const sourceText = partialTranscript || result?.source_text || result?.original_text || "";
   const translatedText = liveTranslation || result?.translated_text || "";
   const intentLine = useMemo(() => {
@@ -396,7 +399,14 @@ export default function App() {
   const blockingError = useMemo(() => {
     if (dismissedError && status === dismissedError) return null;
     if (!networkState?.isConnected) {
-      return { message: "No internet connection. Check Wi‑Fi or mobile data.", action: "Retry", handler: checkNetworkState };
+      return {
+        message: "No internet connection. Check Wi‑Fi or mobile data.",
+        action: "Retry",
+        handler: async () => {
+          await checkNetworkState();
+          if (wsUrl && validateUrl(wsUrl)) connect();
+        },
+      };
     }
     if (statusType === "error") {
       if (/microphone|mic/i.test(status || "")) {
@@ -415,7 +425,6 @@ export default function App() {
       ? "Pause interpreter"
       : "Start interpreter";
   const primaryButtonText = isPlayingTts ? "Stop" : isInterpreterActive ? "Pause" : "Start";
-  const isConnecting = statusType === "connecting";
   const primaryIcon = isPlayingTts ? "stop" : isInterpreterActive ? (isStreaming ? "pause" : "radio") : "mic";
   const showOfflineCta = authLoaded && !showSetup && !isConnected && validateUrl(wsUrl);
 
@@ -515,6 +524,34 @@ export default function App() {
     await Clipboard.setStringAsync(text);
     await tapHaptic("success");
     showToast("Original text copied", "success");
+  }
+
+  async function shareTranslatedText() {
+    const text = String(translatedText || "").trim();
+    if (!text || text === voiceIntent) {
+      showToast("Nothing to share yet", "error");
+      return;
+    }
+    try {
+      await Share.share({ message: text });
+      await tapHaptic("success");
+    } catch {
+      // User dismissed share sheet
+    }
+  }
+
+  async function shareSourceText() {
+    const text = String(sourceText || "").trim();
+    if (!text) {
+      showToast("Nothing to share yet", "error");
+      return;
+    }
+    try {
+      await Share.share({ message: text });
+      await tapHaptic("success");
+    } catch {
+      // User dismissed share sheet
+    }
   }
 
   const contextChipLabel = useMemo(() => {
@@ -1050,6 +1087,13 @@ export default function App() {
   }
 
   async function toggleInterpreter() {
+    if (isPlayingTts) {
+      await tapHaptic("light");
+      stopTtsPlayback();
+      setStatus("Stopped playback");
+      setStatusType(isConnectedRef.current ? "success" : "idle");
+      return;
+    }
     if (isInterpreterActive) {
       await tapHaptic("light");
       await pauseInterpreter();
@@ -1136,11 +1180,28 @@ export default function App() {
       setStatusType("error");
       return;
     }
+    if (backendReachable !== true) {
+      const ok = await checkBackendHealth(trimmed);
+      if (!ok) {
+        setStatus("Test the server connection before continuing");
+        setStatusType("error");
+        return;
+      }
+    }
     await saveWsUrl(trimmed);
     await markSetupComplete();
     setShowSetup(false);
     setDismissedError("");
     if (networkState?.isConnected) connect();
+    try {
+      const helpSeen = await SecureStore.getItemAsync(HELP_SEEN_KEY);
+      if (!helpSeen) {
+        await SecureStore.setItemAsync(HELP_SEEN_KEY, "1");
+        setTimeout(() => setShowHelp(true), 700);
+      }
+    } catch {
+      // Non-fatal if secure storage is unavailable
+    }
   }
 
   async function handleSaveServerUrl(url) {
@@ -1209,6 +1270,8 @@ export default function App() {
             setPassword={setPassword}
             isLoggedIn={Boolean(token)}
             recentUrls={recentUrls}
+            backendReachable={backendReachable}
+            isCheckingBackend={isCheckingBackend}
             sourceLanguage={sourceLanguage}
             setSourceLanguage={setSourceLanguage}
             targetLanguage={targetLanguage}
@@ -1229,16 +1292,24 @@ export default function App() {
       </Modal>
 
       <View style={[styles.page, compactLayout && styles.pageCompact]}>
-        <View style={[styles.interpreterPanel, compactLayout && styles.interpreterPanelCompact, tinyLayout && styles.interpreterPanelTiny]}>
+        <View style={[
+          styles.interpreterPanel,
+          compactLayout && styles.interpreterPanelCompact,
+          tinyLayout && styles.interpreterPanelTiny,
+          isConnected && styles.interpreterPanelOnline,
+        ]}>
           <View style={[styles.topBar, compactLayout && styles.topBarCompact]}>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.brand}>ANAI</Text>
+            <View style={styles.topBarBrand}>
+              <View style={styles.brandRow}>
+                <Text style={styles.brand}>AN</Text>
+                <Text style={styles.brandAccent}>AI</Text>
+              </View>
               <Text numberOfLines={1} style={styles.brandSubline}>Live voice interpreter</Text>
             </View>
             <View style={styles.topBarActions}>
               <Pressable
                 onPress={() => setShowHelp(true)}
-                style={styles.settingsBtn}
+                style={({ pressed }) => [styles.settingsBtn, pressed && styles.settingsBtnPressed]}
                 accessibilityRole="button"
                 accessibilityLabel="Open help tips"
               >
@@ -1246,13 +1317,18 @@ export default function App() {
               </Pressable>
               <Pressable
                 onPress={() => setShowSettings(true)}
-                style={styles.settingsBtn}
+                style={({ pressed }) => [styles.settingsBtn, pressed && styles.settingsBtnPressed]}
                 accessibilityRole="button"
                 accessibilityLabel="Open settings"
               >
                 <Ionicons name="settings-outline" size={20} color="#e2e8f0" />
               </Pressable>
-              <View style={styles.connectionBadge}>
+              <View style={[
+                styles.connectionBadge,
+                isConnected && styles.connectionBadgeOnline,
+                !isConnected && !isConnecting && styles.connectionBadgeOffline,
+                isConnecting && styles.connectionBadgePulsing,
+              ]}>
                 <View style={[styles.connectionDot, { backgroundColor: systemColor }]} accessibilityLabel={`Status ${panelState}`} />
                 <Text numberOfLines={1} style={styles.connectionText}>{panelState}</Text>
               </View>
@@ -1274,11 +1350,13 @@ export default function App() {
           ) : null}
           {showOfflineCta ? (
             <View style={styles.offlineCta}>
-              <Ionicons name="cloud-offline-outline" size={22} color="#67e8f9" />
+              <View style={styles.offlineCtaIcon}>
+                <Ionicons name="cloud-offline-outline" size={20} color="#67e8f9" />
+              </View>
               <Text style={styles.offlineCtaText}>Not connected to the translator server yet.</Text>
               <Pressable
                 onPress={connect}
-                style={styles.offlineCtaBtn}
+                style={({ pressed }) => [styles.offlineCtaBtn, pressed && styles.offlineCtaBtnPressed]}
                 accessibilityRole="button"
                 accessibilityLabel="Connect to server"
               >
@@ -1289,6 +1367,9 @@ export default function App() {
 
           {!isInterpreterActive && !sourceText && !translatedText && !showOfflineCta ? (
             <View style={styles.hintStrip}>
+              <View style={styles.hintStripIcon}>
+                <Ionicons name="mic-outline" size={16} color="#67e8f9" />
+              </View>
               <Text style={styles.hintStripText}>Tap Start, then speak. Your translation plays out loud automatically.</Text>
             </View>
           ) : null}
@@ -1296,13 +1377,24 @@ export default function App() {
           <View style={[styles.routeBand, compactLayout && styles.routeBandCompact]}>
             <Pressable
               onPress={() => setLanguagePicker("source")}
-              style={[styles.routeSide, Number(speakerRoute.speakerIndex) === 1 && styles.routeSideActive, compactLayout && styles.routeSideCompact]}
+              style={({ pressed }) => [
+                styles.routeSide,
+                Number(speakerRoute.speakerIndex) === 1 && styles.routeSideActive,
+                compactLayout && styles.routeSideCompact,
+                pressed && styles.routeSidePressed,
+              ]}
               accessibilityRole="button"
               accessibilityLabel={`Person 1 speaks ${activeSource}. Tap to change language.`}
             >
               <Text style={styles.routeFlag}>{LANGUAGE_FLAGS[sourceLanguage] || "🌐"}</Text>
               <Text style={styles.routeCaption}>Person 1</Text>
-              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.routeLanguage}>{activeSource}</Text>
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                style={[styles.routeLanguage, Number(speakerRoute.speakerIndex) === 1 && styles.routeLanguageActive]}
+              >
+                {activeSource}
+              </Text>
               <Text style={styles.routeTapHint}>Tap to change</Text>
             </Pressable>
             <Pressable
@@ -1319,51 +1411,76 @@ export default function App() {
             </Pressable>
             <Pressable
               onPress={() => setLanguagePicker("target")}
-              style={[styles.routeSide, Number(speakerRoute.speakerIndex) === 2 && styles.routeSideActive, compactLayout && styles.routeSideCompact]}
+              style={({ pressed }) => [
+                styles.routeSide,
+                Number(speakerRoute.speakerIndex) === 2 && styles.routeSideActive,
+                compactLayout && styles.routeSideCompact,
+                pressed && styles.routeSidePressed,
+              ]}
               accessibilityRole="button"
               accessibilityLabel={`Person 2 speaks ${activeTarget}. Tap to change language.`}
             >
               <Text style={styles.routeFlag}>{LANGUAGE_FLAGS[targetLanguage] || "🌐"}</Text>
               <Text style={styles.routeCaption}>Person 2</Text>
-              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.routeLanguage}>{activeTarget}</Text>
+              <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                style={[styles.routeLanguage, Number(speakerRoute.speakerIndex) === 2 && styles.routeLanguageActive]}
+              >
+                {activeTarget}
+              </Text>
               <Text style={styles.routeTapHint}>Tap to change</Text>
             </Pressable>
           </View>
 
-          <Pressable
-            onPress={toggleInterpreter}
-            disabled={isConnecting && !isInterpreterActive}
-            accessibilityRole="button"
-            accessibilityLabel={primaryActionLabel}
-            accessibilityHint="Starts or pauses continuous speech translation."
-            accessibilityState={{ selected: isInterpreterActive, busy: isPlayingTts || startingStreamRef.current }}
-            hitSlop={10}
-            style={({ pressed }) => [
-              styles.voiceButton,
-              compactLayout && styles.voiceButtonCompact,
-              tinyLayout && styles.voiceButtonTiny,
-              isInterpreterActive && styles.voiceButtonArmed,
-              isStreaming && styles.voiceButtonListening,
-              isPlayingTts && styles.voiceButtonSpeaking,
-              isConnecting && !isInterpreterActive && styles.voiceButtonBusy,
-              pressed && styles.voiceButtonPressed,
-            ]}
-          >
-            <View style={[styles.voiceCore, compactLayout && styles.voiceCoreCompact, tinyLayout && styles.voiceCoreTiny]}>
-              {isConnecting && !isInterpreterActive ? (
-                <ActivityIndicator size="large" color="#f8fafc" />
-              ) : (
-                <Ionicons
-                  name={primaryIcon}
-                  size={primaryIconSize}
-                  color="#f8fafc"
-                />
-              )}
-              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.voiceButtonText}>
-                {isConnecting && !isInterpreterActive ? "Connecting" : primaryButtonText}
-              </Text>
-            </View>
-          </Pressable>
+          <View style={styles.voiceButtonWrap}>
+            {isStreaming ? (
+              <View
+                style={[
+                  styles.voicePulseRing,
+                  compactLayout && styles.voicePulseRingCompact,
+                  tinyLayout && styles.voicePulseRingTiny,
+                ]}
+                accessibilityElementsHidden
+                importantForAccessibility="no-hide-descendants"
+              />
+            ) : null}
+            <Pressable
+              onPress={toggleInterpreter}
+              disabled={(!isConnected && !isInterpreterActive) || (isConnecting && !isInterpreterActive)}
+              accessibilityRole="button"
+              accessibilityLabel={primaryActionLabel}
+              accessibilityHint="Starts or pauses continuous speech translation."
+              accessibilityState={{ selected: isInterpreterActive, busy: isPlayingTts || startingStreamRef.current }}
+              hitSlop={10}
+              style={({ pressed }) => [
+                styles.voiceButton,
+                compactLayout && styles.voiceButtonCompact,
+                tinyLayout && styles.voiceButtonTiny,
+                isInterpreterActive && styles.voiceButtonArmed,
+                isStreaming && styles.voiceButtonListening,
+                isPlayingTts && styles.voiceButtonSpeaking,
+                isConnecting && !isInterpreterActive && styles.voiceButtonBusy,
+                !isConnected && !isInterpreterActive && styles.voiceButtonDisabled,
+                pressed && styles.voiceButtonPressed,
+              ]}
+            >
+              <View style={[styles.voiceCore, compactLayout && styles.voiceCoreCompact, tinyLayout && styles.voiceCoreTiny]}>
+                {isConnecting && !isInterpreterActive ? (
+                  <ActivityIndicator size="large" color="#f8fafc" />
+                ) : (
+                  <Ionicons
+                    name={primaryIcon}
+                    size={primaryIconSize}
+                    color="#f8fafc"
+                  />
+                )}
+                <Text numberOfLines={1} adjustsFontSizeToFit style={styles.voiceButtonText}>
+                  {isConnecting && !isInterpreterActive ? "Connecting" : primaryButtonText}
+                </Text>
+              </View>
+            </Pressable>
+          </View>
 
           <View style={[styles.flowRail, compactLayout && styles.flowRailCompact]}>
             <FlowStep icon="ear" label="Listen" active={isStreaming} />
@@ -1384,13 +1501,22 @@ export default function App() {
                 <Text style={styles.contextChipText}>{contextChipLabel}</Text>
               </View>
             ) : null}
-            <View style={[styles.transcriptLane, compactLayout && styles.transcriptLaneCompact]}>
+            <View style={[
+              styles.transcriptLane,
+              compactLayout && styles.transcriptLaneCompact,
+              Boolean(sourceText) && styles.transcriptLaneLive,
+            ]}>
               <View style={styles.laneHeader}>
-                <Text style={[styles.laneLabel, { flex: 1 }]}>{activeSpeakerLabel} said {routeSource}</Text>
+                <Text style={[styles.laneLabel, styles.laneLabelFlex, Boolean(sourceText) && styles.laneLabelLive]}>{activeSpeakerLabel} said {routeSource}</Text>
                 {sourceText ? (
-                  <Pressable onPress={copySourceText} style={styles.laneActionBtn} accessibilityRole="button" accessibilityLabel="Copy original text">
-                    <Ionicons name="copy-outline" size={16} color="#cbd5e1" />
-                  </Pressable>
+                  <View style={styles.laneActions}>
+                    <Pressable onPress={shareSourceText} style={({ pressed }) => [styles.laneActionBtn, pressed && styles.laneActionBtnPressed]} accessibilityRole="button" accessibilityLabel="Share original text">
+                      <Ionicons name="share-outline" size={16} color="#cbd5e1" />
+                    </Pressable>
+                    <Pressable onPress={copySourceText} style={({ pressed }) => [styles.laneActionBtn, pressed && styles.laneActionBtnPressed]} accessibilityRole="button" accessibilityLabel="Copy original text">
+                      <Ionicons name="copy-outline" size={16} color="#cbd5e1" />
+                    </Pressable>
+                  </View>
                 ) : null}
               </View>
               <Text
@@ -1401,13 +1527,23 @@ export default function App() {
                 {sourceText || "Your words will appear here"}
               </Text>
             </View>
-            <View style={[styles.translationLane, compactLayout && styles.translationLaneCompact]}>
+            <View style={[
+              styles.translationLane,
+              compactLayout && styles.translationLaneCompact,
+              Boolean(translatedText) && styles.translationLaneLive,
+              isTranslating && !translatedText && styles.translationLaneBusy,
+            ]}>
               <View style={styles.laneHeader}>
-                <Text style={[styles.laneLabel, { flex: 1 }]}>{activeListenerLabel} hears {routeTarget}</Text>
+                <Text style={[styles.laneLabel, styles.laneLabelFlex, Boolean(translatedText) && styles.laneLabelLive]}>{activeListenerLabel} hears {routeTarget}</Text>
                 {translatedText ? (
-                  <Pressable onPress={copyTranslatedText} style={styles.laneActionBtn} accessibilityRole="button" accessibilityLabel="Copy translation">
-                    <Ionicons name="copy-outline" size={16} color="#bbf7d0" />
-                  </Pressable>
+                  <View style={styles.laneActions}>
+                    <Pressable onPress={shareTranslatedText} style={({ pressed }) => [styles.laneActionBtn, pressed && styles.laneActionBtnPressed]} accessibilityRole="button" accessibilityLabel="Share translation">
+                      <Ionicons name="share-outline" size={16} color="#bbf7d0" />
+                    </Pressable>
+                    <Pressable onPress={copyTranslatedText} style={({ pressed }) => [styles.laneActionBtn, pressed && styles.laneActionBtnPressed]} accessibilityRole="button" accessibilityLabel="Copy translation">
+                      <Ionicons name="copy-outline" size={16} color="#bbf7d0" />
+                    </Pressable>
+                  </View>
                 ) : null}
               </View>
               <Text
@@ -1415,13 +1551,20 @@ export default function App() {
                 accessibilityLiveRegion="polite"
                 style={[styles.translationText, !translatedText && styles.lanePlaceholder]}
               >
-                {translatedText || voiceIntent}
+                {translatedText || (isTranslating ? "Translating…" : (sourceText ? voiceIntent : "Translation will appear here"))}
               </Text>
             </View>
             {conversationTurns.length > 0 && (
               <View style={styles.turnRail}>
-                {conversationTurns.slice(-3).map((turn) => (
-                  <View key={turn.id} style={[styles.turnChip, turn.clarify && styles.turnChipWarning]}>
+                {conversationTurns.slice(-3).map((turn, index, turns) => (
+                  <View
+                    key={turn.id}
+                    style={[
+                      styles.turnChip,
+                      turn.clarify && styles.turnChipWarning,
+                      index === turns.length - 1 && styles.turnChipActive,
+                    ]}
+                  >
                     <Text numberOfLines={2} style={styles.turnChipText}>
                       <Text style={styles.turnChipSpeaker}>{turn.speakerLabel}</Text>
                       {`: ${turn.sourceText} → ${turn.translatedText}`}
@@ -1435,14 +1578,21 @@ export default function App() {
 
           <Pressable
             onPress={() => setShowDebugDetails((current) => !current)}
-            style={[styles.statusStrip, compactLayout && styles.statusStripCompact]}
+            style={({ pressed }) => [
+              styles.statusStrip,
+              compactLayout && styles.statusStripCompact,
+              isConnected && styles.statusStripOnline,
+              pressed && styles.statusStripPressed,
+            ]}
             accessibilityRole="button"
             accessibilityLabel="Status details"
             accessibilityHint="Tap to show technical details"
           >
             <Ionicons name="pulse" size={18} color={systemColor} />
             <View style={styles.statusTextWrap}>
-              <Text numberOfLines={2} accessibilityLiveRegion="polite" style={[styles.statusLine, { color: systemColor }]}>{status || panelState}</Text>
+              <Text numberOfLines={2} accessibilityLiveRegion="polite" style={[styles.statusLine, { color: systemColor }]}>
+                {showDebugDetails ? (status || panelState) : (friendlyStatusLine || panelState)}
+              </Text>
               {statusDetail ? (
                 <Text numberOfLines={2} style={styles.statusDetail}>
                   {statusDetail}
@@ -1462,7 +1612,7 @@ export default function App() {
             />
             <IconControl
               icon={barrierMode ? "people" : "arrow-forward"}
-              label="Two-way"
+              label={barrierMode ? "Two-way" : "One-way"}
               onPress={() => {
                 const nextBarrierMode = !barrierMode;
                 setBarrierMode(nextBarrierMode);
@@ -1478,7 +1628,7 @@ export default function App() {
             />
             <IconControl
               icon={isConnected ? "radio" : "refresh"}
-              label="Connect"
+              label={isConnected ? "Online" : "Connect"}
               onPress={isConnected ? disconnect : connect}
               active={isConnected}
               accessibilityLabel={isConnected ? "Disconnect from server" : "Connect to server"}

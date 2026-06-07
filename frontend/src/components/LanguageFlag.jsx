@@ -79,6 +79,7 @@ export default function LanguageFlag({
   return (
     <span
       className={`language-flag ${sizeClasses[size]} ${isActive ? 'active' : ''} ${className}`}
+      data-size={size}
       role="img"
       aria-label={`${name}${getRole()}`}
       title={`${name}${getRole()}`}

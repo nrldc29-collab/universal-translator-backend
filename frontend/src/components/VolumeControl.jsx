@@ -21,12 +21,14 @@ export default function VolumeControl({
   const [showVolume, setShowVolume] = useState(false);
   const sliderRef = useRef(null);
   const timeoutRef = useRef(null);
+  const lastVolumeRef = useRef(initialVolume > 0 ? initialVolume : 0.8);
 
   useEffect(() => {
     setVolume(initialVolume);
   }, [initialVolume]);
 
   const handleVolumeChange = (newVolume) => {
+    if (newVolume > 0) lastVolumeRef.current = newVolume;
     setVolume(newVolume);
     setIsMuted(newVolume === 0);
     onVolumeChange?.(newVolume);
@@ -43,7 +45,7 @@ export default function VolumeControl({
 
   const toggleMute = () => {
     if (isMuted) {
-      handleVolumeChange(0.8);
+      handleVolumeChange(lastVolumeRef.current || 0.8);
     } else {
       handleVolumeChange(0);
     }
@@ -59,8 +61,16 @@ export default function VolumeControl({
 
   const pct = isMuted ? 0 : volume;
 
+  const volumeTier = isMuted || volume === 0
+    ? 'muted'
+    : volume < 0.35
+      ? 'volume-low'
+      : volume < 0.7
+        ? 'volume-mid'
+        : 'volume-high';
+
   return (
-    <div className={`volume-control ${className}`}>
+    <div className={`volume-control ${volumeTier} ${className}`.trim()}>
       <button
         className={`volume-toggle${isMuted ? ' muted' : ''}`}
         onClick={toggleMute}

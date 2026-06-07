@@ -45,11 +45,16 @@ export default function SemanticContext({ context }: SemanticContextProps) {
 const styles = StyleSheet.create({
   container: {
     padding: 15,
-    backgroundColor: '#07111f',
+    backgroundColor: 'rgba(7, 17, 31, 0.95)',
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(103, 232, 249, 0.18)',
+    borderColor: 'rgba(103, 232, 249, 0.22)',
     marginBottom: 15,
+    shadowColor: '#22d3ee',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    elevation: 3,
   },
   title: {
     color: '#67e8f9',

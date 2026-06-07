@@ -15,19 +15,16 @@ export default function ThinkingIndicator({
   const stageConfig = {
     thinking: {
       icon: Brain,
-      color: '#22d3ee',
       label: 'Thinking',
       animation: 'pulse',
     },
     translating: {
       icon: Sparkles,
-      color: '#a78bfa',
       label: 'Translating',
       animation: 'shimmer',
     },
     processing: {
       icon: Zap,
-      color: '#fbbf24',
       label: 'Processing',
       animation: 'pulse',
     },
@@ -39,22 +36,23 @@ export default function ThinkingIndicator({
   return (
     <div
       className={`thinking-indicator ${config.animation} ${className}`}
+      data-stage={stage}
       role="status"
       aria-live="polite"
       aria-label={`${config.label}... ${message || ''}`}
     >
-      <div className="thinking-orb" style={{ '--orb-color': config.color }}>
-        <Icon size={24} color={config.color} strokeWidth={2} />
+      <div className="thinking-orb">
+        <Icon size={24} strokeWidth={2} className="thinking-stage-icon" aria-hidden="true" />
         <span className="thinking-pulse" />
         <span className="thinking-pulse delayed" />
       </div>
       
       <div className="thinking-text">
         <span className="thinking-label">{config.label}</span>
-        <span className="thinking-dots">
-          <span className="dot" style={{ animationDelay: '0ms' }}>.</span>
-          <span className="dot" style={{ animationDelay: '200ms' }}>.</span>
-          <span className="dot" style={{ animationDelay: '400ms' }}>.</span>
+        <span className="thinking-dots" aria-hidden="true">
+          <span className="dot">.</span>
+          <span className="dot">.</span>
+          <span className="dot">.</span>
         </span>
       </div>
 
@@ -71,13 +69,9 @@ export default function ThinkingIndicator({
         </div>
       )}
 
-      <div className="thinking-waves" aria-hidden="true" style={{ '--wave-color': config.color }}>
+      <div className="thinking-waves" aria-hidden="true">
         {[...Array(5)].map((_, i) => (
-          <span
-            key={i}
-            className="wave-bar"
-            style={{ animationDelay: `${i * 100}ms` }}
-          />
+          <span key={i} className="wave-bar" />
         ))}
       </div>
     </div>

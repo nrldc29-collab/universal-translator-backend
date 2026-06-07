@@ -85,7 +85,7 @@ LANGUAGES = {
 
 
 def get_whisper_device() -> str:
-    return os.getenv("WHISPER_DEVICE", "cuda" if os.getenv("USE_GPU", "0") == "1" else "cpu")
+    return os.getenv("WHISPER_DEVICE", "cuda" if _to_bool("USE_GPU", False) else "cpu")
 
 
 def get_whisper_compute_type() -> str:
@@ -134,7 +134,7 @@ def get_high_stakes_confidence_threshold() -> float:
 
 
 def get_translation_device() -> str:
-    return os.getenv("TRANSLATION_DEVICE", "cuda" if os.getenv("USE_GPU", "0") == "1" else "cpu")
+    return os.getenv("TRANSLATION_DEVICE", "cuda" if _to_bool("USE_GPU", False) else "cpu")
 
 
 def get_cip_process_url() -> str:
@@ -221,7 +221,7 @@ def get_frontend_dist_dir() -> str:
 
 
 def get_serve_frontend_dist() -> bool:
-    return os.getenv("SERVE_FRONTEND_DIST", "1" if is_production() else "0") == "1"
+    return _to_bool("SERVE_FRONTEND_DIST", is_production())
 
 
 def is_production() -> bool:

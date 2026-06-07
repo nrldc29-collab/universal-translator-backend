@@ -39,7 +39,7 @@ export default function AdvancedFeatures({
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.container}>
       {/* Layer 1: Ultra-fast Speech */}
       <View style={[styles.card, styles.layer1]}>
-        <Text style={styles.layerTitle}>⚡ Ultra-Fast Speech</Text>
+        <Text style={styles.layerTitle}>Ultra-Fast Speech</Text>
         <View style={styles.statusRow}>
           <View style={[styles.dot, { backgroundColor: streamingStatus?.sttPartial ? "#16a34a" : "#6b7280" }]} />
           <Text style={styles.statusText}>STT Streaming</Text>
@@ -52,7 +52,7 @@ export default function AdvancedFeatures({
 
       {/* Layer 2: Chaotic Environments */}
       <View style={[styles.card, styles.layer2]}>
-        <Text style={styles.layerTitle}>🔊 Chaotic Environments</Text>
+        <Text style={styles.layerTitle}>Chaotic Environments</Text>
         <View style={styles.statusRow}>
           <Text style={[styles.noiseLabel, { color: noise.color }]}>Noise: {noise.label}</Text>
         </View>
@@ -64,7 +64,7 @@ export default function AdvancedFeatures({
 
       {/* Layer 3: Overlapping Crowds */}
       <View style={[styles.card, styles.layer3]}>
-        <Text style={styles.layerTitle}>👥 Overlapping Crowds</Text>
+        <Text style={styles.layerTitle}>Overlapping Crowds</Text>
         <View style={styles.statusRow}>
           <View style={[styles.dot, { backgroundColor: speakerDiarization ? "#16a34a" : "#6b7280" }]} />
           <Text style={styles.statusText}>Speaker Diarization</Text>
@@ -74,7 +74,7 @@ export default function AdvancedFeatures({
 
       {/* Layer 4: Technical Jargon */}
       <View style={[styles.card, styles.layer4]}>
-        <Text style={styles.layerTitle}>🔧 Technical Jargon</Text>
+        <Text style={styles.layerTitle}>Technical Jargon</Text>
         <View style={styles.statusRow}>
           <View style={[styles.dot, { backgroundColor: contextMemory?.technicalTerms?.length ? "#16a34a" : "#6b7280" }]} />
           <Text style={styles.statusText}>Context Memory</Text>
@@ -89,7 +89,7 @@ export default function AdvancedFeatures({
 
       {/* Layer 5: Emotional Nuance */}
       <View style={[styles.card, styles.layer5]}>
-        <Text style={styles.layerTitle}>🎭 Emotional Nuance</Text>
+        <Text style={styles.layerTitle}>Emotional Nuance</Text>
         <View style={styles.statusRow}>
           <Text style={styles.statusText}>Emotion: {emotionalNuance?.emotion || "neutral"}</Text>
         </View>
@@ -113,12 +113,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   card: {
-    backgroundColor: '#07111f',
+    backgroundColor: 'rgba(7, 17, 31, 0.95)',
     padding: 12,
     borderRadius: 18,
     marginRight: 10,
     minWidth: 160,
     borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 4,
   },
   layer1: { borderColor: '#67e8f9' },
   layer2: { borderColor: '#a78bfa' },
@@ -127,9 +132,11 @@ const styles = StyleSheet.create({
   layer5: { borderColor: '#f472b6' },
   layerTitle: {
     color: '#e5ecff',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
     marginBottom: 8,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
   statusRow: {
     flexDirection: 'row',

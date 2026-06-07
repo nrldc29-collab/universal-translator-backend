@@ -3,20 +3,26 @@
  */
 import React from 'react';
 import { Activity, Clock3, Mic, UserRound, Zap } from 'lucide-react';
+import ThinkingIndicator from './ThinkingIndicator';
 
 export default function MicPanel({
   micState, micLevel, perceivedListening, micLabel, micHint, micReady = true,
   handleMicClick, handleMicPointerDown, handleMicPointerUp,
   playing, processing, streaming, recording,
   liveHudMode, liveHudItems = [],
-  statusTone, statusText, speakerSummary, timingLabel,
+  statusTone, statusText, statusDetail, speakerSummary, timingLabel,
+  onStatusToggle, showFriendlyStatus = true,
   audioReplayAvailable, autoPlayFailed, playTranslationAudio,
 }) {
   return (
-    <section className="mic-panel">
+    <section
+      className="mic-panel"
+      data-tour-target="mic"
+      aria-busy={processing && !streaming ? 'true' : undefined}
+    >
       {/* Main orb */}
       <button
-        className={`mic-orb ${micState} ${perceivedListening ? 'listening-pulse' : ''}`}
+        className={`mic-orb ${micState} ${perceivedListening ? 'listening-pulse' : ''} ${!micReady ? 'unavailable' : ''}`}
         style={{ '--voice-level': Math.max(0.02, Math.min(1, micLevel || 0)) }}
         onClick={handleMicClick}
         onPointerDown={handleMicPointerDown}
@@ -32,7 +38,7 @@ export default function MicPanel({
         <span className="energy-rim" aria-hidden="true" />
         <span className="orb-ring" />
         <span className="orb-spin" />
-        <MicGrille micLevel={micLevel} />
+        <MicGrille />
         <Mic className="mic-icon" size={58} strokeWidth={2.2} aria-hidden="true" />
         {perceivedListening && (
           <span className="rec-led" aria-hidden="true">
@@ -48,6 +54,10 @@ export default function MicPanel({
       <p className="mic-label">{micLabel}</p>
       <p className="mic-hint">{micHint}</p>
 
+      {processing && !streaming && !playing && (
+        <ThinkingIndicator stage="translating" message="Working on your translation…" className="mic-thinking" />
+      )}
+
       {/* Live HUD */}
       <LiveHud mode={liveHudMode} items={liveHudItems} />
 
@@ -55,7 +65,15 @@ export default function MicPanel({
       {(streaming || recording) && <VoiceMeter micLevel={micLevel} />}
 
       {/* Status */}
-      <StatusPanel tone={statusTone} text={statusText} speakerSummary={speakerSummary} timingLabel={timingLabel} />
+      <StatusPanel
+        tone={statusTone}
+        text={statusText}
+        detail={statusDetail}
+        speakerSummary={speakerSummary}
+        timingLabel={timingLabel}
+        onToggle={onStatusToggle}
+        showFriendlyStatus={showFriendlyStatus}
+      />
 
       {/* Replay fallback */}
       {audioReplayAvailable && autoPlayFailed && (
@@ -67,14 +85,12 @@ export default function MicPanel({
   );
 }
 
-function MicGrille({ micLevel }) {
+function MicGrille() {
   return (
     <span className="mic-grille" aria-hidden="true">
-      {[0,1,2,3,4,5,6,7,8].map(i => {
-        const boost = 1 - Math.abs(4-i) * 0.1;
-        const h = 22 + Math.max(0.02, micLevel||0) * 70 * boost;
-        return <span key={i} style={{ height:`${Math.min(92,h)}%`, '--delay':`${i*38}ms` }} />;
-      })}
+      {Array.from({ length: 9 }, (_, i) => (
+        <span key={i} />
+      ))}
     </span>
   );
 }
@@ -85,9 +101,10 @@ function LiveHud({ mode, items }) {
       <span className="live-mode-chip">{mode}</span>
       <div className="live-flow" aria-hidden="true">
         {items.map(item => (
-          <span key={item.key}
-            className={`live-flow-step ${item.active ? 'active' : ''}`}
-            style={item.key==='listen' ? { '--level': Math.max(0.08, Math.min(1, item.level||0)) } : undefined}
+          <span
+            key={item.key}
+            className={`live-flow-step${item.active ? ' active' : ''}${item.key === 'listen' ? ' listen-step' : ''}`}
+            style={item.key === 'listen' ? { '--level': Math.max(0.08, Math.min(1, item.level || 0)) } : undefined}
           >
             <item.Icon size={11} strokeWidth={2.6} aria-hidden="true" />
             <b>{item.label}</b>
@@ -99,31 +116,49 @@ function LiveHud({ mode, items }) {
 }
 
 function VoiceMeter({ micLevel }) {
+  const level = Math.max(0, Math.min(1, micLevel || 0));
   return (
-    <div className="voice-meter" aria-hidden="true">
-      {[0,1,2,3,4,5,6].map(i => {
-        const threshold = (i+1)/8;
-        const active = micLevel >= threshold * 0.6;
-        const h = Math.max(6, Math.min(28, 6 + micLevel*28*(i===3?1:0.65+Math.abs(3-i)*0.08)));
-        return <span key={i} className={active?'active':''} style={{ height:h }} />;
+    <div className="voice-meter" style={{ '--voice-level': level }} aria-hidden="true">
+      {Array.from({ length: 7 }, (_, i) => {
+        const threshold = (i + 1) / 8;
+        const active = level >= threshold * 0.6;
+        return <span key={i} className={active ? 'active' : ''} />;
       })}
     </div>
   );
 }
 
-function StatusPanel({ tone, text, speakerSummary, timingLabel }) {
+function StatusPanel({
+  tone, text, detail, speakerSummary, timingLabel, onToggle, showFriendlyStatus,
+}) {
+  const hasMeta = Boolean(detail || speakerSummary || timingLabel);
+
   return (
-    <div className="status-panel" data-tone={tone} aria-live="polite">
+    <button
+      type="button"
+      className="status-panel status-panel-btn"
+      data-tone={tone}
+      aria-live="polite"
+      onClick={onToggle}
+      title={showFriendlyStatus ? 'Tap for technical details' : 'Tap for simple status'}
+      aria-label={`Status: ${text}. ${showFriendlyStatus ? 'Show technical details' : 'Show simple status'}`}
+    >
       <div className="status-primary">
         <Activity size={13} strokeWidth={2.6} aria-hidden="true" />
         <span>{text}</span>
       </div>
-      {(speakerSummary || timingLabel) && (
+      {hasMeta && (
         <div className="status-meta">
-          {speakerSummary && <span><UserRound size={11} strokeWidth={2.5} />{speakerSummary}</span>}
-          {timingLabel && <span><Clock3 size={11} strokeWidth={2.5} />{timingLabel}</span>}
+          {detail ? (
+            <span>{detail}</span>
+          ) : (
+            <>
+              {speakerSummary && <span><UserRound size={11} strokeWidth={2.5} />{speakerSummary}</span>}
+              {timingLabel && <span><Clock3 size={11} strokeWidth={2.5} />{timingLabel}</span>}
+            </>
+          )}
         </div>
       )}
-    </div>
+    </button>
   );
 }

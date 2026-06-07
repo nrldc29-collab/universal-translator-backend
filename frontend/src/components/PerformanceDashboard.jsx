@@ -1,179 +1,175 @@
 /**
- * Advanced Performance Dashboard
- * 
- * Displays real-time performance metrics including:
- * - Latency breakdown (STT, Translation, TTS, End-to-End)
- * - Cache statistics (hit rate, hits, misses)
- * - Environment classification
- * - Optimization recommendations
- * - Resource usage (CPU, memory)
+ * Performance Dashboard — real-time backend metrics in the app visual style.
  */
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Badge } from './ui/badge';
-import { Progress } from './ui/progress';
+import { Activity, Loader2, RefreshCw } from 'lucide-react';
+
+function MetricCard({ title, children }) {
+  return (
+    <div className="perf-dash-card">
+      <h3 className="perf-dash-card-title">{title}</h3>
+      <div className="perf-dash-card-body">{children}</div>
+    </div>
+  );
+}
+
+function MetricRow({ label, value, mono = false }) {
+  return (
+    <div className="perf-dash-row">
+      <span className="perf-dash-label">{label}</span>
+      <span className={`perf-dash-value${mono ? ' mono' : ''}`}>{value}</span>
+    </div>
+  );
+}
+
+function StatusPill({ ok, okLabel = 'OK', badLabel = 'Issue' }) {
+  return (
+    <span className={`perf-dash-pill${ok ? ' ok' : ' bad'}`}>
+      {ok ? okLabel : badLabel}
+    </span>
+  );
+}
+
+function ProgressBar({ value = 0 }) {
+  const pct = Math.min(100, Math.max(0, value));
+  return (
+    <div className="perf-dash-progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+      <div className="perf-dash-progress-fill" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
 
 export default function PerformanceDashboard({ backendUrl }) {
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const fetchMetrics = async () => {
+    if (!backendUrl) {
+      setError('No backend URL configured');
+      setLoading(false);
+      return;
+    }
+    try {
+      const base = backendUrl.replace(/\/$/, '');
+      const response = await fetch(`${base}/diagnostics`, { signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw new Error('Failed to fetch metrics');
+      const data = await response.json();
+      setMetrics(data);
+      setError(null);
+      setLastUpdated(new Date());
+    } catch (err) {
+      setError(err?.message || 'Failed to load metrics');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchMetrics = async () => {
-      try {
-        const response = await fetch(`${backendUrl}/diagnostics`);
-        if (!response.ok) throw new Error('Failed to fetch metrics');
-        const data = await response.json();
-        setMetrics(data);
-        setLoading(false);
-      } catch (err) {
-        setError(err.message);
-        setLoading(false);
-      }
-    };
-
+    setLoading(true);
     fetchMetrics();
-    const interval = setInterval(fetchMetrics, 5000); // Update every 5 seconds
+    const interval = setInterval(fetchMetrics, 5000);
     return () => clearInterval(interval);
   }, [backendUrl]);
 
-  if (loading) {
-    return <div className="p-4">Loading performance metrics...</div>;
+  if (loading && !metrics) {
+    return (
+      <div className="perf-dash perf-dash-state" role="status">
+        <Loader2 size={18} className="spin-icon" strokeWidth={2.5} />
+        <span>Loading performance metrics…</span>
+      </div>
+    );
   }
 
-  if (error) {
-    return <div className="p-4 text-red-500">Error: {error}</div>;
+  if (error && !metrics) {
+    return (
+      <div className="perf-dash perf-dash-state perf-dash-error" role="alert">
+        <span>{error}</span>
+        <button type="button" className="perf-dash-refresh" onClick={fetchMetrics}>
+          <RefreshCw size={14} strokeWidth={2.5} />
+          Retry
+        </button>
+      </div>
+    );
   }
 
-  const cacheStats = metrics.predictive_cache || {};
-  const optimizationFeedback = metrics.optimization_feedback || {};
+  const cacheStats = metrics?.predictive_cache || {};
+  const optimizationFeedback = metrics?.optimization_feedback || {};
+  const hitRate = (cacheStats.hit_rate || 0) * 100;
 
   return (
-    <div className="space-y-4 p-4">
-      <h2 className="text-2xl font-bold">Performance Dashboard</h2>
-      
-      {/* Cache Statistics */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Predictive Cache</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <div className="flex justify-between items-center">
-            <span>Status:</span>
-            <Badge variant={cacheStats.enabled ? 'default' : 'secondary'}>
-              {cacheStats.enabled ? 'Enabled' : 'Disabled'}
-            </Badge>
-          </div>
-          {cacheStats.enabled && (
-            <>
-              <div className="flex justify-between items-center">
-                <span>Hit Rate:</span>
-                <span className="font-mono">{(cacheStats.hit_rate * 100).toFixed(1)}%</span>
-              </div>
-              <Progress value={cacheStats.hit_rate * 100} className="h-2" />
-              <div className="flex justify-between text-sm text-gray-600">
-                <span>Hits: {cacheStats.hits || 0}</span>
-                <span>Misses: {cacheStats.misses || 0}</span>
-              </div>
-              <div className="flex justify-between text-sm text-gray-600">
-                <span>Size: {cacheStats.size || 0}</span>
-                <span>TTL: {cacheStats.ttl_seconds || 0}s</span>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Optimization Feedback */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Optimization Feedback</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <div className="flex justify-between items-center">
-            <span>Status:</span>
-            <Badge variant={optimizationFeedback.enabled ? 'default' : 'secondary'}>
-              {optimizationFeedback.enabled ? 'Active' : 'Inactive'}
-            </Badge>
-          </div>
-          {optimizationFeedback.status && (
-            <div className="text-sm text-gray-600">
-              Status: {optimizationFeedback.status}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Translation Backend */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Translation Backend</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <div className="flex justify-between items-center">
-            <span>Runtime:</span>
-            <span className="font-mono">{metrics.translation?.runtime || 'Unknown'}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span>Backend:</span>
-            <span className="font-mono">{metrics.translation?.backend || 'Unknown'}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span>Device:</span>
-            <span className="font-mono">{metrics.translation?.device || 'Unknown'}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span>Remote Translator:</span>
-            <Badge variant={metrics.translation?.remote_translator_reachable ? 'default' : 'destructive'}>
-              {metrics.translation?.remote_translator_reachable ? 'Reachable' : 'Unreachable'}
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Service Health */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Service Health</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          {Object.entries(metrics.service_health || {}).map(([service, health]) => (
-            <div key={service} className="flex justify-between items-center">
-              <span className="capitalize">{service}:</span>
-              <Badge variant={health.healthy ? 'default' : 'destructive'}>
-                {health.healthy ? 'Healthy' : 'Unhealthy'}
-              </Badge>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
-
-      {/* Streaming Configuration */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Streaming Configuration</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <div className="flex justify-between items-center">
-            <span>VAD Silent Checks:</span>
-            <span className="font-mono">{metrics.streaming?.vad_silent_checks || 0}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span>Speech Merge:</span>
-            <span className="font-mono">{metrics.streaming?.speech_merge_ms || 0}ms</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span>Min Speech Bytes:</span>
-            <span className="font-mono">{metrics.streaming?.min_speech_bytes || 0}</span>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Last Updated */}
-      <div className="text-sm text-gray-500 text-center">
-        Last updated: {new Date().toLocaleTimeString()}
+    <div className="perf-dash">
+      <div className="perf-dash-header">
+        <Activity size={16} strokeWidth={2.2} />
+        <span>Live performance</span>
+        <button type="button" className="perf-dash-refresh" onClick={fetchMetrics} aria-label="Refresh metrics">
+          <RefreshCw size={14} strokeWidth={2.5} />
+        </button>
       </div>
+
+      <MetricCard title="Predictive cache">
+        <MetricRow label="Status" value={<StatusPill ok={cacheStats.enabled} okLabel="Enabled" badLabel="Disabled" />} />
+        {cacheStats.enabled && (
+          <>
+            <MetricRow label="Hit rate" value={`${hitRate.toFixed(1)}%`} mono />
+            <ProgressBar value={hitRate} />
+            <MetricRow label="Hits / misses" value={`${cacheStats.hits || 0} / ${cacheStats.misses || 0}`} mono />
+            <MetricRow label="Size / TTL" value={`${cacheStats.size || 0} · ${cacheStats.ttl_seconds || 0}s`} mono />
+          </>
+        )}
+      </MetricCard>
+
+      <MetricCard title="Optimization">
+        <MetricRow
+          label="Feedback loop"
+          value={<StatusPill ok={optimizationFeedback.enabled} okLabel="Active" badLabel="Inactive" />}
+        />
+        {optimizationFeedback.status && (
+          <MetricRow label="Status" value={optimizationFeedback.status} />
+        )}
+      </MetricCard>
+
+      <MetricCard title="Translation backend">
+        <MetricRow label="Runtime" value={metrics?.translation?.runtime || '—'} mono />
+        <MetricRow label="Backend" value={metrics?.translation?.backend || '—'} mono />
+        <MetricRow label="Device" value={metrics?.translation?.device || '—'} mono />
+        <MetricRow
+          label="Remote translator"
+          value={(
+            <StatusPill
+              ok={metrics?.translation?.remote_translator_reachable}
+              okLabel="Reachable"
+              badLabel="Unreachable"
+            />
+          )}
+        />
+      </MetricCard>
+
+      {Object.keys(metrics?.service_health || {}).length > 0 && (
+        <MetricCard title="Service health">
+          {Object.entries(metrics.service_health).map(([service, health]) => (
+            <MetricRow
+              key={service}
+              label={service.replace(/_/g, ' ')}
+              value={<StatusPill ok={health.healthy} okLabel="Healthy" badLabel="Unhealthy" />}
+            />
+          ))}
+        </MetricCard>
+      )}
+
+      <MetricCard title="Streaming">
+        <MetricRow label="VAD silent checks" value={metrics?.streaming?.vad_silent_checks || 0} mono />
+        <MetricRow label="Speech merge" value={`${metrics?.streaming?.speech_merge_ms || 0}ms`} mono />
+        <MetricRow label="Min speech bytes" value={metrics?.streaming?.min_speech_bytes || 0} mono />
+      </MetricCard>
+
+      {lastUpdated && (
+        <p className="perf-dash-updated">
+          Updated {lastUpdated.toLocaleTimeString()}
+        </p>
+      )}
     </div>
   );
 }

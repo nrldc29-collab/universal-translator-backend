@@ -142,12 +142,11 @@ export default function EnhancedMicButton({
       {/* Main button */}
       <button
         className={`enhanced-mic-button ${state} ${isPressed ? 'pressed' : ''} ${rippleActive ? 'ripple' : ''}`}
+        data-state={state}
         style={{
           width: sizes.button,
           height: sizes.button,
-          backgroundColor: config.bgColor,
-          borderColor: config.borderColor,
-          '--mic-color': config.color,
+          '--voice-level': micLevel,
         }}
         onClick={handleClick}
         onPointerDown={handlePointerDown}
@@ -159,18 +158,14 @@ export default function EnhancedMicButton({
         aria-pressed={isPressed}
       >
         {/* Energy rim that responds to voice */}
-        <span 
+        <span
           className="energy-rim"
-          style={{
-            opacity: state === 'listening' ? 0.3 + micLevel * 0.7 : 0,
-            transform: `scale(${1 + micLevel * 0.2})`,
-          }}
+          style={{ '--voice-level': micLevel }}
         />
 
         {/* Icon */}
-        <Icon 
-          size={sizes.icon} 
-          color={config.color}
+        <Icon
+          size={sizes.icon}
           strokeWidth={2.2}
           className={config.rotate ? 'spin-slow' : ''}
         />
@@ -193,7 +188,7 @@ export default function EnhancedMicButton({
               cy="50"
               r="46"
               fill="none"
-              stroke={config.color}
+              stroke="currentColor"
               strokeWidth="3"
               strokeLinecap="round"
               strokeDasharray={`${micLevel * 289} 289`}
@@ -208,9 +203,8 @@ export default function EnhancedMicButton({
       </button>
 
       {/* State label */}
-      <span 
-        className="mic-state-label"
-        style={{ color: config.color }}
+      <span
+        className={`mic-state-label state-${state}`}
         aria-hidden="true"
       >
         {config.label}

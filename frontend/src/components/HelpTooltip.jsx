@@ -59,20 +59,6 @@ export default function HelpTooltip({
     };
   }, [isOpen]);
 
-  const positionStyles = {
-    top: { bottom: 'calc(100% + 8px)', left: '50%', transform: 'translateX(-50%)' },
-    bottom: { top: 'calc(100% + 8px)', left: '50%', transform: 'translateX(-50%)' },
-    left: { right: 'calc(100% + 8px)', top: '50%', transform: 'translateY(-50%)' },
-    right: { left: 'calc(100% + 8px)', top: '50%', transform: 'translateY(-50%)' },
-  };
-
-  const arrowStyles = {
-    top: { bottom: '-6px', left: '50%', transform: 'translateX(-50%) rotate(180deg)' },
-    bottom: { top: '-6px', left: '50%', transform: 'translateX(-50%)' },
-    left: { right: '-6px', top: '50%', transform: 'translateY(-50%) rotate(90deg)' },
-    right: { left: '-6px', top: '50%', transform: 'translateY(-50%) rotate(-90deg)' },
-  };
-
   return (
     <div className="help-tooltip-container">
       <button
@@ -92,7 +78,7 @@ export default function HelpTooltip({
         <div
           ref={tooltipRef}
           className="help-tooltip-content"
-          style={positionStyles[position]}
+          data-position={position}
           role="tooltip"
           aria-label={title}
         >
@@ -112,7 +98,7 @@ export default function HelpTooltip({
           </div>
           <div
             className="help-tooltip-arrow"
-            style={arrowStyles[position]}
+            data-position={position}
             aria-hidden="true"
           />
         </div>

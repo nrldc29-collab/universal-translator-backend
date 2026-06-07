@@ -2,6 +2,7 @@
  * NAIA Voice Assistant -- speak to ask, hear the answer.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Mic, Sparkles, Square, X } from 'lucide-react';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -113,7 +114,7 @@ export default function Assistant({
       setMessages((prev) => [...prev, { role: 'system', text: msg }]);
     } finally {
       setPending(false);
-      if (status === 'Thinking...') setStatus('Tap mic to speak');
+      setStatus((current) => (current === 'Thinking...' ? 'Tap mic to speak' : current));
     }
   }
 
@@ -122,21 +123,28 @@ export default function Assistant({
     if (!Recognition) { setStatus('Speech not supported in this browser'); return; }
     window.speechSynthesis?.cancel();
     const rec = new Recognition();
-    rec.lang = toLangCode('en'); // always listen in English for the assistant
+    rec.lang = toLangCode('en');
     rec.interimResults = true;
     rec.continuous = false;
     rec.maxAlternatives = 1;
     rec.onresult = (event) => {
-      let interim = '', final = '';
+      let interim = '';
+      let final = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const t = event.results[i]?.[0]?.transcript || '';
-        if (event.results[i].isFinal) final += t; else interim += t;
+        if (event.results[i].isFinal) final += t;
+        else interim += t;
       }
       setTranscript(final || interim);
       if (final) { stopListening(); sendToAssistant(final); }
     };
     rec.onerror = (e) => { if (e.error !== 'no-speech') setStatus(`Mic error: ${e.error}`); stopListening(); };
-    rec.onend = () => { if (recognitionRef.current === rec) { setListening(false); if (!pending) setStatus('Tap mic to speak'); } };
+    rec.onend = () => {
+      if (recognitionRef.current === rec) {
+        setListening(false);
+        if (!pending) setStatus('Tap mic to speak');
+      }
+    };
     recognitionRef.current = rec;
     rec.start();
     setListening(true);
@@ -144,90 +152,125 @@ export default function Assistant({
   }
 
   function stopListening() {
-    if (recognitionRef.current) { try { recognitionRef.current.stop(); } catch (_) {} recognitionRef.current = null; }
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (_) { /* noop */ }
+      recognitionRef.current = null;
+    }
     setListening(false);
   }
 
   function toggleMic() { if (listening) stopListening(); else startListening(); }
-  function handleClear() { setMessages([]); setTranscript(''); window.speechSynthesis?.cancel(); setStatus('Tap mic to speak'); }
 
-  const posStyles = position === 'bottom-left' ? { left: 20, bottom: 80 } : { right: 20, bottom: 80 };
+  function handleClear() {
+    setMessages([]);
+    setTranscript('');
+    window.speechSynthesis?.cancel();
+    setStatus('Tap mic to speak');
+  }
+
+  const anchorClass = `assistant-anchor assistant-anchor--${position === 'bottom-left' ? 'left' : 'right'}`;
+  const statusClass = listening ? 'listening' : pending ? 'thinking' : '';
 
   return (
-    <div style={{ position: 'fixed', zIndex: 9999, ...posStyles }}>
+    <div className={anchorClass}>
       {!open && (
-        <button type="button" onClick={() => setOpen(true)} aria-label="Open voice assistant" title="Voice Assistant"
-          style={{ ...btnBase, width: 52, height: 52, borderRadius: '50%', fontSize: 22, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 18px rgba(15,23,42,0.4)' }}>
-          🎙
+        <button
+          type="button"
+          className="assistant-fab"
+          onClick={() => setOpen(true)}
+          aria-label="Open voice assistant"
+          title="Voice Assistant"
+        >
+          <Mic size={22} strokeWidth={2.2} />
         </button>
       )}
       {open && (
-        <div role="dialog" aria-label="Voice assistant" aria-modal="true"
-          style={{ width: 340, maxWidth: 'calc(100vw - 32px)', height: 480, maxHeight: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column', background: '#0f172a', color: '#f1f5f9', border: '1px solid #1e293b', borderRadius: 16, overflow: 'hidden', boxShadow: '0 24px 48px rgba(15,23,42,0.5)', fontFamily: 'inherit' }}>
-          <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#1e293b', borderBottom: '1px solid #334155' }}>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <strong style={{ fontSize: 14 }}>Voice Assistant</strong>
-              <span style={{ fontSize: 11, color: available === false ? '#fca5a5' : '#94a3b8' }}>
-                {available === false ? 'Unavailable' : available === true ? 'Ready' : 'Connecting...'}
+        <div className="assistant-panel" role="dialog" aria-label="Voice assistant" aria-modal="true">
+          <header className="assistant-header">
+            <div className="assistant-header-text">
+              <strong className="assistant-title">Voice Assistant</strong>
+              <span className={`assistant-status${available === false ? ' unavailable' : available === true ? ' ready' : ''}`}>
+                {available === false ? 'Unavailable' : available === true ? 'Ready' : 'Connecting…'}
               </span>
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button type="button" onClick={handleClear} style={btnGhost} aria-label="Clear">Clear</button>
-              <button type="button" onClick={() => { setOpen(false); stopListening(); }} style={btnGhost} aria-label="Close">&times;</button>
+            <div className="assistant-header-actions">
+              <button type="button" className="assistant-ghost-btn" onClick={handleClear} aria-label="Clear conversation">
+                Clear
+              </button>
+              <button
+                type="button"
+                className="assistant-ghost-btn assistant-close-btn"
+                onClick={() => { setOpen(false); stopListening(); }}
+                aria-label="Close assistant"
+              >
+                <X size={16} strokeWidth={2.5} />
+              </button>
             </div>
           </header>
 
           {available === false && (
-            <div style={{ padding: '8px 12px', fontSize: 12, color: '#fca5a5', background: '#1f1212', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div className="assistant-unavailable" role="alert">
               <span>Unavailable.{unavailableReason ? ` ${unavailableReason}` : ''}</span>
-              <button type="button" onClick={checkHealth} style={{ ...btnGhost, color: '#fca5a5', borderColor: '#5f1d1d', marginLeft: 8, fontSize: 11 }}>Retry</button>
+              <button type="button" className="assistant-ghost-btn danger" onClick={checkHealth}>
+                Retry
+              </button>
             </div>
           )}
 
-          <div ref={scrollerRef} style={{ flex: 1, overflowY: 'auto', padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div ref={scrollerRef} className="assistant-messages">
             {messages.length === 0 && !transcript && (
-              <div style={{ fontSize: 13, color: '#64748b', textAlign: 'center', marginTop: 32 }}>Tap the mic and speak your question.</div>
+              <div className="assistant-empty">
+                <div className="assistant-empty-icon" aria-hidden="true">
+                  <Sparkles size={22} strokeWidth={1.8} />
+                </div>
+                <p>Tap the mic and speak your question.</p>
+              </div>
             )}
-            {messages.map((msg, idx) => <MessageBubble key={idx} role={msg.role} text={msg.text} />)}
-            {pending && <MessageBubble role="assistant" text="..." pending />}
+            {messages.map((msg, idx) => (
+              <MessageBubble key={idx} role={msg.role} text={msg.text} index={idx} />
+            ))}
+            {pending && (
+              <div className="assistant-bubble-wrap assistant">
+                <div className="assistant-bubble assistant pending" aria-busy="true">
+                  <span className="assistant-thinking-dots" aria-hidden="true">
+                    <span /><span /><span />
+                  </span>
+                  <span className="sr-only">Thinking</span>
+                </div>
+              </div>
+            )}
             {transcript && !pending && (
-              <div style={{ fontSize: 12, color: '#94a3b8', fontStyle: 'italic', textAlign: 'right' }}>&ldquo;{transcript}&rdquo;</div>
+              <p className="assistant-interim">&ldquo;{transcript}&rdquo;</p>
             )}
           </div>
 
-          <div style={{ padding: '12px 16px', borderTop: '1px solid #1e293b', background: '#0b1220', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, color: listening ? '#34d399' : pending ? '#fbbf24' : '#64748b' }}>{status}</span>
-            <button type="button" onClick={toggleMic} disabled={pending || available === false} aria-label={listening ? 'Stop' : 'Speak'}
-              style={{
-                width: 64, height: 64, borderRadius: '50%', border: 'none',
-                cursor: pending || available === false ? 'not-allowed' : 'pointer',
-                fontSize: 26, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transition: 'all 0.2s',
-                background: listening ? 'radial-gradient(circle,#ef4444,#b91c1c)' : 'radial-gradient(circle,#2563eb,#1d4ed8)',
-                boxShadow: listening ? '0 0 0 8px rgba(239,68,68,0.2),0 6px 16px rgba(239,68,68,0.4)' : '0 4px 12px rgba(37,99,235,0.4)',
-                opacity: pending || available === false ? 0.5 : 1,
-                animation: listening ? 'pulse 1.2s ease-in-out infinite' : 'none',
-              }}>
-              {listening ? '⏹' : '🎤'}
+          <footer className="assistant-footer">
+            <span className={`assistant-footer-status ${statusClass}`}>{status}</span>
+            <button
+              type="button"
+              className={`assistant-mic${listening ? ' listening' : ''}${pending || available === false ? ' disabled' : ''}`}
+              onClick={toggleMic}
+              disabled={pending || available === false}
+              aria-label={listening ? 'Stop listening' : 'Start speaking'}
+            >
+              {listening ? <Square size={22} strokeWidth={2.4} /> : <Mic size={24} strokeWidth={2.2} />}
             </button>
-          </div>
+          </footer>
         </div>
       )}
-      <style>{`@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.4)}50%{box-shadow:0 0 0 12px rgba(239,68,68,0)}}`}</style>
     </div>
   );
 }
 
-function MessageBubble({ role, text, pending = false }) {
-  const isUser = role === 'user', isSystem = role === 'system';
+function MessageBubble({ role, text, index = 0 }) {
   return (
-    <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
-      <div style={{ background: isUser ? '#2563eb' : isSystem ? '#3f1d1d' : '#1e293b', color: '#f8fafc', padding: '8px 11px', borderRadius: 10, fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-word', opacity: pending ? 0.6 : 1 }}>
+    <div
+      className={`assistant-bubble-wrap ${role}`}
+      style={{ '--bubble-index': index }}
+    >
+      <div className={`assistant-bubble ${role}`}>
         {text}
       </div>
     </div>
   );
 }
-
-const btnBase = { background: '#2563eb', color: '#f8fafc', border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', fontSize: 13 };
-const btnGhost = { background: 'transparent', color: '#cbd5e1', border: '1px solid #334155', borderRadius: 6, padding: '2px 8px', cursor: 'pointer', fontSize: 12 };

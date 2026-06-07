@@ -9,6 +9,7 @@
  */
 
 import React from 'react';
+import { X } from 'lucide-react';
 
 import { EXPERIMENTAL_IOS_STREAMING, isIosOrSafariRecorder } from '../utils';
 
@@ -43,7 +44,9 @@ export default function DebugPanel({
           {onOpenAILangConfig && (
             <button type="button" className="debug-btn" onClick={onOpenAILangConfig}>AILang Config</button>
           )}
-          <button type="button" className="debug-btn close" onClick={onClose}>×</button>
+          <button type="button" className="debug-btn close" onClick={onClose} aria-label="Close debug panel">
+            <X size={16} strokeWidth={2.5} />
+          </button>
         </div>
       </div>
       <div className="debug-grid">

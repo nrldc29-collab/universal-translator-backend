@@ -1,4 +1,5 @@
 import React from 'react';
+import { AlertTriangle } from 'lucide-react';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -27,7 +28,9 @@ class ErrorBoundary extends React.Component {
       return (
         <div className="eb-screen">
           <div className="eb-card">
-            <div className="eb-icon" aria-hidden="true">⚠</div>
+            <div className="eb-icon" aria-hidden="true">
+              <AlertTriangle size={36} strokeWidth={1.8} />
+            </div>
             <h1 className="eb-title">Something went wrong</h1>
             <p className="eb-body">
               The translator encountered an unexpected error. You can try refreshing the page or resetting the app state.

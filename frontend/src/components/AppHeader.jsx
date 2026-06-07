@@ -1,5 +1,6 @@
 import React from 'react';
-import { Check, Download, Settings2, Share2, Wifi, WifiOff } from 'lucide-react';
+import { Check, CircleHelp, Download, Settings2, Share2 } from 'lucide-react';
+import { ONBOARDING_OPEN_EVENT } from './OnboardingTour';
 import VolumeControl from './VolumeControl';
 import AILangStatusBadge from './AILangStatusBadge';
 
@@ -23,7 +24,7 @@ export default function AppHeader({
     <header className="neo-header">
       {/* Left actions */}
       <div className="neo-header-left">
-        <VolumeControl volume={volume} onVolumeChange={onVolumeChange} />
+        <VolumeControl initialVolume={volume} onVolumeChange={onVolumeChange} />
       </div>
 
       {/* Brand */}
@@ -35,7 +36,7 @@ export default function AppHeader({
         <div className="neo-status-row">
           <span className={`neo-conn-dot ${connectionStatus}`} />
           <span className="neo-conn-label">
-            {isWarming ? 'WARMING' : isChecking ? 'SYNCING' : isOnline ? 'LIVE' : 'OFFLINE'}
+            {isWarming ? 'STARTING' : isChecking ? 'CONNECTING' : isOnline ? 'LIVE' : 'OFFLINE'}
           </span>
           <AILangStatusBadge apiUrl={apiUrl} />
         </div>
@@ -43,6 +44,15 @@ export default function AppHeader({
 
       {/* Right actions */}
       <div className="neo-header-right">
+        <button
+          className="neo-icon-btn"
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent(ONBOARDING_OPEN_EVENT))}
+          aria-label="Help and tips"
+          title="Help and tips"
+        >
+          <CircleHelp size={16} strokeWidth={2.2} />
+        </button>
         <button
           className={`neo-icon-btn${copiedKey === 'room' ? ' success' : ''}`}
           type="button"
@@ -60,6 +70,7 @@ export default function AppHeader({
         <button
           className="sp-gear-btn"
           type="button"
+          data-tour-target="settings"
           onClick={onOpenSettings}
           aria-label={updateAvailable ? 'Settings (update available)' : 'Settings'}
           title={updateAvailable ? 'Update available' : 'Settings'}

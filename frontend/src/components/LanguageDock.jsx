@@ -32,6 +32,7 @@ function LangDropdown({ value, onChange, disabled, variant = 'target' }) {
         o.code.toLowerCase().includes(query.toLowerCase())
       ) }]
     : allGroups;
+  const hasOptions = groups.some((g) => g.options.length > 0);
 
   useEffect(() => {
     if (!open) { setQuery(''); return; }
@@ -88,6 +89,11 @@ function LangDropdown({ value, onChange, disabled, variant = 'target' }) {
             )}
           </div>
           <div className="lang-dropdown-list">
+            {!hasOptions && (
+              <p className="lang-dropdown-empty" role="status">
+                No languages match &ldquo;{query.trim()}&rdquo;
+              </p>
+            )}
             {groups.map((g, gi) => (
               <div key={g.label}>
                 <div className={`lang-group-label ${gi > 0 ? 'bordered' : ''}`}>{g.label}</div>
@@ -138,7 +144,7 @@ export default function LanguageDock({
   const [flipped, setFlipped] = useState(false);
 
   return (
-    <section className="language-dock" aria-label="Language settings">
+    <section className="language-dock" data-tour-target="languages" aria-label="Language settings">
       <div className="lang-dock-row">
         {/* Source language */}
         {setSourceLanguage ? (

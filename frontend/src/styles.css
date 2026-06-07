@@ -158,6 +158,26 @@ p { margin: 0; overflow-wrap: anywhere; }
   border-color: rgba(248, 113, 113, .38);
 }
 
+.system-banner.warning {
+  border-color: rgba(251, 191, 36, .34);
+  background: rgba(30, 25, 8, .94);
+}
+
+.system-banner.install {
+  border-color: rgba(56, 189, 248, .32);
+  background: rgba(8, 24, 48, .94);
+}
+
+.system-banner.info {
+  border-color: rgba(56, 189, 248, .28);
+  background: rgba(8, 28, 52, .94);
+}
+
+.mic-thinking {
+  margin-top: 2px;
+  transform: scale(0.92);
+}
+
 .system-banner span {
   color: #e2e8f0;
   font-size: .86rem;
@@ -189,9 +209,9 @@ p { margin: 0; overflow-wrap: anywhere; }
 }
 
 .banner-dismiss {
-  width: 30px;
-  height: 30px;
-  min-height: 30px;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
   padding: 0;
   border-radius: 999px;
   background: rgba(255, 255, 255, .1);
@@ -407,7 +427,7 @@ p { margin: 0; overflow-wrap: anywhere; }
     0 0 calc(30px + var(--voice-level, 0) * 70px) rgba(244, 114, 182, calc(.1 + var(--voice-level, 0) * .2));
   transition: transform .24s cubic-bezier(.2, .8, .2, 1), box-shadow .32s ease, background .32s ease, filter .24s ease;
   animation: breathe 3.6s ease-in-out infinite;
-  touch-action: none;
+  touch-action: manipulation;
   user-select: none;
   overflow: visible;
 }
@@ -445,6 +465,24 @@ p { margin: 0; overflow-wrap: anywhere; }
 .mic-orb:active {
   transform: scale(.965);
   filter: brightness(1.08);
+}
+
+.mic-orb.unavailable,
+.mic-orb:disabled {
+  opacity: .58;
+  filter: grayscale(.35) saturate(.7);
+  cursor: not-allowed;
+  animation: none;
+  box-shadow:
+    inset 0 2px 2px rgba(255,255,255,.08),
+    inset 0 -34px 62px rgba(0,0,0,.82),
+    0 0 0 1px rgba(148, 163, 184, .22),
+    0 18px 48px rgba(0, 0, 0, .35);
+}
+
+.mic-orb.unavailable .mic-icon,
+.mic-orb:disabled .mic-icon {
+  color: rgba(148, 163, 184, .45);
 }
 
 .mic-icon {
@@ -837,6 +875,67 @@ p { margin: 0; overflow-wrap: anywhere; }
 .empty-state-tip svg {
   color: rgba(45, 212, 191, .7);
   flex-shrink: 0;
+}
+
+.translation-empty-state {
+  margin: 4px 0 8px;
+  padding: 20px 18px;
+  border: 1px dashed rgba(148, 163, 184, .18);
+  border-radius: 18px;
+  background: rgba(12, 18, 38, .35);
+}
+
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.empty-state-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(45, 212, 191, .32);
+  background: rgba(45, 212, 191, .12);
+  color: #a7f3d0;
+  font-size: .8rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+
+.empty-state-cta.primary {
+  border-color: rgba(56, 189, 248, .38);
+  background: rgba(56, 189, 248, .16);
+  color: #bae6fd;
+}
+
+.empty-state-cta:hover {
+  background: rgba(45, 212, 191, .22);
+  border-color: rgba(45, 212, 191, .48);
+}
+
+.empty-state-cta.primary:hover {
+  background: rgba(56, 189, 248, .24);
+  border-color: rgba(56, 189, 248, .52);
+}
+
+.text-input-submit.loading {
+  opacity: .92;
+  pointer-events: none;
+}
+
+.spin-icon {
+  animation: spin .8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .status-line {
@@ -1413,7 +1512,7 @@ p { margin: 0; overflow-wrap: anywhere; }
 
 .transcript-card.has-text,
 .translation-card.has-text {
-  padding-right: 56px;
+  padding-right: 92px;
 }
 
 .transcript-card {
@@ -1604,6 +1703,19 @@ p { margin: 0; overflow-wrap: anywhere; }
 .live-cursor.voice {
   background: #fbbf24;
   box-shadow: 0 0 14px rgba(251, 191, 36, .68);
+}
+
+.card-actions {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card-actions .copy-action {
+  position: static;
 }
 
 .copy-action {
@@ -2938,7 +3050,7 @@ select:focus-visible {
   .language-direction { min-height: 38px; }
   .route-pill { min-height: 30px; }
   .language-options button,
-  .quick-actions button { min-height: 30px; }
+  .quick-actions button { min-height: 44px; }
   .live-mode-chip,
   .live-flow-step { min-height: 24px; }
   .transcript-card,
@@ -3220,6 +3332,25 @@ select:focus-visible {
   align-items: center;
   gap: 5px;
   padding: 4px 0;
+}
+
+.status-panel-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  border-radius: 12px;
+  transition: background .15s ease;
+}
+
+.status-panel-btn:hover {
+  background: rgba(148, 163, 184, .08);
+}
+
+.status-panel-btn:focus-visible {
+  outline: 2px solid rgba(56, 189, 248, .45);
+  outline-offset: 2px;
 }
 
 .status-primary {

@@ -42,6 +42,8 @@ coverage/
 .env
 .env.*
 !.env.example
+railway-vars-paste.txt
+railway-secrets-local.txt
 
 # Generated model/audio artifacts
 models/whisper/*

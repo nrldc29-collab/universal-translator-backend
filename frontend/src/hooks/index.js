@@ -33,3 +33,5 @@ export { default as useHaptic } from './useHaptic';
 export { default as useInstallPrompt } from './useInstallPrompt';
 export { default as useReliabilityMonitor } from './useReliabilityMonitor';
 export { useAutoConversation } from './useAutoConversation';
+export { useToast } from './useToast';
+export { useSettings } from './useSettings';

@@ -3,20 +3,38 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Universal Translator — Live Dashboard</title>
+<meta name="theme-color" content="#050711">
+<meta name="color-scheme" content="dark light">
+<title>ANAI Translator — Live Dashboard</title>
 <style>
   :root {
-    --bg: #0a0e1a; --card: #111827; --border: #1e293b; --accent: #67e8f9;
-    --green: #22c55e; --yellow: #eab308; --red: #ef4444; --text: #e2e8f0;
-    --muted: #64748b; --blue: #3b82f6;
+    --bg: #050711; --card: rgba(10, 15, 29, 0.95); --border: rgba(103, 232, 249, 0.14);
+    --accent: #67e8f9; --green: #34d399; --yellow: #fbbf24; --red: #f87171;
+    --text: #f1f5f9; --muted: #94a3b8; --blue: #38bdf8;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
-  h1 { font-size: 22px; color: var(--accent); margin-bottom: 4px; }
-  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: radial-gradient(ellipse 120% 80% at 50% -20%, rgba(34, 211, 238, 0.08), transparent 55%), var(--bg);
+    color: var(--text);
+    padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+    min-height: 100dvh;
+  }
+  h1 { font-size: 26px; font-weight: 900; letter-spacing: -0.02em; margin-bottom: 4px; }
+  h1 .mark { color: #f8fafc; }
+  h1 .accent { color: var(--accent); text-shadow: 0 0 20px rgba(34, 211, 238, 0.35); }
+  .subtitle { color: var(--muted); font-size: 13px; font-weight: 700; margin-bottom: 20px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 20px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-  .card h2 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 16px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .card:hover { border-color: rgba(103, 232, 249, 0.28); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32); }
+  .card h2 { font-size: 12px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.7px; font-weight: 900; margin-bottom: 12px; }
   .metric { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
   .metric .label { color: var(--muted); font-size: 13px; }
   .metric .value { font-size: 20px; font-weight: 700; }
@@ -47,17 +65,55 @@
   .run-total { font-weight: 700; width: 70px; }
   .run-stages { color: var(--muted); flex: 1; }
   .controls { margin-bottom: 16px; display: flex; gap: 12px; align-items: center; }
-  .controls input { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; font-size: 13px; width: 280px; }
-  .controls button { background: var(--accent); color: var(--bg); border: none; padding: 6px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .controls button:hover { opacity: 0.85; }
-  .controls .refresh-info { color: var(--muted); font-size: 12px; }
-  .error-banner { background: rgba(239,68,68,.1); border: 1px solid var(--red); color: var(--red); padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; display: none; }
+  .controls input {
+    background: rgba(17, 24, 39, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    width: min(100%, 320px);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .controls input:focus {
+    outline: none;
+    border-color: rgba(103, 232, 249, 0.55);
+    box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.15);
+  }
+  .controls button {
+    background: #22d3ee;
+    color: #07131f;
+    border: 1px solid rgba(103, 232, 249, 0.45);
+    padding: 10px 18px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+    box-shadow: 0 6px 20px rgba(34, 211, 238, 0.25);
+    transition: transform 0.12s ease, opacity 0.15s ease;
+  }
+  .controls button:hover { opacity: 0.92; transform: translateY(-1px); }
+  .controls button:active { transform: scale(0.98); }
+  .controls button:focus-visible { outline: 2px solid rgba(103, 232, 249, 0.65); outline-offset: 2px; }
+  .controls .refresh-info { color: var(--muted); font-size: 12px; font-weight: 700; }
+  .error-banner {
+    background: rgba(31, 18, 21, 0.95);
+    border: 1px solid rgba(248, 113, 113, 0.45);
+    color: #fca5a5;
+    padding: 12px 16px;
+    border-radius: 14px;
+    margin-bottom: 16px;
+    font-size: 13px;
+    font-weight: 700;
+    display: none;
+    box-shadow: 0 8px 24px rgba(248, 113, 113, 0.12);
+  }
 </style>
 </head>
 <body>
 
-<h1>Universal Translator</h1>
-<p class="subtitle">Live Pipeline Dashboard</p>
+<h1><span class="mark">ANAI</span> <span class="accent">TRANSLATOR</span></h1>
+<p class="subtitle">Live pipeline dashboard</p>
 
 <div class="controls">
   <input id="url" type="text" value="http://localhost:8000" placeholder="Backend URL" />

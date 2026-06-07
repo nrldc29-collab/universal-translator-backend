@@ -97,9 +97,7 @@ export default function TypingText({
         <span
           key={index}
           className={`word ${isCurrent ? 'current' : ''} ${isTyped ? 'typed' : ''}`}
-          style={{
-            animationDelay: `${index * 50}ms`,
-          }}
+          style={{ '--word-index': index }}
         >
           {word}
           {index < wordsRef.current.length - 1 ? ' ' : ''}

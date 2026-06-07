@@ -2,6 +2,7 @@
  * ConversationMode -- 10/10 automatic bidirectional live translation UI.
  */
 import React, { useEffect, useRef, useCallback } from 'react';
+import { Mic, Square } from 'lucide-react';
 import { useAutoConversation } from '../hooks/useAutoConversation';
 
 const LANG_FLAG = { en:'🇺🇸',es:'🇪🇸',fr:'🇫🇷',de:'🇩🇪',it:'🇮🇹',pt:'🇧🇷',zh:'🇨🇳',ja:'🇯🇵',ko:'🇰🇷',ar:'🇸🇦',ru:'🇷🇺',hi:'🇮🇳',ht:'🇭🇹',nl:'🇳🇱' };
@@ -18,11 +19,12 @@ function LiveWaveform({ level = 0, active = false }) {
         const base = 4;
         const amplitude = active ? Math.max(base, level * 28 * (1 - dist * 0.4) * (0.7 + Math.sin(Date.now()/200 + i)*0.3)) : base;
         return (
-          <div key={i}
-            className={`conv-waveform-bar ${active ? 'active' : ''}`}
+          <div
+            key={i}
+            className={`conv-waveform-bar live ${active ? 'active' : ''}`}
             style={{
-              height: amplitude,
-              background: active ? `rgba(99,102,241,${0.5 + level*0.5})` : undefined,
+              '--bar-h': `${amplitude}px`,
+              '--bar-opacity': level,
             }}
           />
         );
@@ -32,17 +34,13 @@ function LiveWaveform({ level = 0, active = false }) {
 }
 
 // Animated waveform (CSS-only fallback when no mic level)
-function CssWaveform({ active, color='#6366f1' }) {
-  const speeds = [0.9,1.4,0.7,1.6,1.1,0.8,1.3];
+function CssWaveform({ active }) {
   return (
     <div className="conv-waveform">
-      {speeds.map((s,i)=>(
-        <div key={i}
-          className={`conv-waveform-bar ${active ? 'active' : ''}`}
-          style={{
-            background: active ? color : undefined,
-            animation: active ? `wv${i%5} ${s}s ease-in-out infinite alternate` : 'none',
-          }}
+      {Array.from({ length: 7 }, (_, i) => (
+        <div
+          key={i}
+          className={`conv-waveform-bar css-wave ${active ? 'active' : ''}`}
         />
       ))}
     </div>
@@ -66,7 +64,7 @@ function ThinkingDots() {
   return (
     <div className="conv-thinking-dots">
       {[0,1,2].map(i => (
-        <div key={i} className="conv-thinking-dot" style={{ animationDelay:`${i*0.15}s` }} />
+        <div key={i} className="conv-thinking-dot" />
       ))}
     </div>
   );
@@ -184,19 +182,15 @@ export default function ConversationMode({
   const isSpeaking   = phase==='speaking';
 
   const statusCfg = {
-    idle:       { text: !backendReady ? 'Wait for LIVE' : active ? 'Starting…' : 'Tap to start', color:'#475569' },
-    ready:      { text: 'Ready…',         color:'#34d399' },
-    listening:  { text: 'Listening…',    color:'#34d399' },
-    processing: { text: 'Translating…',  color:'#fbbf24' },
-    speaking:   { text: 'Speaking…',     color:'#a78bfa' },
-  }[phase] || { text:'', color:'#475569' };
-
-  const glowColor = isSpeaking ? 'rgba(167,139,250,.08)'
-                  : isListening ? 'rgba(52,211,153,.06)'
-                  : 'transparent';
+    idle:       { text: !backendReady ? 'Wait for LIVE' : active ? 'Starting…' : 'Tap to start' },
+    ready:      { text: 'Ready…' },
+    listening:  { text: 'Listening…' },
+    processing: { text: 'Translating…' },
+    speaking:   { text: 'Speaking…' },
+  }[phase] || { text: '' };
 
   return (
-    <div className="conv-root">
+    <div className="conv-root" data-phase={phase}>
 
       {/* Language pair + socket status */}
       <div className="conv-lang-bar">
@@ -226,10 +220,7 @@ export default function ConversationMode({
       <div className={`conv-main-panel ${active ? 'active' : ''}`}>
         {/* Ambient glow */}
         {active && (
-          <div
-            className="conv-ambient-glow"
-            style={{ background:`radial-gradient(ellipse 80% 60% at 50% 100%, ${glowColor}, transparent)` }}
-          />
+          <div className="conv-ambient-glow" data-phase={phase} aria-hidden="true" />
         )}
 
         {/* Mic button */}
@@ -240,7 +231,11 @@ export default function ConversationMode({
           disabled={!active && !backendReady}
           aria-label={active ? 'Stop conversation' : 'Start auto conversation'}
         >
-          {active ? '⏹' : '🎤'}
+          {active ? (
+            <Square size={26} strokeWidth={2.4} fill="currentColor" aria-hidden="true" />
+          ) : (
+            <Mic size={30} strokeWidth={2.2} aria-hidden="true" />
+          )}
         </button>
 
         {/* State area */}
@@ -253,14 +248,14 @@ export default function ConversationMode({
                 <>
                   {micLevel > 0.05 && isListening
                     ? <LiveWaveform level={micLevel} active />
-                    : <CssWaveform active={isListening} color={statusCfg.color} />
+                    : <CssWaveform active={isListening} />
                   }
-                  <span className="conv-status-text" style={{ color:statusCfg.color }}>
+                  <span className="conv-status-text" data-phase={phase}>
                     {statusCfg.text}
                   </span>
                   {micLevel > 0.05 && isListening
                     ? <LiveWaveform level={micLevel} active />
-                    : <CssWaveform active={isListening} color={statusCfg.color} />
+                    : <CssWaveform active={isListening} />
                   }
                 </>
               )

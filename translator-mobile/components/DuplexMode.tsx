@@ -231,13 +231,20 @@ export default function DuplexMode({
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Duplex Conversation</Text>
+      <Text style={styles.title}>
+        Duplex <Text style={styles.titleAccent}>conversation</Text>
+      </Text>
       <Text style={styles.subtitle}>Both speakers can talk simultaneously</Text>
 
       <View style={styles.speakerRow}>
         <Animated.View style={[styles.speakerWrapper, { transform: [{ scale: pulseA }] }]}>
           <Pressable
-            style={[styles.speakerButton, speakerA.active && styles.speakerActive]}
+            style={({ pressed }) => [
+              styles.speakerButton,
+              speakerA.active && styles.speakerActive,
+              !isConnected && styles.speakerDisabled,
+              pressed && styles.speakerPressed,
+            ]}
             onPress={() => toggleSpeaker("A")}
             disabled={!isConnected}
           >
@@ -245,7 +252,13 @@ export default function DuplexMode({
               Speaker A
             </Text>
             <Text style={styles.langTag}>{sourceLanguage.toUpperCase()}</Text>
-            <Text style={[styles.stage, speakerA.active && styles.stageActive]}>
+            <Text style={[
+              styles.stage,
+              speakerA.active && styles.stageActive,
+              speakerA.stage === "Listening" && styles.stageListening,
+              speakerA.stage === "Translating" && styles.stageTranslating,
+              speakerA.stage === "Speaking" && styles.stageSpeaking,
+            ]}>
               {speakerA.stage}
             </Text>
             <Text style={styles.tapHint}>{speakerA.active ? "Tap to stop" : "Tap to talk"}</Text>
@@ -254,7 +267,12 @@ export default function DuplexMode({
 
         <Animated.View style={[styles.speakerWrapper, { transform: [{ scale: pulseB }] }]}>
           <Pressable
-            style={[styles.speakerButton, speakerB.active && styles.speakerActive]}
+            style={({ pressed }) => [
+              styles.speakerButton,
+              speakerB.active && styles.speakerActive,
+              !isConnected && styles.speakerDisabled,
+              pressed && styles.speakerPressed,
+            ]}
             onPress={() => toggleSpeaker("B")}
             disabled={!isConnected}
           >
@@ -262,7 +280,13 @@ export default function DuplexMode({
               Speaker B
             </Text>
             <Text style={styles.langTag}>{targetLanguage.toUpperCase()}</Text>
-            <Text style={[styles.stage, speakerB.active && styles.stageActive]}>
+            <Text style={[
+              styles.stage,
+              speakerB.active && styles.stageActive,
+              speakerB.stage === "Listening" && styles.stageListening,
+              speakerB.stage === "Translating" && styles.stageTranslating,
+              speakerB.stage === "Speaking" && styles.stageSpeaking,
+            ]}>
               {speakerB.stage}
             </Text>
             <Text style={styles.tapHint}>{speakerB.active ? "Tap to stop" : "Tap to talk"}</Text>
@@ -271,7 +295,7 @@ export default function DuplexMode({
       </View>
 
       <View style={styles.conversationView}>
-        <View style={styles.speakerCard}>
+        <View style={[styles.speakerCard, (speakerA.transcript || speakerA.translation) && styles.speakerCardLive]}>
           <Text style={styles.cardTitle}>Speaker A ({sourceLanguage.toUpperCase()})</Text>
           <Text style={styles.textLabel}>Said:</Text>
           <Text style={styles.text}>{speakerA.transcript || "-"}</Text>
@@ -279,7 +303,7 @@ export default function DuplexMode({
           <Text style={styles.translationText}>{speakerA.translation || "-"}</Text>
         </View>
 
-        <View style={styles.speakerCard}>
+        <View style={[styles.speakerCard, (speakerB.transcript || speakerB.translation) && styles.speakerCardLive]}>
           <Text style={styles.cardTitle}>Speaker B ({targetLanguage.toUpperCase()})</Text>
           <Text style={styles.textLabel}>Said:</Text>
           <Text style={styles.text}>{speakerB.transcript || "-"}</Text>
@@ -291,8 +315,11 @@ export default function DuplexMode({
       {conversationHistory.length > 0 && (
         <View style={styles.historySection}>
           <Text style={styles.historyTitle}>Conversation</Text>
-          {conversationHistory.slice(-5).map((turn, i) => (
-            <View key={i} style={styles.historyTurn}>
+          {conversationHistory.slice(-5).map((turn, i, turns) => (
+            <View
+              key={i}
+              style={[styles.historyTurn, i === turns.length - 1 && styles.historyTurnLatest]}
+            >
               <Text style={styles.historySpeaker}>{turn.speaker}:</Text>
               <Text style={styles.historySource}>{turn.source}</Text>
               <Text style={styles.historyArrow}>→</Text>
@@ -308,7 +335,8 @@ export default function DuplexMode({
 const styles = StyleSheet.create({
   container: { marginBottom: 15 },
   title: { fontSize: 18, fontWeight: "900", color: "#e5ecff", marginBottom: 2 },
-  subtitle: { fontSize: 12, color: "#93a4bd", marginBottom: 12 },
+  titleAccent: { color: "#67e8f9" },
+  subtitle: { fontSize: 12, color: "#93a4bd", marginBottom: 12, lineHeight: 17 },
   speakerRow: { flexDirection: "row", gap: 10, marginBottom: 15 },
   speakerWrapper: { flex: 1 },
   speakerButton: {
@@ -318,13 +346,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(103, 232, 249, 0.18)",
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 4,
   },
-  speakerActive: { borderColor: "#67e8f9", backgroundColor: "rgba(8, 145, 178, 0.28)" },
+  speakerActive: {
+    borderColor: "#67e8f9",
+    backgroundColor: "rgba(8, 145, 178, 0.28)",
+    shadowColor: "#22d3ee",
+    shadowOpacity: 0.28,
+  },
+  speakerDisabled: { opacity: 0.55 },
+  speakerPressed: { transform: [{ scale: 0.98 }], opacity: 0.92 },
   speakerText: { color: "#93a4bd", fontWeight: "900", fontSize: 16 },
   speakerTextActive: { color: "#e5ecff" },
   langTag: { color: "#67e8f9", fontSize: 11, fontWeight: "700", marginTop: 3 },
   stage: { color: "#93a4bd", fontSize: 12, marginTop: 5 },
   stageActive: { color: "#67e8f9" },
+  stageListening: { color: "#6ee7b7" },
+  stageTranslating: { color: "#fcd34d" },
+  stageSpeaking: { color: "#d8b4fe" },
   tapHint: { color: "#4a5568", fontSize: 10, marginTop: 4 },
   conversationView: { flexDirection: "row", gap: 10, marginBottom: 10 },
   speakerCard: {
@@ -334,6 +377,18 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     borderColor: "rgba(103, 232, 249, 0.16)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  speakerCardLive: {
+    borderColor: "rgba(103, 232, 249, 0.38)",
+    backgroundColor: "rgba(8, 47, 73, 0.42)",
+    shadowColor: "#22d3ee",
+    shadowOpacity: 0.14,
+    shadowRadius: 12,
   },
   cardTitle: { color: "#67e8f9", fontWeight: "900", fontSize: 14, marginBottom: 8 },
   textLabel: { color: "#93a4bd", fontSize: 12, marginTop: 8 },
@@ -348,7 +403,22 @@ const styles = StyleSheet.create({
     marginTop: 5,
   },
   historyTitle: { color: "#67e8f9", fontWeight: "900", fontSize: 14, marginBottom: 8 },
-  historyTurn: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginBottom: 6, alignItems: "center" },
+  historyTurn: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 4,
+    marginBottom: 6,
+    alignItems: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "transparent",
+  },
+  historyTurnLatest: {
+    borderColor: "rgba(103, 232, 249, 0.28)",
+    backgroundColor: "rgba(8, 47, 73, 0.35)",
+  },
   historySpeaker: { color: "#67e8f9", fontWeight: "700", fontSize: 12, width: 20 },
   historySource: { color: "#e5ecff", fontSize: 12, flex: 1 },
   historyArrow: { color: "#4a5568", fontSize: 12 },

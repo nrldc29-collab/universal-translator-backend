@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, ArrowLeftRight, Check, Clock3, Copy, Download, Languages, Mic, Radio, Repeat2, Share2, Sparkles, Trash2, UserRound, Volume2 } from 'lucide-react';
+import { Activity, ArrowLeftRight, Check, Clock3, Copy, Download, Keyboard, Languages, Mic, Radio, Repeat2, Share2, Sparkles, Trash2, UserRound, Volume2 } from 'lucide-react';
 import './styles.css';
+import './beauty-polish.css';
 import { registerServiceWorker } from './pwa';
 import Assistant from './Assistant';
 // ConversationMode removed — unified single-view handles both solo and multi-speaker.
@@ -21,7 +22,6 @@ import HelpTooltip from './components/HelpTooltip';
 import KeyboardHelp from './components/KeyboardHelp';
 import VolumeControl from './components/VolumeControl';
 import ConnectionQualityIndicator from './components/ConnectionQualityIndicator';
-import ConversationActions from './components/ConversationActions';
 import EnhancedMicButton from './components/EnhancedMicButton';
 import ErrorRetryHandler from './components/ErrorRetryHandler';
 import LanguageFlag from './components/LanguageFlag';
@@ -66,6 +66,7 @@ import { useStreamRefs } from './hooks/useStreamRefs';
 import { useHoldToTalk } from './hooks/useHoldToTalk';
 import { useAutoConversation } from './hooks/useAutoConversation';
 import useReliabilityMonitor from './hooks/useReliabilityMonitor';
+import { getFriendlyStatusLabel, getFriendlyStatusDetail } from './utils/friendlyStatus';
 import {
   // host detection + URL helpers
   isLocalHost,
@@ -291,6 +292,10 @@ function App() {
     semanticContext, setSemanticContext,
     brainHintsRef, brainPlanRef,
     shouldSkipBrainTts, resetBrainRuntimeUi,
+    applyConfidenceSignals,
+    confidenceWarningVisible,
+    setConfidenceWarningVisible,
+    confidenceWarningMessage,
   } = useBrainState();
   const reliabilityMonitor = useReliabilityMonitor();
   // Auth must be declared before any hook that references authToken.
@@ -309,15 +314,68 @@ function App() {
 
   // Error state for user-friendly error display
   const [currentError, setCurrentError] = useState(null);
+  const [iosMicHintDismissed, setIosMicHintDismissed] = useState(() => {
+    try { return sessionStorage.getItem('anai_ios_mic_hint_dismissed') === '1'; } catch { return false; }
+  });
+  const showUserError = React.useCallback((errorCode) => {
+    try {
+      if (localStorage.getItem(`anai_error_dismissed_${errorCode}`)) return;
+    } catch {}
+    setCurrentError(errorCode);
+  }, []);
   const handleDismissError = () => setCurrentError(null);
   const handleRetryError = () => {
+    const code = currentError;
     setCurrentError(null);
-    // Retry logic depends on error type - mic click for mic errors, etc.
+    if (code === 'network_offline' || code === 'websocket_disconnected' || code === 'network_timeout') {
+      retryBackendConnection();
+      return;
+    }
+    if (code === 'mic_permission_denied' || code === 'mic_not_found' || code === 'mic_blocked') {
+      requestMicPermission().catch(() => {});
+      return;
+    }
     try { handleMicClick(); } catch {}
   };
 
   // Keyboard shortcuts
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+  const [textInputMode, setTextInputMode] = useState(false);
+  const [offlineBannerDismissed, setOfflineBannerDismissed] = useState(false);
+  const [micBannerDismissed, setMicBannerDismissed] = useState(false);
+  const [installNudgeDismissed, setInstallNudgeDismissed] = useState(() => {
+    try { return sessionStorage.getItem('anai_install_nudge_dismissed') === '1'; } catch { return false; }
+  });
+  const [showFriendlyStatus, setShowFriendlyStatus] = useState(() => {
+    try { return localStorage.getItem('anai_friendly_status') !== 'false'; } catch { return true; }
+  });
+
+  useEffect(() => {
+    if (micPermission === 'available') setMicBannerDismissed(false);
+  }, [micPermission]);
+
+  useEffect(() => {
+    if (connectionStatus === 'online') setOfflineBannerDismissed(false);
+  }, [connectionStatus]);
+
+  useEffect(() => {
+    const openKeyboardHelp = () => setShowKeyboardHelp(true);
+    window.addEventListener('anai-open-keyboard-help', openKeyboardHelp);
+    return () => window.removeEventListener('anai-open-keyboard-help', openKeyboardHelp);
+  }, []);
+
+  async function retryBackendConnection() {
+    setConnectionStatus('checking');
+    try {
+      const response = await fetch(`${liveApiUrl}/health`, { cache: 'no-store' });
+      if (!response.ok) throw new Error('health check failed');
+      const data = await response.json();
+      setConnectionStatus(data.ready === false ? 'warming' : 'online');
+      if (data.ready !== false) loadDiagnostics();
+    } catch {
+      setConnectionStatus('offline');
+    }
+  }
   // Volume state synced from settings; keyboard shortcut toggles mute
   const [volume, setVolume] = useState(() => settings.volume ?? 0.8);
   // Keep local volume in sync when settings.volume changes externally
@@ -394,7 +452,13 @@ function App() {
   const [copiedKey, _copyToClipboard] = useCopyToClipboard();
   const copyToClipboard = (text, key) => {
     _copyToClipboard(text, key);
-    toast('Copied to clipboard', 'success', 2000);
+    const copyLabels = {
+      src: 'Transcript copied',
+      tr: 'Translation copied',
+      conversation: 'Conversation copied',
+      room: 'Room link copied',
+    };
+    toast(copyLabels[key] || 'Copied to clipboard', 'success', 2000);
   };
   const hapticRaw = useHaptic();
   const haptic = React.useCallback((ms) => {
@@ -447,6 +511,7 @@ function App() {
   // shareRoomUrl call sites stay terse below.
 
   function applyBrainPayload(payload = {}, origin = 'translation') {
+    applyConfidenceSignals(payload);
     const { plan, hints, repairOptions } = extractBrainPlan(payload);
     if (!plan && Object.keys(hints).length === 0 && repairOptions.length === 0) return null;
 
@@ -976,14 +1041,18 @@ function App() {
         setLiveTranslation(data.translated_text || '');
         setClarifyMessage(data.clarify_message || 'Clarification requested');
         setClarifyVisible(true);
+        setTextInputMode(false);
       } else {
         setStatus(brainUpdate?.message || 'Text translated');
+        setTextInputMode(false);
+        toast('Translation ready', 'success', 2200);
         if (data.translated_text && (settings.ttsVoice === 'browser' || data.audio_unavailable)) {
           speakTranslatedTextWithBrowser(data.translated_text, textToSend, `text-${Date.now()}`);
         }
       }
     } catch (error) {
       setStatus(error.message || 'Text translation failed');
+      toast(error.message || 'Text translation failed', 'error', 3200);
     } finally {
       setProcessing(false);
     }
@@ -1706,7 +1775,7 @@ function App() {
     } catch (error) {
       setMicPermission('denied');
       setStatus(mediaErrorMessage(error));
-      setCurrentError(mapTechnicalError(error));
+      showUserError(mapTechnicalError(error));
       return;
     }
     setMicPermission('available');
@@ -3113,7 +3182,7 @@ function App() {
     } catch (error) {
       setMicPermission('denied');
       updateDuplexSpeaker(speaker, { active: false, stage: mediaErrorMessage(error) });
-      setCurrentError(mapTechnicalError(error));
+      showUserError(mapTechnicalError(error));
       return;
     }
     setMicPermission('available');
@@ -3302,14 +3371,27 @@ function App() {
   }
 
 
-  const sourceText = partialTranscript || result?.source_text || 'Ready to listen';
-  const translatedText = liveTranslation || result?.translated_text || 'Ready to translate';
   const hasSourceText = Boolean(partialTranscript || result?.source_text);
   const hasTranslatedText = Boolean(liveTranslation || result?.translated_text);
+  const sourceText = partialTranscript || result?.source_text || (hasSourceText ? '' : 'Your words will appear here');
+  const translatedText = liveTranslation || result?.translated_text || (hasTranslatedText ? '' : 'Translation will appear here');
   const perceivedListening = streaming || instantListening;
+  const micReady = connectionStatus === 'online' && micPermission !== 'denied' && micPermission !== 'unavailable';
   const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
-  const micLabel = playing ? 'Speaking' : streaming ? 'Listening' : processing ? 'Processing' : 'Tap to Speak';
-  const statusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
+  const micLabel = connectionStatus === 'checking'
+    ? 'Connecting…'
+    : connectionStatus === 'warming'
+      ? 'Starting engine…'
+      : !micReady
+    ? (connectionStatus !== 'online' ? 'Server offline' : 'Mic unavailable')
+    : playing
+      ? 'Speaking'
+      : streaming
+        ? 'Listening'
+        : processing
+          ? 'Processing'
+          : 'Tap to start';
+  const rawStatusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
   const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
   const activeSpeakerLabel = detectedSpeaker && detectedSpeaker !== '-' && detectedSpeaker !== 'Person' ? detectedSpeaker : '';
   const recentConversationTurns = settings.showConversationHistory !== false ? conversationTurns.slice(-4) : [];
@@ -3319,8 +3401,40 @@ function App() {
   const targetLanguageLabel = TARGET_LANGUAGE_OPTIONS.find((option) => option.code === targetLanguage)?.label || languages[targetLanguage] || targetLanguage.toUpperCase();
   const statusTone = connectionStatus !== 'online' ? 'offline' : playing || ttsPlaying ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'ready';
   const timingLabel = Number.isFinite(latencyTotalMs) ? `${latencyTotalMs}ms` : latencyAverageMs ? `${latencyAverageMs}ms avg` : '';
-  const speakerSummary = activeSpeakerLabel;
-  const micHint = perceivedListening ? 'Listening now' : processing ? 'Translation in motion' : playing ? 'Voice playing' : 'Ready for one tap';
+  const statusText = showFriendlyStatus
+    ? getFriendlyStatusLabel({
+      statusText: rawStatusText,
+      connectionStatus,
+      streaming: perceivedListening,
+      processing,
+      playing,
+      ttsPlaying,
+    })
+    : rawStatusText;
+  const statusDetail = showFriendlyStatus
+    ? getFriendlyStatusDetail({
+      connectionStatus,
+      streaming: perceivedListening,
+      processing,
+      playing,
+      ttsPlaying,
+      sourceLanguageLabel,
+      targetLanguageLabel,
+      turnCount: conversationTurns.length,
+      timingLabel,
+    })
+    : '';
+  const speakerSummary = showFriendlyStatus ? '' : activeSpeakerLabel;
+  const displayTimingLabel = showFriendlyStatus ? '' : timingLabel;
+  const micHint = perceivedListening
+    ? 'Listening now — speak naturally'
+    : processing
+      ? 'Translating your speech…'
+      : playing
+        ? 'Playing translated voice'
+        : connectionStatus === 'online'
+          ? 'Tap the mic, then speak'
+          : 'Connect to the server to begin';
   const visibleRepairOptions = (brainUi.repairOptions || []).slice(0, 3);
   const visibleHighlightTerms = (brainUi.highlightTerms || []).slice(0, 5);
   const brainModeLabel = brainUi.mode ? brainUi.mode.replace(/_/g, ' ') : brainUi.strategy?.replace(/_/g, ' ');
@@ -3330,11 +3444,25 @@ function App() {
   const liveHudItems = [
     { key: 'listen', label: 'Hear', Icon: Radio, active: perceivedListening, level: micLevel },
     { key: 'ai', label: 'AI', Icon: Sparkles, active: liveAssistActive || brainUi.visible },
-    { key: 'translate', label: 'Text', Icon: Languages, active: Boolean(liveTranslation) || /translat/i.test(statusText || '') },
+    { key: 'translate', label: 'Text', Icon: Languages, active: Boolean(liveTranslation) || /translat/i.test(rawStatusText || '') },
     { key: 'voice', label: 'Voice', Icon: Volume2, active: playing || ttsPlaying || ttsQueueLength > 0 },
   ];
   const hasVisibleConversation = hasSourceText || hasTranslatedText || recentConversationTurns.length > 0 || clarifyVisible || brainUi.visible;
+  const isTextTranslating = processing && textInputMode;
+  const showConnectionQuality =
+    connectionStatus !== 'online' ||
+    (Number.isFinite(latencySummary.average) && latencySummary.average >= 450);
+  const showInstallNudge = showInstallAction && hasTranslatedText && !installNudgeDismissed;
+  const showIosMicHint = isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING && connectionStatus === 'online';
   const quickActions = [
+    {
+      key: 'type',
+      label: 'Type',
+      Icon: Keyboard,
+      onClick: () => setTextInputMode(true),
+      disabled: streaming || processing || playing || connectionStatus !== 'online',
+      active: textInputMode,
+    },
     {
       key: 'flip',
       label: 'Flip',
@@ -3366,12 +3494,37 @@ function App() {
       <SystemBanners
         updateAvailable={updateAvailable}
         reconnectToastVisible={reconnectToastVisible}
+        connectionStatus={connectionStatus}
+        offlineBannerDismissed={offlineBannerDismissed}
+        onDismissOffline={() => setOfflineBannerDismissed(true)}
+        onOfflineRetry={retryBackendConnection}
         onDismissReconnect={() => {
           setReconnectToastVisible(false);
           haptic(30);
         }}
         onReconnectRetry={() => {
           try { handleMicClick(); } catch {}
+        }}
+        micPermission={micPermission}
+        micBannerDismissed={micBannerDismissed}
+        onDismissMicBanner={() => setMicBannerDismissed(true)}
+        onRequestMic={() => {
+          setMicBannerDismissed(true);
+          requestMicPermission().catch(() => {});
+        }}
+        showInstallNudge={showInstallNudge}
+        installNudgeDismissed={installNudgeDismissed}
+        onDismissInstallNudge={() => {
+          setInstallNudgeDismissed(true);
+          try { sessionStorage.setItem('anai_install_nudge_dismissed', '1'); } catch {}
+        }}
+        onInstallApp={installApp}
+        onOpenSettings={() => setSettingsOpen(true)}
+        showIosMicHint={showIosMicHint}
+        iosMicHintDismissed={iosMicHintDismissed}
+        onDismissIosMicHint={() => {
+          setIosMicHintDismissed(true);
+          try { sessionStorage.setItem('anai_ios_mic_hint_dismissed', '1'); } catch {}
         }}
       />
       <section className="phone-frame" data-connection={connectionStatus} data-smoke-check="Self Test">
@@ -3387,13 +3540,23 @@ function App() {
           updateAvailable={updateAvailable}
           apiUrl={liveApiUrl}
         />
-        <ConnectionQualityIndicator
-          connectionStatus={connectionStatus}
-          latencyMs={latencySummary.average}
-          reconnectAttempt={streamReconnectRef.current || 0}
-          maxReconnectAttempts={STREAM_RECONNECT_MAX_ATTEMPTS}
-          isReconnecting={streaming && connectionStatus !== 'online'}
-        />
+        {showConnectionQuality && (
+          <ConnectionQualityIndicator
+            connectionStatus={connectionStatus}
+            latencyMs={latencySummary.average}
+            reconnectAttempt={streamReconnectRef.current || 0}
+            maxReconnectAttempts={STREAM_RECONNECT_MAX_ATTEMPTS}
+            isReconnecting={streaming && connectionStatus !== 'online'}
+          />
+        )}
+
+        {currentError && (
+          <UserFriendlyError
+            errorCode={currentError}
+            onDismiss={handleDismissError}
+            onRetry={handleRetryError}
+          />
+        )}
 
         {/* Unified view: mic + translation + conversation history — auto speaker detection */}
         <LanguageDock
@@ -3412,6 +3575,7 @@ function App() {
           micState={micState}
           micLevel={micLevel}
           perceivedListening={perceivedListening}
+          micReady={micReady}
           micLabel={micLabel}
           micHint={micHint}
           handleMicClick={handleMicClick}
@@ -3425,8 +3589,18 @@ function App() {
           liveHudItems={liveHudItems}
           statusTone={statusTone}
           statusText={statusText}
+          statusDetail={statusDetail}
+          showFriendlyStatus={showFriendlyStatus}
+          onStatusToggle={() => {
+            setShowFriendlyStatus((prev) => {
+              const next = !prev;
+              try { localStorage.setItem('anai_friendly_status', next ? 'true' : 'false'); } catch {}
+              return next;
+            });
+            haptic(20);
+          }}
           speakerSummary={speakerSummary}
-          timingLabel={timingLabel}
+          timingLabel={displayTimingLabel}
           audioReplayAvailable={audioReplayAvailable}
           autoPlayFailed={autoPlayFailed}
           playTranslationAudio={playTranslationAudio}
@@ -3457,6 +3631,9 @@ function App() {
           onClearConversation={clearInterpreterScreen}
           clarifyVisible={clarifyVisible}
           clarifyMessage={clarifyMessage}
+          confidenceWarningVisible={confidenceWarningVisible}
+          confidenceWarningMessage={confidenceWarningMessage}
+          setConfidenceWarningVisible={setConfidenceWarningVisible}
           result={result}
           setClarifyVisible={setClarifyVisible}
           setPipelineStage={setPipelineStage}
@@ -3468,16 +3645,15 @@ function App() {
           enableTypingAnimation={true}
           isTranslationActive={processing && !streaming}
           onTextTranslate={(inputText) => translateText(inputText)}
+          textInputMode={textInputMode}
+          onTextInputModeChange={setTextInputMode}
+          connectionStatus={connectionStatus}
+          isTextTranslating={isTextTranslating}
+          textTranslateReady={connectionStatus === 'online' && !processing}
+          onNotify={(message, type) => toast(message, type, 2000)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOfflineRetry={retryBackendConnection}
         />
-        {recentConversationTurns.length > 0 && (
-          <ConversationActions
-            conversationTurns={recentConversationTurns}
-            onClear={clearInterpreterScreen}
-            onCopy={(text) => copyToClipboard(text, 'conversation')}
-            disabled={streaming || processing || playing || ttsPlaying}
-          />
-        )}
-
         <SettingsPanel
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
@@ -3526,6 +3702,7 @@ function App() {
       <ToastRegion toasts={toasts} dismiss={dismiss} />
       </section>
       <OnboardingTour />
+      <KeyboardHelp isOpen={showKeyboardHelp} onClose={() => setShowKeyboardHelp(false)} />
       <Assistant
         apiUrl={liveApiUrl}
         authToken={authToken}

@@ -85,7 +85,9 @@ class CircuitBreaker:
             raise CircuitBreakerOpenError(
                 f"Circuit breaker '{self.name}' call timed out after {self.config.timeout}s"
             ) from exc
-        except (RuntimeError, ValueError, TimeoutError) as exc:
+        except (RuntimeError, ValueError, TimeoutError, ConnectionError, OSError) as exc:
+            # Network/connection failures are the canonical reason to trip a
+            # breaker, so they must count toward the failure threshold too.
             await self._record_failure()
             raise exc
 

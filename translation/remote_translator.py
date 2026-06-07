@@ -38,7 +38,7 @@ class RemoteTranslator:
             if not translated:
                 raise RuntimeError("Remote translation returned empty text")
             return translated
-        except (URLError, HTTPError, TimeoutError) as exc:
+        except (URLError, HTTPError, TimeoutError, OSError) as exc:
             logger.warning("remote_translation_failed error=%s", exc)
             raise RuntimeError(f"Remote translation failed: {exc}") from exc
         except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:

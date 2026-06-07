@@ -229,7 +229,9 @@ class SessionRegistry:
     def snapshot(self) -> dict:
         self.cleanup()
         with self._lock:
-            return self.sessions
+            # Return a shallow copy so metrics readers can iterate safely while
+            # other threads bind/cleanup — avoids "dict changed size during iteration".
+            return dict(self.sessions)
 
     def record_turn(
         self,

@@ -58,7 +58,11 @@ def _energy_vad(wav_path: str, threshold: float = _ENERGY_THRESHOLD, min_speech_
         raise RuntimeError(f"Failed to unpack audio data: {exc}") from exc
 
     if n_channels > 1:
-        mono = [sum(all_samples[i::n_channels]) / n_channels for i in range(n_frames)]
+        # Downmix to mono by averaging each frame's interleaved channel samples.
+        mono = [
+            sum(all_samples[f * n_channels:(f + 1) * n_channels]) / n_channels
+            for f in range(n_frames)
+        ]
     else:
         mono = all_samples
 

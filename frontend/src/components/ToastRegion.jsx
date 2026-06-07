@@ -13,10 +13,11 @@ export default function ToastRegion({ toasts, dismiss }) {
     <div className="toast-region" role="status" aria-live="polite">
       {toasts.map(t => (
         <div key={t.id} className={`toast ${t.type} ${t.leaving ? 'leaving' : ''}`}>
-          {ICON[t.type]}
-          <span>{t.message}</span>
+          <span className="toast-icon" aria-hidden="true">{ICON[t.type]}</span>
+          <span className="toast-message">{t.message}</span>
           <button
             type="button"
+            className="toast-dismiss"
             onClick={() => dismiss(t.id)}
             aria-label="Dismiss"
           >

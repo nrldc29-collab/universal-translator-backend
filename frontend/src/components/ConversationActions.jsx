@@ -96,7 +96,7 @@ export default function ConversationActions({
     <div className={`conversation-actions ${className}`}>
       {showConfirm ? (
         <div className="conv-confirm" role="alertdialog" aria-label="Confirm clear">
-          <AlertTriangle size={13} strokeWidth={2.5} style={{ color: '#f87171', flexShrink: 0 }} />
+          <AlertTriangle size={13} strokeWidth={2.5} className="conv-confirm-icon" aria-hidden="true" />
           <span className="conv-confirm-text">Clear all history?</span>
           <button
             className="conv-confirm-yes"

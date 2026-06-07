@@ -18,17 +18,7 @@ const ERROR_MAPPINGS = {
     severity: 'error',
     title: 'Microphone Access Needed',
     message: 'Please allow microphone access in your browser settings to use voice translation.',
-    action: 'Open Settings',
-    actionHandler: () => {
-      // Try to open browser settings (not always possible, but worth attempting)
-      if (navigator.permissions) {
-        navigator.permissions.query({ name: 'microphone' }).then((result) => {
-          if (result.state === 'denied') {
-            alert('Please enable microphone access in your browser settings and refresh the page.');
-          }
-        });
-      }
-    },
+    action: 'Allow mic',
   },
   'mic_not_found': {
     icon: Mic,
@@ -141,14 +131,6 @@ export default function UserFriendlyError({ errorCode, onDismiss, onRetry }) {
     onDismiss?.();
   };
 
-  const severityColors = {
-    info: { bg: '#3b82f6', border: '#1d4ed8', text: '#eff6ff' },
-    warning: { bg: '#f59e0b', border: '#d97706', text: '#fffbeb' },
-    error: { bg: '#ef4444', border: '#dc2626', text: '#fef2f2' },
-  };
-
-  const colors = severityColors[errorConfig.severity];
-
   return (
     <div className="user-friendly-error" data-severity={errorConfig.severity} role="alert" aria-live="assertive">
       <div className="error-content">
@@ -162,6 +144,7 @@ export default function UserFriendlyError({ errorCode, onDismiss, onRetry }) {
         </div>
 
         <button
+          type="button"
           className="error-dismiss"
           onClick={handleDismiss}
           aria-label="Dismiss"
@@ -181,6 +164,7 @@ export default function UserFriendlyError({ errorCode, onDismiss, onRetry }) {
         </label>
 
         <button
+          type="button"
           className="error-action"
           onClick={handleAction}
         >

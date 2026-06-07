@@ -16,6 +16,8 @@ interface SettingsScreenProps {
   setPassword?: (value: string) => void;
   isLoggedIn?: boolean;
   recentUrls?: string[];
+  backendReachable?: boolean | null;
+  isCheckingBackend?: boolean;
   sourceLanguage: string;
   setSourceLanguage: (lang: string) => void;
   targetLanguage: string;
@@ -45,6 +47,8 @@ const LANGUAGES = [
   { code: "ko", name: "Korean", native: "한국어", flag: "🇰🇷" },
   { code: "ar", name: "Arabic", native: "العربية", flag: "🇸🇦" },
   { code: "ru", name: "Russian", native: "Русский", flag: "🇷🇺" },
+  { code: "nl", name: "Dutch", native: "Nederlands", flag: "🇳🇱" },
+  { code: "hi", name: "Hindi", native: "हिन्दी", flag: "🇮🇳" },
 ];
 
 export default function SettingsScreen({
@@ -75,10 +79,14 @@ export default function SettingsScreen({
   setPassword,
   isLoggedIn = false,
   recentUrls = [],
+  backendReachable = null,
+  isCheckingBackend = false,
 }: SettingsScreenProps) {
   const [localVolume, setLocalVolume] = useState(volume);
   const [localSpeed, setLocalSpeed] = useState(playbackSpeed);
   const [localUrl, setLocalUrl] = useState(wsUrl);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
 
   useEffect(() => {
     setLocalUrl(wsUrl);
@@ -107,12 +115,19 @@ export default function SettingsScreen({
   return (
     <ScrollView style={styles.container}>
       <View style={styles.headerRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Settings</Text>
+        <View style={styles.headerTitleWrap}>
+          <Text style={styles.title}>
+            Sett<Text style={styles.titleAccent}>ings</Text>
+          </Text>
           <Text style={styles.subtitle}>Languages, audio, and server connection.</Text>
         </View>
         {onClose ? (
-          <Pressable onPress={onClose} style={styles.closeBtn} accessibilityRole="button" accessibilityLabel="Close settings">
+          <Pressable
+            onPress={onClose}
+            style={({ pressed }) => [styles.closeBtn, pressed && styles.closeBtnPressed]}
+            accessibilityRole="button"
+            accessibilityLabel="Close settings"
+          >
             <Ionicons name="close" size={22} color="#e2e8f0" />
           </Pressable>
         ) : null}
@@ -132,7 +147,9 @@ export default function SettingsScreen({
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
-          style={styles.urlInput}
+          style={[styles.urlInput, focusedField === "url" && styles.urlInputFocused]}
+          onFocus={() => setFocusedField("url")}
+          onBlur={() => setFocusedField((f) => (f === "url" ? null : f))}
           accessibilityLabel="Backend server URL"
         />
         {recentUrls.length > 0 ? (
@@ -153,12 +170,31 @@ export default function SettingsScreen({
             ))}
           </View>
         ) : null}
+        {isCheckingBackend ? (
+          <View style={styles.connectionRow}>
+            <Ionicons name="sync-outline" size={14} color="#94a3b8" />
+            <Text style={styles.connectionStatus}>Checking server…</Text>
+          </View>
+        ) : backendReachable === true ? (
+          <View style={styles.connectionRow}>
+            <Ionicons name="checkmark-circle" size={14} color="#34d399" />
+            <Text style={[styles.connectionStatus, styles.connectionOk]}>Server reachable</Text>
+          </View>
+        ) : backendReachable === false ? (
+          <View style={styles.connectionRow}>
+            <Ionicons name="close-circle" size={14} color="#f87171" />
+            <Text style={[styles.connectionStatus, styles.connectionBad]}>Could not reach server</Text>
+          </View>
+        ) : null}
         <View style={styles.buttonRow}>
-          <Pressable style={styles.actionChip} onPress={() => onTestConnection?.()}>
-            <Text style={styles.actionChipText}>Test connection</Text>
+          <Pressable
+            style={({ pressed }) => [styles.actionChip, pressed && styles.actionChipPressed]}
+            onPress={() => onTestConnection?.()}
+          >
+            <Text style={styles.actionChipText}>{isCheckingBackend ? "Testing…" : "Test connection"}</Text>
           </Pressable>
           <Pressable
-            style={[styles.actionChip, styles.actionChipPrimary]}
+            style={({ pressed }) => [styles.actionChip, styles.actionChipPrimary, pressed && styles.actionChipPrimaryPressed]}
             onPress={() => onSaveUrl?.(localUrl)}
           >
             <Text style={[styles.actionChipText, styles.actionChipTextPrimary]}>Save & reconnect</Text>
@@ -183,7 +219,9 @@ export default function SettingsScreen({
               placeholder="Username"
               placeholderTextColor="#64748b"
               autoCapitalize="none"
-              style={styles.urlInput}
+              style={[styles.urlInput, focusedField === "user" && styles.urlInputFocused]}
+              onFocus={() => setFocusedField("user")}
+              onBlur={() => setFocusedField((f) => (f === "user" ? null : f))}
               accessibilityLabel="Username"
             />
             <TextInput
@@ -192,7 +230,9 @@ export default function SettingsScreen({
               placeholder="Password"
               placeholderTextColor="#64748b"
               secureTextEntry
-              style={styles.urlInput}
+              style={[styles.urlInput, focusedField === "pass" && styles.urlInputFocused]}
+              onFocus={() => setFocusedField("pass")}
+              onBlur={() => setFocusedField((f) => (f === "pass" ? null : f))}
               accessibilityLabel="Password"
             />
             <Pressable style={[styles.actionChip, styles.actionChipPrimary]} onPress={() => onLogin?.()}>
@@ -210,10 +250,16 @@ export default function SettingsScreen({
           <Text style={styles.value}>{Math.round(localVolume * 100)}%</Text>
         </View>
         <View style={styles.buttonRow}>
-          <Pressable style={styles.adjustButton} onPress={() => adjustVolume(-0.1)}>
+          <Pressable
+            style={({ pressed }) => [styles.adjustButton, pressed && styles.adjustButtonPressed]}
+            onPress={() => adjustVolume(-0.1)}
+          >
             <Text style={styles.adjustButtonText}>-</Text>
           </Pressable>
-          <Pressable style={styles.adjustButton} onPress={() => adjustVolume(0.1)}>
+          <Pressable
+            style={({ pressed }) => [styles.adjustButton, pressed && styles.adjustButtonPressed]}
+            onPress={() => adjustVolume(0.1)}
+          >
             <Text style={styles.adjustButtonText}>+</Text>
           </Pressable>
         </View>
@@ -223,10 +269,16 @@ export default function SettingsScreen({
           <Text style={styles.value}>{localSpeed.toFixed(1)}x</Text>
         </View>
         <View style={styles.buttonRow}>
-          <Pressable style={styles.adjustButton} onPress={() => adjustSpeed(-0.1)}>
+          <Pressable
+            style={({ pressed }) => [styles.adjustButton, pressed && styles.adjustButtonPressed]}
+            onPress={() => adjustSpeed(-0.1)}
+          >
             <Text style={styles.adjustButtonText}>-</Text>
           </Pressable>
-          <Pressable style={styles.adjustButton} onPress={() => adjustSpeed(0.1)}>
+          <Pressable
+            style={({ pressed }) => [styles.adjustButton, pressed && styles.adjustButtonPressed]}
+            onPress={() => adjustSpeed(0.1)}
+          >
             <Text style={styles.adjustButtonText}>+</Text>
           </Pressable>
         </View>
@@ -327,8 +379,18 @@ export default function SettingsScreen({
       
       <View style={styles.dangerZone}>
         <Text style={styles.dangerTitle}>Danger Zone</Text>
-        <Pressable style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]} onPress={onClearData}>
-          <Text style={styles.buttonText}>Clear All Stored Data</Text>
+        <Pressable
+          style={({ pressed }) => [styles.button, pressed && styles.buttonPressed, confirmClear && styles.buttonDanger]}
+          onPress={() => {
+            if (!confirmClear) {
+              setConfirmClear(true);
+              return;
+            }
+            setConfirmClear(false);
+            onClearData?.();
+          }}
+        >
+          <Text style={styles.buttonText}>{confirmClear ? "Tap again to confirm wipe" : "Clear All Stored Data"}</Text>
         </Pressable>
       </View>
     </ScrollView>
@@ -338,6 +400,7 @@ export default function SettingsScreen({
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, backgroundColor: "#050711" },
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 8 },
+  headerTitleWrap: { flex: 1, minWidth: 0 },
   closeBtn: {
     width: 40,
     height: 40,
@@ -347,9 +410,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#111827",
     borderWidth: 1,
     borderColor: "rgba(148, 163, 184, 0.2)",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  closeBtnPressed: {
+    backgroundColor: "#1e293b",
+    borderColor: "rgba(103, 232, 249, 0.28)",
+  },
+  connectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 10,
   },
   title: { fontSize: 28, fontWeight: "900", color: '#f8fafc', marginBottom: 4 },
-  subtitle: { color: '#94a3b8', fontSize: 13, marginBottom: 10 },
+  titleAccent: { color: '#67e8f9' },
+  subtitle: { color: '#94a3b8', fontSize: 13, marginBottom: 10, lineHeight: 18 },
   urlInput: {
     backgroundColor: "#111827",
     borderWidth: 1,
@@ -360,6 +439,15 @@ const styles = StyleSheet.create({
     color: "#f8fafc",
     fontSize: 14,
     marginTop: 8,
+  },
+  urlInputFocused: {
+    borderColor: "rgba(103, 232, 249, 0.55)",
+    backgroundColor: "#0f172a",
+    shadowColor: "#22d3ee",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 3,
   },
   actionChip: {
     flex: 1,
@@ -373,30 +461,97 @@ const styles = StyleSheet.create({
   actionChipPrimary: {
     backgroundColor: "#22d3ee",
     borderColor: "rgba(34, 211, 238, 0.5)",
+    shadowColor: "#22d3ee",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  actionChipPressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.98 }],
+  },
+  actionChipPrimaryPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
   actionChipText: { color: "#cbd5e1", fontSize: 13, fontWeight: "900" },
   actionChipTextPrimary: { color: "#07131f" },
-  section: { backgroundColor: '#07111f', padding: 15, borderRadius: 22, marginBottom: 15, borderWidth: 1, borderColor: 'rgba(103, 232, 249, 0.16)' },
+  section: {
+    backgroundColor: '#07111f',
+    padding: 15,
+    borderRadius: 22,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(103, 232, 249, 0.16)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    elevation: 5,
+  },
   sectionTitle: { color: '#67e8f9', fontSize: 13, fontWeight: '900', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.7 },
   settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(148, 163, 184, 0.12)' },
   label: { color: '#93a4bd', fontSize: 14 },
   value: { color: '#e5ecff', fontSize: 14, fontWeight: '900', flexShrink: 1, textAlign: 'right' },
   settingDescription: { color: '#64748b', fontSize: 12, marginTop: 8, marginBottom: 4 },
   buttonRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  adjustButton: { width: 44, height: 44, borderRadius: 999, backgroundColor: 'rgba(20, 184, 166, 0.26)', borderWidth: 1, borderColor: 'rgba(45, 212, 191, 0.46)', alignItems: 'center', justifyContent: 'center' },
+  adjustButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    backgroundColor: 'rgba(20, 184, 166, 0.26)',
+    borderWidth: 1,
+    borderColor: 'rgba(45, 212, 191, 0.46)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#2dd4bf',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  adjustButtonPressed: {
+    transform: [{ scale: 0.94 }],
+    opacity: 0.9,
+  },
   adjustButtonText: { color: '#ccfbf1', fontSize: 20, fontWeight: '900' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10, marginBottom: 6 },
   chip: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(15, 23, 42, 0.78)', borderWidth: 1, borderColor: 'rgba(148, 163, 184, 0.16)' },
-  chipActive: { backgroundColor: 'rgba(20, 184, 166, 0.26)', borderColor: 'rgba(45, 212, 191, 0.46)' },
+  chipActive: {
+    backgroundColor: 'rgba(20, 184, 166, 0.26)',
+    borderColor: 'rgba(45, 212, 191, 0.46)',
+    shadowColor: '#2dd4bf',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 2,
+  },
   chipText: { color: '#94a3b8', fontSize: 12, fontWeight: '800' },
   chipTextActive: { color: '#ccfbf1' },
   toggle: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999, backgroundColor: 'rgba(15, 23, 42, 0.78)', borderWidth: 1, borderColor: 'rgba(148, 163, 184, 0.16)' },
   toggleActive: { backgroundColor: 'rgba(20, 184, 166, 0.26)', borderColor: 'rgba(45, 212, 191, 0.46)' },
   toggleText: { color: '#94a3b8', fontSize: 12, fontWeight: '800' },
   toggleTextActive: { color: '#ccfbf1' },
-  dangerZone: { backgroundColor: '#160b13', padding: 15, borderRadius: 22, marginBottom: 15, borderWidth: 1, borderColor: 'rgba(248, 113, 113, 0.45)' },
+  dangerZone: {
+    backgroundColor: '#160b13',
+    padding: 15,
+    borderRadius: 22,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(248, 113, 113, 0.45)',
+    shadowColor: '#f87171',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 3,
+  },
   dangerTitle: { color: '#f87171', fontSize: 13, fontWeight: '900', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.7 },
   button: { backgroundColor: '#dc2626', padding: 13, borderRadius: 999, alignItems: 'center', marginTop: 10 },
+  buttonDanger: { backgroundColor: '#991b1b' },
   buttonPressed: { transform: [{ scale: 0.98 }] },
   buttonText: { color: '#fff', fontWeight: '900', fontSize: 14 },
+  connectionStatus: { fontSize: 13, fontWeight: '800', color: '#94a3b8' },
+  connectionOk: { color: '#6ee7b7' },
+  connectionBad: { color: '#fca5a5' },
 });

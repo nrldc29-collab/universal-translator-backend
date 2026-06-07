@@ -7,7 +7,7 @@ import os
 from llm import PassthroughContextLayer
 from translation import HybridTranslator, LightweightTranslator, MarianTranslator
 from tts import PiperTextToSpeech
-from backend.config import get_translation_backend
+from backend.config import get_translation_backend, _to_int
 from backend.stt_bridge import STTBridge
 from backend.ailang_pipeline import get_ailang_pipeline, AILangContext
 
@@ -82,11 +82,17 @@ class AnaiTranslatorPipeline:
         # Initialize predictive cache if available and enabled
         self.enable_predictive_cache = enable_predictive_cache and PREDICTIVE_CACHE_AVAILABLE
         self.predictive_cache = None
+        # Tolerant int parsing: a bad PREDICTIVE_CACHE_* env value falls back to
+        # the default instead of crashing pipeline (and thus server) startup.
         if self.enable_predictive_cache:
             self.predictive_cache = PredictiveCache(
-                max_size=int(os.getenv("PREDICTIVE_CACHE_SIZE", "1000")),
-                ttl_seconds=int(os.getenv("PREDICTIVE_CACHE_TTL", "3600")),
+                max_size=_to_int("PREDICTIVE_CACHE_SIZE", 1000, minimum=1),
+                ttl_seconds=_to_int("PREDICTIVE_CACHE_TTL", 3600, minimum=1),
             )
+        # Cache hit/miss counters (initialized here so stats never depend on
+        # whether translate_text has run yet).
+        self._cache_hits = 0
+        self._cache_misses = 0
 
     def preload(self) -> dict:
         result = {

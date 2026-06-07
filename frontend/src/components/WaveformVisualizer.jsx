@@ -131,6 +131,8 @@ export default function WaveformVisualizer({
     <canvas
       ref={canvasRef}
       className={`waveform-visualizer ${isListening || isSpeaking ? 'active' : ''} ${className}`}
+      data-listening={isListening ? 'true' : 'false'}
+      data-speaking={isSpeaking ? 'true' : 'false'}
       aria-hidden="true"
     />
   );
