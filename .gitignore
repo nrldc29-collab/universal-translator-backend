@@ -35,6 +35,8 @@ stt_provider/**/.pytest_cache/
 stt_provider/server/.pytest_cache/
 stt_provider/*.egg-info/
 stt_provider/**/*.egg-info/
+ailang/**/*.egg-info/
+*.egg-info/
 .vite/
 coverage/
 
