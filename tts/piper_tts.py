@@ -53,7 +53,7 @@ ESPEAK_VOICE_MAP = {
 }
 
 EDGE_TTS_VOICES = {
-    "en": "en-US-AvaNeural",
+    "en": "en-US-JennyNeural",
     "es": "es-MX-DaliaNeural",
     "fr": "fr-FR-DeniseNeural",
     "de": "de-DE-KatjaNeural",
@@ -200,6 +200,9 @@ def _merge_emotion_config(emotion_config: Optional[dict]) -> dict:
 
 
 def _edge_ssml_enabled() -> bool:
+    # Edge neural voices already pause naturally — extra SSML breaks sound stilted/robotic.
+    if os.getenv("TTS_NEURAL_MINIMAL_PROCESSING", "1").strip().lower() not in FALSE_VALUES:
+        return os.getenv("TTS_EDGE_SSML_PAUSES", "0").strip().lower() not in FALSE_VALUES
     return os.getenv("TTS_EDGE_SSML_PAUSES", "1").strip().lower() not in FALSE_VALUES
 
 

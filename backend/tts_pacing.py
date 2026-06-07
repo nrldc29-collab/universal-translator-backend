@@ -428,5 +428,15 @@ def resolve_tts_emotion_config(text: str, emotion_config: dict | None = None) ->
     pacing = build_tts_pacing(text or "")
     resolved = emotion_config_from_style(pacing.get("style"))
     if emotion_config:
-        resolved.update(emotion_config)
+        merged = dict(emotion_config)
+        if _neural_minimal_prosody():
+            for key in ("speed", "pitch_shift", "volume"):
+                value = merged.get(key)
+                if key == "speed" and isinstance(value, (int, float)) and 0.92 <= float(value) <= 1.08:
+                    merged.pop(key, None)
+                elif key == "pitch_shift" and isinstance(value, (int, float)) and abs(float(value)) <= 1.5:
+                    merged.pop(key, None)
+                elif key == "volume" and isinstance(value, (int, float)) and 0.95 <= float(value) <= 1.05:
+                    merged.pop(key, None)
+        resolved.update(merged)
     return resolved

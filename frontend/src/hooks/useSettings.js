@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const STORAGE_KEY = 'ut_settings_v1';
-const SETTINGS_VERSION = 6;
+const SETTINGS_VERSION = 7;
 
 const DEFAULTS = {
   // Language
@@ -13,7 +13,7 @@ const DEFAULTS = {
   micDeviceId: 'default',
   // Translation
   translationMode: 'fast',
-  partialTts: false,
+  partialTts: true,
   translationProvider: 'hybrid',
   // Display
   theme: 'dark',
@@ -56,6 +56,9 @@ function load() {
           loaded.ttsVoice = 'backend';
           loaded.partialTts = false;
           loaded.ttsSpeed = 1.0;
+        }
+        if ((loaded.settingsVersion || 0) < 7) {
+          loaded.partialTts = true;
         }
         loaded.lowBandwidthMode = false;
         loaded.settingsVersion = SETTINGS_VERSION;

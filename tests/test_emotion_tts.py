@@ -133,6 +133,15 @@ def test_neural_minimal_baseline_avoids_artificial_slowdown(monkeypatch):
     assert cfg["pitch_shift"] == 0
 
 
+def test_resolve_tts_emotion_strips_neutral_ailang_overrides(monkeypatch):
+    monkeypatch.setenv("TTS_NEURAL_MINIMAL_PROCESSING", "1")
+    from backend.tts_pacing import resolve_tts_emotion_config
+
+    resolved = resolve_tts_emotion_config("Hello there.", {"speed": 0.96, "pitch_shift": -0.4, "volume": 1.0})
+    assert resolved["speed"] == 1.0
+    assert resolved["pitch_shift"] == 0
+
+
 def test_pacing_excited_style_maps_speed_and_pitch():
     cfg = emotion_config_from_style({"speed": 1.2, "pitch": 1.1})
     assert cfg["speed"] == 1.2

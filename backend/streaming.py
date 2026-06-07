@@ -443,7 +443,6 @@ async def websocket_audio_translation(
     observability.increment("websocket_connects_total")
     logger.info("websocket_audio_connected partial_tts_mode=%s", get_partial_tts_mode())
     await websocket.send_json({"type": "ready", "message": "Audio streaming connected."})
-    asyncio.create_task(_prewarm_target_language_tts(pipeline, target_language))
     memory = memory or ConversationMemory()
     speaker_memory = speaker_memory or SpeakerMemory()
 
@@ -454,6 +453,7 @@ async def websocket_audio_translation(
 
     source_language = "en"
     target_language = "es"
+    asyncio.create_task(_prewarm_target_language_tts(pipeline, target_language))
     speaker = "speaker"
     speaker_label = "Person 1"
     speaker_index = 1
@@ -1477,7 +1477,7 @@ async def websocket_audio_translation(
             urgency = "high" if semantic_context.get("conversation_mood") == "urgent" else None
             # Lifelike voice: one full neural pass per sentence (not choppy partial clips).
             tts_playback_text = translated_text
-            if get_partial_tts_mode() and not get_natural_tts_mode():
+            if get_partial_tts_mode():
                 live_spoken_text = normalize_live_text(segment_partial_tts_text)
                 if live_spoken_text:
                     live_tail = live_translation_delta(live_spoken_text, translated_text)
@@ -1572,7 +1572,9 @@ async def websocket_audio_translation(
             if not skip_tts:
                 for tts_segment in tts_pacing["segments"]:
                     tts_chunks.extend(chunk_text_for_tts(tts_segment))
-                if get_natural_tts_mode():
+                if get_partial_tts_mode():
+                    tts_chunks = [chunk for chunk in tts_chunks if not recently_spoken_audio_tts(chunk)]
+                elif get_natural_tts_mode():
                     tts_chunks = [chunk for chunk in tts_chunks if is_speakable_live_delta(chunk)]
                 else:
                     tts_chunks = [chunk for chunk in tts_chunks if not recently_spoken_audio_tts(chunk)]

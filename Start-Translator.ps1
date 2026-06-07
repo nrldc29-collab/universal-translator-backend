@@ -523,7 +523,7 @@ if (-not (Test-PortListening -Port $BackendPort)) {
         $env:QUOTA_REQUESTS_PER_HOUR = "5000"
     }
     $env:PREFER_EDGE_TTS = "true"
-    $env:TTS_EDGE_SSML_PAUSES = "true"
+    $env:TTS_EDGE_SSML_PAUSES = "0"
     $env:TTS_SOFTENING_ENABLED = "true"
     $env:TTS_VOICE_PROFILE = "neural"
     $env:TTS_NEURAL_MINIMAL_PROCESSING = "true"
@@ -532,7 +532,7 @@ if (-not (Test-PortListening -Port $BackendPort)) {
     $env:TTS_NATURAL_SPEED = "1.0"
     $env:TTS_NATURAL_PITCH_SHIFT = "0"
     $env:TTS_NATURAL_VOICE = "true"
-    $env:PARTIAL_TTS_MODE = "0"
+    $env:PARTIAL_TTS_MODE = "1"
     $env:TTS_PROSODY_WARMTH = "false"
     if (-not $env:AILANG_ENHANCEMENTS_ENABLED) {
         $env:AILANG_ENHANCEMENTS_ENABLED = "false"

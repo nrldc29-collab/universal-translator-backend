@@ -2642,6 +2642,9 @@ function App() {
         try { audio.load(); } catch (e) {}
         audio.muted = false;
         audio.volume = 1;
+        if (item.neuralBackend !== false) {
+          audio.playbackRate = neuralPlaybackRate(settings.ttsSpeed);
+        }
         audio.onended = finish;
         audio.onerror = (error) => {
           console.error('HTML audio error:', error);
@@ -2796,7 +2799,12 @@ function App() {
           .then(async (rawAudioBuffer) => {
             // Trim trailing silence and match volume for seamless transitions
             const targetRMS = lastChunkRMSRef.current;
-            const { buffer: audioBuffer, trimmedDuration, rms } = await createTrimmedBuffer(context, rawAudioBuffer, targetRMS);
+            const matchVolume = item.neuralBackend === false && targetRMS;
+            const { buffer: audioBuffer, trimmedDuration, rms } = await createTrimmedBuffer(
+              context,
+              rawAudioBuffer,
+              matchVolume ? targetRMS : null,
+            );
             lastChunkRMSRef.current = rms; // Store for next chunk matching
             const duration = trimmedDuration;
             
@@ -2804,7 +2812,8 @@ function App() {
             
             const source = context.createBufferSource();
             source.buffer = audioBuffer;
-            source.playbackRate.value = item.neuralBackend !== false
+            const neuralItem = item.neuralBackend !== false;
+            source.playbackRate.value = neuralItem
               ? neuralPlaybackRate(settings.ttsSpeed)
               : Math.min(Math.max((settings.ttsSpeed ?? 0.94) * 0.98, 0.72), 1.15);
             source.connect(gainNode);
@@ -2815,10 +2824,18 @@ function App() {
               recentDurationsRef.current.shift();
             }
             
-            // S-curve crossfade for natural transitions
             const now = context.currentTime;
             const hasMoreChunks = ttsQueueRef.current.length > 0 || nextAudioBufferRef.current;
-            applySCurveFade(gainNode, now, duration, true, hasMoreChunks);
+            if (neuralItem) {
+              // Neural Edge audio is already lifelike — start at full volume, no slow ramp-in.
+              gainNode.gain.cancelScheduledValues(now);
+              gainNode.gain.setValueAtTime(1, now);
+              if (hasMoreChunks) {
+                applySCurveFade(gainNode, now, duration, false, true);
+              }
+            } else {
+              applySCurveFade(gainNode, now, duration, true, hasMoreChunks);
+            }
             
             if (hasMoreChunks) {
               debugLog('playTtsItem: scheduled S-curve fade out, duration:', duration.toFixed(3));
