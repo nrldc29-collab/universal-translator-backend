@@ -1,6 +1,6 @@
 import Constants from 'expo-constants';
 
-const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl || 'http://127.0.0.1:8000';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl || '';
 
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000]; // Exponential backoff
 const HEARTBEAT_INTERVAL = 15000; // 15 seconds
@@ -21,6 +21,8 @@ export const apiToWsUrl = (apiUrl, path, token) => {
 };
 
 export const connectWS = (url, onMessage, setStatus, options = {}) => {
+  const onOpen = options.onOpen;
+  const onClose = options.onClose;
   let ws = null;
   let reconnectAttempts = 0;
   let reconnectTimer = null;
@@ -58,7 +60,6 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     heartbeatTimer = setInterval(() => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         try {
-          lastPongTime = Date.now();
           ws.send(JSON.stringify({ type: 'ping' }));
           
           // Set timeout for pong response
@@ -97,6 +98,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
 
   const createWebSocket = (url, onMessage, setStatus) => {
     clearTimers();
+    intentionallyClosed = false;
     connectionStartTime = Date.now();
     
     connectionTimeout = setTimeout(() => {
@@ -117,6 +119,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
       debugLog(`WebSocket connected in ${connectionTime}ms:`, url);
       currentSetStatus?.("Handshaking...");
       startHeartbeat();
+      onOpen?.();
     };
     
     newWs.onmessage = (event) => {
@@ -147,6 +150,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
       const connectionDuration = Date.now() - connectionStartTime;
       debugLog(`WebSocket closed after ${connectionDuration}ms:`, event.code, event.reason);
 
+      onClose?.(event);
       if (!intentionallyClosed) {
         // Don't reconnect on normal closure (1000) or if explicitly closed by server
         if (event.code === 1000 || event.code === 1001) {
@@ -174,7 +178,13 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
     send: (data) => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         try {
-          ws.send(data);
+          if (data instanceof ArrayBuffer) {
+            ws.send(new Uint8Array(data));
+          } else if (ArrayBuffer.isView(data)) {
+            ws.send(data);
+          } else {
+            ws.send(data);
+          }
           return true;
         } catch (e) {
           console.error('Send error:', e);
@@ -197,11 +207,19 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
       currentSetStatus = newSetStatus;
     },
     forceReconnect: () => {
+      intentionallyClosed = true;
+      clearTimers();
       if (ws) {
-        ws.close(1000, 'Manual reconnect');
+        try {
+          ws.close(1000, 'Manual reconnect');
+        } catch {
+          // Socket may already be closed.
+        }
+        ws = null;
       }
+      intentionallyClosed = false;
       reconnectAttempts = 0;
-      scheduleReconnect();
+      ws = createWebSocket(currentUrl, currentOnMessage, currentSetStatus);
     }
   };
 };

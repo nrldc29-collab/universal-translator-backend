@@ -5,7 +5,14 @@ import * as Network from "expo-network";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
 import { apiToWsUrl, connectWS } from "./services/ws";
-import { startAudioStream, stopAudioStream } from "./services/audio-stream";
+import {
+  startAudioStream,
+  stopAudioStream,
+  pauseAudioUpload,
+  resumeAudioUpload,
+  restoreRecordingAudioMode,
+  isAudioUploadPaused,
+} from "./services/audio-stream";
 import styles from "./AppStyles";
 import { useMobileTts } from "./hooks/useMobileTts";
 import { useMobileAuth } from "./hooks/useMobileAuth";
@@ -279,6 +286,7 @@ export default function App() {
     playbackSpeed,
     setPlaybackSpeed,
     stopTtsPlayback,
+    setOnPlaybackIdle,
     hasReplayAudio,
   } = useMobileTts();
   const {
@@ -321,6 +329,8 @@ export default function App() {
 
   const toggleStreamingRef = useRef(null);
   const autoConnectStartedRef = useRef(false);
+  const sessionHandshakeRef = useRef(false);
+  const warmingRetryTimerRef = useRef(null);
   const isInterpreterActiveRef = useRef(false);
   const startingStreamRef = useRef(false);
   const autoResumeTimerRef = useRef(null);
@@ -471,11 +481,12 @@ export default function App() {
   }, [isInterpreterActive]);
 
   useEffect(() => {
-    if (!isInterpreterActive || !isConnected || isStreaming || isPlayingTts || startingStreamRef.current) return;
+    if (!isInterpreterActive || !isConnected || isPlayingTts || startingStreamRef.current) return;
+    if (isStreaming && !isAudioUploadPaused()) return;
     if (autoResumeTimerRef.current) clearTimeout(autoResumeTimerRef.current);
     autoResumeTimerRef.current = setTimeout(() => {
       autoResumeTimerRef.current = null;
-      if (isInterpreterActiveRef.current && isConnectedRef.current && !isStreamingRef.current && !isPlayingTtsRef.current) {
+      if (isInterpreterActiveRef.current && isSocketOpen() && sessionHandshakeRef.current && !isPlayingTtsRef.current) {
         startListening();
       }
     }, 260);
@@ -489,10 +500,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isInterpreterActive, isConnected, isStreaming, isPlayingTts]);
 
+  useEffect(() => {
+    setOnPlaybackIdle(() => {
+      if (resumeAfterTtsRef.current && isInterpreterActiveRef.current) {
+        resumeMicAfterPlayback().catch((error) => console.error("Error resuming mic after playback:", error));
+      }
+    });
+  }, [setOnPlaybackIdle]);
+
   useEffect(() => () => {
     releaseCommandMute();
     if (autoResumeTimerRef.current) clearTimeout(autoResumeTimerRef.current);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    if (warmingRetryTimerRef.current) clearTimeout(warmingRetryTimerRef.current);
   }, []);
 
   function showToast(message, variant = "info", durationMs = 2200) {
@@ -584,13 +604,57 @@ export default function App() {
     }
   }
 
+  function isSocketOpen() {
+    return Boolean(wsControlRef.current?.isConnected);
+  }
+
+  function markSocketConnected(nextStatus = "Connected") {
+    setIsConnected(true);
+    setStatusType("success");
+    setStatus(nextStatus);
+    saveRecentUrl(wsUrl);
+  }
+
+  function sendSessionStart() {
+    if (!isSocketOpen() || sessionHandshakeRef.current) return;
+    const sent = wsControlRef.current?.send(JSON.stringify({
+      type: "start",
+      session_id: mobileSessionIdRef.current,
+      device_id: mobileDeviceIdRef.current,
+      speaker_name: "Mobile",
+      speaker_mode: "auto",
+      source_language: sourceLanguage,
+      target_language: targetLanguage,
+      barrier_mode: barrierMode,
+      mime_type: "audio/m4a",
+    }));
+    if (sent) {
+      sessionHandshakeRef.current = true;
+    }
+  }
+
+  function resetSessionHandshake() {
+    sessionHandshakeRef.current = false;
+  }
+
   function connect() {
-    if (wsControlRef.current?.isConnected) {
-      setIsConnected(true);
-      setStatus(isInterpreterActiveRef.current ? "Ready to listen" : "Connected");
-      setStatusType("success");
+    if (isSocketOpen()) {
+      if (!sessionHandshakeRef.current) {
+        sendSessionStart();
+      } else {
+        markSocketConnected(isInterpreterActiveRef.current ? "Ready to listen" : "Connected");
+      }
       tapHaptic("success");
       return;
+    }
+
+    const existing = wsControlRef.current;
+    if (existing?.readyState === 0) {
+      return;
+    }
+    if (existing) {
+      existing.close();
+      wsControlRef.current = null;
     }
 
     if (!validateUrl(wsUrl)) {
@@ -605,7 +669,12 @@ export default function App() {
     tapHaptic("light");
     const url = apiToWsUrl(wsUrl, "/ws/audio", token);
     debugLog("Connecting to:", url);
-    wsControlRef.current = connectWS(url, handleMessage, setStatusWithType);
+    wsControlRef.current = connectWS(url, handleMessage, setStatusWithType, {
+      onClose: () => {
+        resetSessionHandshake();
+        setIsConnected(false);
+      },
+    });
     wsControlRef.current.updateHandlers(handleMessage, setStatusWithType);
   }
 
@@ -614,25 +683,15 @@ export default function App() {
     if (type) {
       setStatusType(type);
     } else if (nextStatus.includes("Connected")) {
-      setStatusType("success");
-      setIsConnected(true);
-      saveRecentUrl(wsUrl);
-      wsControlRef.current?.send(JSON.stringify({
-        type: "start",
-        session_id: mobileSessionIdRef.current,
-        device_id: mobileDeviceIdRef.current,
-        speaker: "auto",
-        speaker_mode: "auto",
-        source_language: sourceLanguage,
-        target_language: targetLanguage,
-        barrier_mode: barrierMode,
-      }));
+      markSocketConnected(nextStatus);
+      sendSessionStart();
     } else if (nextStatus.includes("Reconnecting in")) {
       setStatusType("warning");
     } else if (nextStatus.includes("Reconnecting") || nextStatus.includes("Connecting")) {
       setStatusType("connecting");
     } else if (nextStatus.includes("Disconnected") || nextStatus.includes("failed") || nextStatus.includes("error")) {
       setStatusType("error");
+      resetSessionHandshake();
       setIsConnected(false);
       if (isStreamingRef.current || startingStreamRef.current) {
         startingStreamRef.current = false;
@@ -852,6 +911,19 @@ export default function App() {
     switch (message.type) {
       case "pong":
         break;
+      case "ready":
+        markSocketConnected("Connected");
+        sendSessionStart();
+        break;
+      case "listening":
+        markSocketConnected("Listening — speak anytime");
+        if (isInterpreterActiveRef.current && !isStreamingRef.current && !startingStreamRef.current && !isPlayingTtsRef.current) {
+          startListening();
+        }
+        break;
+      case "session_restored":
+        syncRouteFromMessage(message);
+        break;
       case "config_ack":
         syncRouteFromMessage(message);
         setVoiceIntent(asBool(message.barrier_mode) ? `${getLanguageLabel(message.source_language)} and ${getLanguageLabel(message.target_language)}` : `${getLanguageLabel(message.source_language)} to ${getLanguageLabel(message.target_language)}`);
@@ -885,8 +957,12 @@ export default function App() {
         syncRouteFromMessage(message);
         if (!suppressTurnAudioRef.current) {
           setLiveTranslation("");
-          setResult((previous) => ({ ...previous, translated_text: message.text || message.translated_text }));
-          setStatus("Translating");
+          setResult((previous) => ({
+            ...previous,
+            translated_text: message.text || message.translated_text,
+            source_text: message.source_text || previous.source_text,
+          }));
+          setStatus(message.type === "final" ? "Listening — speak anytime" : "Translating");
         }
         if (latencyStartRef.current.translation) {
           const translationLatency = now - latencyStartRef.current.translation;
@@ -896,6 +972,11 @@ export default function App() {
         if (message.type === "final") {
           rememberConversationTurn(message);
           setMeaningCheck(asBool(message.clarify) || asBool(message.needs_confirmation) ? "Check meaning" : "");
+          setPartialTranscript("");
+          if (isInterpreterActiveRef.current && isStreamingRef.current && !isPlayingTtsRef.current) {
+            resumeAudioUpload();
+            setStatusType("success");
+          }
         }
         break;
       case "partial_translation":
@@ -954,11 +1035,9 @@ export default function App() {
         if (isInterpreterActiveRef.current) {
           resumeAfterTtsRef.current = true;
           setStatus("Listening — speak anytime");
-          setTimeout(() => {
-            if (isInterpreterActiveRef.current && !isStreamingRef.current && !isPlayingTtsRef.current) {
-              startListening();
-            }
-          }, 200);
+          if (!isPlayingTtsRef.current) {
+            resumeMicAfterPlayback().catch((error) => console.error("Error resuming mic after TTS:", error));
+          }
         } else {
           resumeAfterTtsRef.current = false;
         }
@@ -978,8 +1057,41 @@ export default function App() {
         }
         break;
       case "error":
+        if (message.warming) {
+          setStatus(message.message || "Warming up — retrying...");
+          setStatusType("connecting");
+          resetSessionHandshake();
+          setIsConnected(false);
+          if (warmingRetryTimerRef.current) clearTimeout(warmingRetryTimerRef.current);
+          warmingRetryTimerRef.current = setTimeout(() => {
+            warmingRetryTimerRef.current = null;
+            if (wsControlRef.current?.forceReconnect) {
+              wsControlRef.current.forceReconnect();
+            } else {
+              connect();
+            }
+          }, 2500);
+          break;
+        }
+        if (message.recoverable && isInterpreterActiveRef.current) {
+          setStatus(message.message || "Try speaking again");
+          setStatusType("warning");
+          if (!isStreamingRef.current && !startingStreamRef.current && !isPlayingTtsRef.current) {
+            setTimeout(() => {
+              if (isInterpreterActiveRef.current && isSocketOpen() && sessionHandshakeRef.current) {
+                startListening();
+              }
+            }, 350);
+          }
+          break;
+        }
         setStatus(message.message || message.error || "Server error");
         setStatusType("error");
+        if (message.message?.includes("No audio received") && isInterpreterActiveRef.current) {
+          if (!isStreamingRef.current && !startingStreamRef.current) {
+            startListening();
+          }
+        }
         break;
       default:
         debugLog("Unhandled message type:", message.type, message);
@@ -989,6 +1101,11 @@ export default function App() {
   function disconnect() {
     setIsInterpreterActive(false);
     resumeAfterTtsRef.current = false;
+    resetSessionHandshake();
+    if (warmingRetryTimerRef.current) {
+      clearTimeout(warmingRetryTimerRef.current);
+      warmingRetryTimerRef.current = null;
+    }
     if (wsControlRef.current) {
       wsControlRef.current.close();
       wsControlRef.current = null;
@@ -1005,12 +1122,29 @@ export default function App() {
   }
 
   async function startListening() {
-    if (startingStreamRef.current || isStreamingRef.current || isPlayingTtsRef.current) return;
-    if (!isConnectedRef.current) {
+    if (startingStreamRef.current || isPlayingTtsRef.current) return;
+    if (isStreamingRef.current) {
+      if (isAudioUploadPaused()) {
+        try {
+          await restoreRecordingAudioMode();
+        } catch (error) {
+          console.error("Error restoring recording audio mode:", error);
+        }
+        resumeAudioUpload();
+        setStatus("Listening — speak anytime");
+        setStatusType("success");
+      }
+      return;
+    }
+    if (!isSocketOpen()) {
       setStatus("Connecting");
       setStatusType("connecting");
       connect();
       return;
+    }
+    if (!sessionHandshakeRef.current) {
+      sendSessionStart();
+      await new Promise((resolve) => setTimeout(resolve, 350));
     }
 
     startingStreamRef.current = true;
@@ -1020,15 +1154,23 @@ export default function App() {
       console.error("Haptic feedback error:", error);
     }
     setStatus("Opening microphone");
-    const started = await startAudioStream(async (chunk) => {
-      if (wsControlRef.current?.isConnected) {
-        wsControlRef.current?.send(JSON.stringify({
-          type: "chunk_meta",
-          sent_at_ms: Date.now(),
-          bytes: chunk.byteLength,
-          mime_type: "audio/m4a",
-        }));
-        wsControlRef.current?.send(chunk);
+    const started = await startAudioStream(async (chunk, meta = {}) => {
+      if (!wsControlRef.current?.isConnected || isAudioUploadPaused()) return;
+      const chunkMeta = {
+        type: "chunk_meta",
+        sent_at_ms: Date.now(),
+        bytes: chunk.byteLength,
+        mime_type: "audio/m4a",
+        audio_level: meta.audioLevel ?? 0,
+      };
+      if (meta.meteringAvailable) {
+        chunkMeta.client_voice_active = meta.voiceActive ?? true;
+        chunkMeta.voice_active = meta.voiceActive ?? true;
+      }
+      wsControlRef.current.send(JSON.stringify(chunkMeta));
+      wsControlRef.current.send(chunk);
+      if (meta.finalizeUtterance) {
+        wsControlRef.current.send(JSON.stringify({ type: "finalize" }));
       }
     }, (error) => {
       setStatus(error === "Microphone permission denied" ? "Microphone blocked" : `Stream error: ${error}`);
@@ -1061,21 +1203,43 @@ export default function App() {
   }
 
   async function pauseMicForPlayback() {
+    resumeAfterTtsRef.current = isInterpreterActiveRef.current;
     if (isStreamingRef.current || startingStreamRef.current) {
-      resumeAfterTtsRef.current = isInterpreterActiveRef.current;
-      await stopListening(false);
-    } else if (isInterpreterActiveRef.current) {
-      resumeAfterTtsRef.current = true;
+      pauseAudioUpload();
+    }
+  }
+
+  async function resumeMicAfterPlayback() {
+    if (!isInterpreterActiveRef.current) {
+      resumeAfterTtsRef.current = false;
+      return;
+    }
+    resumeAfterTtsRef.current = false;
+    if (isStreamingRef.current) {
+      try {
+        await restoreRecordingAudioMode();
+      } catch (error) {
+        console.error("Error restoring recording audio mode:", error);
+      }
+      resumeAudioUpload();
+      setStatus("Listening — speak anytime");
+      setStatusType("success");
+      return;
+    }
+    if (!isPlayingTtsRef.current && !startingStreamRef.current && isSocketOpen() && sessionHandshakeRef.current) {
+      startListening();
     }
   }
 
   function activateInterpreter() {
     setIsInterpreterActive(true);
     setVoiceIntent(barrierMode ? `${activeSource} and ${activeTarget}` : `${activeSource} to ${activeTarget}`);
-    if (!isConnectedRef.current) {
+    if (!isSocketOpen()) {
       connect();
-    } else {
+    } else if (sessionHandshakeRef.current) {
       startListening();
+    } else {
+      sendSessionStart();
     }
   }
 
@@ -1457,7 +1621,7 @@ export default function App() {
             ) : null}
             <Pressable
               onPress={toggleInterpreter}
-              disabled={(!isConnected && !isInterpreterActive) || (isConnecting && !isInterpreterActive)}
+              disabled={isConnecting && !isInterpreterActive}
               accessibilityRole="button"
               accessibilityLabel={primaryActionLabel}
               accessibilityHint="Starts or pauses continuous speech translation."
@@ -1471,7 +1635,7 @@ export default function App() {
                 isStreaming && styles.voiceButtonListening,
                 isPlayingTts && styles.voiceButtonSpeaking,
                 isConnecting && !isInterpreterActive && styles.voiceButtonBusy,
-                !isConnected && !isInterpreterActive && styles.voiceButtonDisabled,
+                isConnecting && !isInterpreterActive && styles.voiceButtonDisabled,
                 pressed && styles.voiceButtonPressed,
               ]}
             >

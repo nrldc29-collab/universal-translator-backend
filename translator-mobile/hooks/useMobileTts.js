@@ -23,6 +23,15 @@ export function useMobileTts() {
   const activePlaybackRef = useRef(null);
   const replayCaptureRef = useRef([]);
   const lastTtsMessagesRef = useRef([]);
+  const onPlaybackIdleRef = useRef(null);
+
+  function setOnPlaybackIdle(callback) {
+    onPlaybackIdleRef.current = callback;
+  }
+
+  function notifyPlaybackIdle() {
+    onPlaybackIdleRef.current?.();
+  }
 
   useEffect(() => {
     loadSettings();
@@ -72,6 +81,7 @@ export function useMobileTts() {
         setIsPlayingTts(false);
         isPlayingTtsRef.current = false;
         retryCountRef.current = 0;
+        notifyPlaybackIdle();
       }
       return;
     }
@@ -112,6 +122,8 @@ export function useMobileTts() {
 
     if (ttsQueueRef.current.length > 0) {
       playNextTtsChunk();
+    } else {
+      notifyPlaybackIdle();
     }
   }
 
@@ -315,6 +327,7 @@ export function useMobileTts() {
     clearTtsQueue,
     clearReplayAudio,
     stopTtsPlayback,
+    setOnPlaybackIdle,
     hasReplayAudio,
     volume,
     setVolume: updateVolume,
