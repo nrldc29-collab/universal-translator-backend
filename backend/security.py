@@ -247,7 +247,11 @@ def authenticate_user(username: str, password: str) -> str:
     else:
         users = get_users()
         expected_password = users.get(username)
-        if not expected_password or not hmac.compare_digest(expected_password, password):
+        # Compare as bytes so non-ASCII passwords don't make compare_digest raise
+        # TypeError (which would surface as a 500 instead of a clean 401).
+        if not expected_password or not hmac.compare_digest(
+            expected_password.encode("utf-8"), (password or "").encode("utf-8")
+        ):
             raise HTTPException(status_code=401, detail="Invalid username or password.")
     return create_jwt(username)
 

@@ -18,6 +18,10 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
   const [setupComplete, setSetupComplete] = useState(false);
   const [isCheckingBackend, setIsCheckingBackend] = useState(false);
 
+  function normalizeUrl(url) {
+    return String(url || "").trim().replace(/\/+$/, "");
+  }
+
   async function loadStoredData() {
     try {
       const storedToken = await SecureStore.getItemAsync(TOKEN_KEY);
@@ -25,19 +29,48 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
         setToken(storedToken);
         onStatus?.("Token restored", "success");
       }
-      const storedUrl = await SecureStore.getItemAsync(WS_URL_KEY);
-      if (storedUrl) {
+      const envUrl = normalizeUrl(defaultUrl);
+      const storedUrl = normalizeUrl(await SecureStore.getItemAsync(WS_URL_KEY));
+      let envChanged = false;
+      // Prefer the baked-in Expo env URL when it changes (e.g. Start-MobilePhoneMode.ps1 refreshed LAN IP).
+      if (envUrl && validateUrl(envUrl)) {
+        envChanged = Boolean(storedUrl && storedUrl !== envUrl);
+        if (!storedUrl || envChanged) {
+          setWsUrl(envUrl);
+          await SecureStore.setItemAsync(WS_URL_KEY, envUrl);
+          if (envChanged) {
+            setBackendReachable(null);
+            setSetupComplete(false);
+            await SecureStore.deleteItemAsync(SETUP_COMPLETE_KEY);
+          }
+        } else {
+          setWsUrl(storedUrl);
+        }
+      } else if (storedUrl && validateUrl(storedUrl)) {
         setWsUrl(storedUrl);
-      } else if (defaultUrl && validateUrl(defaultUrl)) {
-        setWsUrl(defaultUrl);
       }
       const storedUrls = await SecureStore.getItemAsync(RECENT_URLS_KEY);
-      if (storedUrls) setRecentUrls(JSON.parse(storedUrls));
-      const storedSetup = await SecureStore.getItemAsync(SETUP_COMPLETE_KEY);
-      setSetupComplete(storedSetup === "1");
+      if (storedUrls) {
+        try {
+          const parsed = JSON.parse(storedUrls);
+          setRecentUrls(Array.isArray(parsed) ? parsed : []);
+        } catch {
+          setRecentUrls([]);
+          await SecureStore.deleteItemAsync(RECENT_URLS_KEY);
+        }
+      }
+      if (!envChanged) {
+        const storedSetup = await SecureStore.getItemAsync(SETUP_COMPLETE_KEY);
+        setSetupComplete(storedSetup === "1");
+      }
     } catch (error) {
       console.error("Error loading stored data:", error);
     }
+  }
+
+  function editWsUrl(url) {
+    setWsUrl(url);
+    setBackendReachable(null);
   }
 
   async function saveWsUrl(url) {
@@ -56,7 +89,9 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
 
   async function saveRecentUrl(url) {
     try {
-      const updated = [url, ...recentUrls.filter((u) => u !== url)].slice(0, MAX_RECENT_URLS);
+      const stored = await SecureStore.getItemAsync(RECENT_URLS_KEY);
+      const current = stored ? JSON.parse(stored) : [];
+      const updated = [url, ...current.filter((u) => u !== url)].slice(0, MAX_RECENT_URLS);
       setRecentUrls(updated);
       await SecureStore.setItemAsync(RECENT_URLS_KEY, JSON.stringify(updated));
     } catch (error) {
@@ -66,34 +101,69 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
 
   function validateUrl(url) {
     try {
-      if (!url || url.trim() === "") return false;
-      return url.startsWith("http://") || url.startsWith("https://");
+      const trimmed = String(url || "").trim();
+      if (!trimmed) return false;
+      if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) return false;
+      const parsed = new URL(trimmed);
+      return Boolean(parsed.hostname);
     } catch {
       return false;
     }
   }
 
-  async function checkBackendHealth(url) {
-    const target = String(url || wsUrl || "").trim();
+  async function checkBackendHealth(url, { quiet = false } = {}) {
+    const target = normalizeUrl(url || wsUrl);
     if (!validateUrl(target)) {
       setBackendReachable(false);
       return false;
     }
+    if (/localhost|127\.0\.0\.1/i.test(target)) {
+      setBackendReachable(false);
+      if (!quiet) {
+        onStatus?.("Use your PC's LAN IP (not localhost) — the phone cannot reach this machine.", "error");
+      }
+      return false;
+    }
     try {
-      setIsCheckingBackend(true);
-      onStatus?.("Checking server...", "connecting");
+      if (!quiet) {
+        setIsCheckingBackend(true);
+        onStatus?.("Checking server...", "connecting");
+      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
       const response = await fetch(`${target}/health`, {
         method: "GET",
         cache: "no-store",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
       setBackendReachable(response.ok);
+      if (!quiet) {
+        if (response.ok) {
+          onStatus?.("Server reachable", "success");
+        } else {
+          onStatus?.(`Server responded with HTTP ${response.status}`, "error");
+        }
+      }
       return response.ok;
-    } catch {
+    } catch (error) {
       setBackendReachable(false);
+      const message = String(error?.message || error || "");
+      if (!quiet) {
+        if (/abort|timeout/i.test(message)) {
+          onStatus?.("Server check timed out. Same Wi‑Fi? Firewall open on ports 8000 and 8081?", "error");
+        } else if (/network request failed|failed to fetch|cleartext/i.test(message)) {
+          onStatus?.("Cannot reach server. Use your PC's LAN IP and allow HTTP through Windows Firewall.", "error");
+        } else {
+          onStatus?.("Cannot reach server. Check URL, Wi‑Fi, and firewall.", "error");
+        }
+      }
       return false;
     } finally {
-      setIsCheckingBackend(false);
+      if (!quiet) {
+        setIsCheckingBackend(false);
+      }
     }
   }
 
@@ -109,7 +179,8 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
         onStatus?.("Backend is not reachable. Check URL and ensure backend is running.", "error");
         return;
       }
-      const response = await fetch(`${wsUrl}/auth/login`, {
+      const target = normalizeUrl(wsUrl);
+      const response = await fetch(`${target}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -122,9 +193,9 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
       const data = await response.json();
       await SecureStore.setItemAsync(TOKEN_KEY, data.access_token);
       setToken(data.access_token);
-      await saveRecentUrl(wsUrl);
+      await saveWsUrl(wsUrl);
       onStatus?.("Logged in as " + username, "success");
-      onSuccess?.();
+      onSuccess?.(data.access_token);
     } catch (error) {
       onStatus?.("Login error: " + error.message, "error");
     }
@@ -145,6 +216,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     setToken("");
     setRecentUrls([]);
     setSetupComplete(false);
+    setBackendReachable(null);
     setWsUrl(defaultUrl || "");
   }
 
@@ -157,6 +229,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     setPassword,
     wsUrl,
     setWsUrl,
+    editWsUrl,
     recentUrls,
     setRecentUrls,
     showRecentUrls,

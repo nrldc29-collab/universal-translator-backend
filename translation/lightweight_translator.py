@@ -2806,7 +2806,17 @@ class LightweightTranslator:
                     return pivoted
         return None
 
-    def translate(self, text: str, source_language: str | None = None, target_language: str | None = None) -> str:
+    def translate(
+        self,
+        text: str,
+        source_language: str | None = None,
+        target_language: str | None = None,
+        *,
+        quality: bool = False,
+    ) -> str:
+        # `quality` is accepted for signature parity with the ML translators
+        # (the pipeline passes it to whatever translator it holds); a phrase
+        # table has no beam search, so it is intentionally ignored here.
         if not text.strip():
             return ""
         source = source_language or "en"

@@ -35,6 +35,8 @@ import { getFriendlyPanelState, getFriendlyStatusLine } from "./utils/friendlySt
 
 const HELP_SEEN_KEY = "translator_help_seen";
 
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL || Constants.expoConfig?.extra?.apiUrl || "";
 const DEBUG_LOGS = Boolean(__DEV__ || process.env.EXPO_PUBLIC_DEBUG_LOGS === "1");
 
@@ -294,6 +296,7 @@ export default function App() {
     token,
     wsUrl,
     setWsUrl,
+    editWsUrl,
     username,
     setUsername,
     password,
@@ -330,6 +333,8 @@ export default function App() {
 
   const toggleStreamingRef = useRef(null);
   const autoConnectStartedRef = useRef(false);
+  const lastProbedUrlRef = useRef(null);
+  const tokenRef = useRef("");
   const sessionHandshakeRef = useRef(false);
   const warmingRetryTimerRef = useRef(null);
   const isInterpreterActiveRef = useRef(false);
@@ -409,13 +414,13 @@ export default function App() {
   const statusDetail = showDebugDetails ? debugStatusDetail : friendlyStatusDetail;
   const blockingError = useMemo(() => {
     if (dismissedError && status === dismissedError) return null;
-    if (!networkState?.isConnected) {
+    if (networkState?.isConnected === false) {
       return {
-        message: "No internet connection. Check Wi‑Fi or mobile data.",
+        message: "No network connection. Connect to Wi‑Fi (internet not required for local server).",
         action: "Retry",
         handler: async () => {
           await checkNetworkState();
-          if (wsUrl && validateUrl(wsUrl)) connect();
+          retryConnection();
         },
       };
     }
@@ -426,10 +431,10 @@ export default function App() {
       if (/backend|url|reachable|connection failed/i.test(status || "")) {
         return { message: status, action: "Server setup", handler: () => setShowSetup(true) };
       }
-      return { message: status, action: "Retry", handler: connect };
+      return { message: status, action: "Retry", handler: retryConnection };
     }
     return null;
-  }, [dismissedError, networkState?.isConnected, status, statusType]);
+  }, [dismissedError, networkState?.isConnected, status, statusType, setupComplete, wsUrl]);
   const primaryActionLabel = isPlayingTts
     ? "Stop spoken translation"
     : isInterpreterActive
@@ -440,11 +445,36 @@ export default function App() {
   const showOfflineCta = authLoaded && !showSetup && !isConnected && validateUrl(wsUrl);
 
   useEffect(() => {
-    SplashScreen.hideAsync().catch(() => {});
-    loadStoredData().then(() => setAuthLoaded(true));
+    tokenRef.current = token;
+  }, [token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const splashFallback = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 3000);
+
+    (async () => {
+      try {
+        await loadStoredData();
+      } catch (error) {
+        console.error("Error loading stored auth data:", error);
+      } finally {
+        if (!cancelled) {
+          setAuthLoaded(true);
+          SplashScreen.hideAsync().catch(() => {});
+          clearTimeout(splashFallback);
+        }
+      }
+    })();
+
     checkNetworkState();
     const interval = setInterval(checkNetworkState, 5000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearTimeout(splashFallback);
+      clearInterval(interval);
+    };
     // This starts the app's network poller once; recreating it on every render would duplicate connection attempts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -459,13 +489,37 @@ export default function App() {
   }, [authLoaded, setupComplete, wsUrl]);
 
   useEffect(() => {
-    if (autoConnectStartedRef.current || !networkState?.isConnected || !wsUrl) return;
+    if (!authLoaded || !validateUrl(wsUrl)) return;
+    if (lastProbedUrlRef.current === wsUrl) return;
+    lastProbedUrlRef.current = wsUrl;
+    checkBackendHealth(wsUrl, { quiet: true });
+    // Re-probe when env URL or stored URL changes (e.g. Start-MobilePhoneMode.ps1 refreshed LAN IP).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoaded, wsUrl]);
+
+  useEffect(() => {
+    if (!authLoaded) return;
+    if (!setupComplete) {
+      autoConnectStartedRef.current = false;
+    }
+  }, [authLoaded, setupComplete]);
+
+  useEffect(() => {
+    if (
+      autoConnectStartedRef.current ||
+      !authLoaded ||
+      !setupComplete ||
+      networkState?.isConnected === false ||
+      !validateUrl(wsUrl)
+    ) {
+      return;
+    }
     autoConnectStartedRef.current = true;
     const timer = setTimeout(() => connect(), 450);
     return () => clearTimeout(timer);
-    // Auto-connect should fire once when URL/network become available, not whenever handler identities change.
+    // Auto-connect after setup is complete so onboarding is not racing the WebSocket handshake.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [networkState?.isConnected, wsUrl]);
+  }, [authLoaded, setupComplete, networkState?.isConnected, wsUrl]);
 
   useEffect(() => {
     if (!isConnected) return;
@@ -515,7 +569,17 @@ export default function App() {
     if (autoResumeTimerRef.current) clearTimeout(autoResumeTimerRef.current);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     if (warmingRetryTimerRef.current) clearTimeout(warmingRetryTimerRef.current);
-  }, []);
+    if (wsControlRef.current) {
+      try {
+        wsControlRef.current.close();
+      } catch {
+        // Socket may already be closed.
+      }
+      wsControlRef.current = null;
+    }
+    stopAudioStream().catch(() => {});
+    stopTtsPlayback();
+  }, [stopTtsPlayback]);
 
   function showToast(message, variant = "info", durationMs = 2200) {
     setToast({ message, variant });
@@ -590,14 +654,14 @@ export default function App() {
       const state = await Network.getNetworkStateAsync();
       setNetworkState(state);
 
-      if (state.isConnected && !isConnectedRef.current && wsUrl && autoConnectStartedRef.current) {
+      if (state.isConnected !== false && !isConnectedRef.current && wsUrl && autoConnectStartedRef.current) {
         setStatus("Network restored");
         setTimeout(() => {
-          if (!isConnectedRef.current) connect();
+          if (!isConnectedRef.current) retryConnection();
         }, 700);
       }
 
-      if (!state.isConnected && isConnectedRef.current) {
+      if (state.isConnected === false && isConnectedRef.current) {
         setStatus("Network lost");
         disconnect();
       }
@@ -639,7 +703,20 @@ export default function App() {
     sessionHandshakeRef.current = false;
   }
 
-  function connect() {
+  function retryConnection() {
+    if (!validateUrl(wsUrl)) {
+      setShowSetup(true);
+      return;
+    }
+    if (!setupComplete) {
+      setShowSetup(true);
+      return;
+    }
+    autoConnectStartedRef.current = true;
+    connect();
+  }
+
+  function connect(authTokenOverride) {
     if (isSocketOpen()) {
       if (!sessionHandshakeRef.current) {
         sendSessionStart();
@@ -665,11 +742,18 @@ export default function App() {
       setShowSetup(true);
       return;
     }
+    if (/localhost|127\.0\.0\.1/i.test(String(wsUrl))) {
+      setStatus("Use your PC's LAN IP (not localhost) — your phone cannot reach this machine.");
+      setStatusType("error");
+      setShowSetup(true);
+      return;
+    }
 
     setStatus("Connecting");
     setStatusType("connecting");
     tapHaptic("light");
-    const url = apiToWsUrl(wsUrl, "/ws/audio", token);
+    const authToken = authTokenOverride ?? tokenRef.current;
+    const url = apiToWsUrl(wsUrl, "/ws/audio", authToken);
     debugLog("Connecting to:", url);
     wsControlRef.current = connectWS(url, handleMessage, setStatusWithType, {
       onClose: () => {
@@ -687,9 +771,13 @@ export default function App() {
     } else if (nextStatus.includes("Connected")) {
       markSocketConnected(nextStatus);
       sendSessionStart();
-    } else if (nextStatus.includes("Reconnecting in")) {
+    } else if (nextStatus.includes("Reconnecting in") || /timeout/i.test(nextStatus)) {
       setStatusType("warning");
-    } else if (nextStatus.includes("Reconnecting") || nextStatus.includes("Connecting")) {
+    } else if (
+      nextStatus.includes("Reconnecting") ||
+      nextStatus.includes("Connecting") ||
+      nextStatus.includes("Handshaking")
+    ) {
       setStatusType("connecting");
     } else if (nextStatus.includes("Disconnected") || nextStatus.includes("failed") || nextStatus.includes("error")) {
       setStatusType("error");
@@ -868,7 +956,7 @@ export default function App() {
     }
 
     if (command.type === "disconnect") {
-      disconnect();
+      userDisconnect();
       setVoiceIntent("Disconnected");
       return true;
     }
@@ -1100,6 +1188,11 @@ export default function App() {
     }
   }
 
+  function userDisconnect() {
+    autoConnectStartedRef.current = false;
+    disconnect();
+  }
+
   function disconnect() {
     setIsInterpreterActive(false);
     resumeAfterTtsRef.current = false;
@@ -1161,14 +1254,12 @@ export default function App() {
       const chunkMeta = {
         type: "chunk_meta",
         sent_at_ms: Date.now(),
-        bytes: chunk.byteLength,
+        bytes: meta.byteLength ?? chunk.byteLength,
         mime_type: "audio/m4a",
         audio_level: meta.audioLevel ?? 0,
+        client_voice_active: meta.voiceActive ?? true,
+        voice_active: meta.voiceActive ?? true,
       };
-      if (meta.meteringAvailable) {
-        chunkMeta.client_voice_active = meta.voiceActive ?? true;
-        chunkMeta.voice_active = meta.voiceActive ?? true;
-      }
       wsControlRef.current.send(JSON.stringify(chunkMeta));
       wsControlRef.current.send(chunk);
       if (meta.finalizeUtterance) {
@@ -1349,26 +1440,7 @@ export default function App() {
 
   toggleStreamingRef.current = toggleInterpreter;
 
-  async function finishSetup() {
-    const trimmed = String(wsUrl || "").trim();
-    if (!validateUrl(trimmed)) {
-      setStatus("Enter a valid server URL starting with http:// or https://");
-      setStatusType("error");
-      return;
-    }
-    if (backendReachable !== true) {
-      const ok = await checkBackendHealth(trimmed);
-      if (!ok) {
-        setStatus("Test the server connection before continuing");
-        setStatusType("error");
-        return;
-      }
-    }
-    await saveWsUrl(trimmed);
-    await markSetupComplete();
-    setShowSetup(false);
-    setDismissedError("");
-    if (networkState?.isConnected) connect();
+  async function showFirstRunHelpIfNeeded() {
     try {
       const helpSeen = await SecureStore.getItemAsync(HELP_SEEN_KEY);
       if (!helpSeen) {
@@ -1380,10 +1452,50 @@ export default function App() {
     }
   }
 
+  async function finishSetup() {
+    const trimmed = String(wsUrl || "").trim().replace(/\/+$/, "");
+    if (!validateUrl(trimmed)) {
+      setStatus("Enter a valid server URL starting with http:// or https://");
+      setStatusType("error");
+      return;
+    }
+    if (/localhost|127\.0\.0\.1/i.test(trimmed)) {
+      setStatus("Use your PC's LAN IP (not localhost) — your phone cannot reach this machine.");
+      setStatusType("error");
+      return;
+    }
+    const ok = await checkBackendHealth(trimmed);
+    if (!ok) {
+      setStatus("Test the server connection before continuing");
+      setStatusType("error");
+      return;
+    }
+    await saveWsUrl(trimmed);
+    await markSetupComplete();
+    setShowSetup(false);
+    setDismissedError("");
+    autoConnectStartedRef.current = true;
+    if (networkState?.isConnected !== false) connect();
+    await showFirstRunHelpIfNeeded();
+  }
+
   async function handleSaveServerUrl(url) {
-    await saveWsUrl(url);
+    const trimmed = String(url || "").trim().replace(/\/+$/, "");
+    if (!validateUrl(trimmed)) {
+      setStatus("Enter a valid server URL starting with http:// or https://");
+      setStatusType("error");
+      return;
+    }
+    if (/localhost|127\.0\.0\.1/i.test(trimmed)) {
+      setStatus("Use your PC's LAN IP (not localhost) — your phone cannot reach this machine.");
+      setStatusType("error");
+      return;
+    }
+    await saveWsUrl(trimmed);
     setDismissedError("");
     disconnect();
+    autoConnectStartedRef.current = true;
+    checkBackendHealth(trimmed);
     setTimeout(() => connect(), 400);
     setShowSettings(false);
   }
@@ -1418,13 +1530,26 @@ export default function App() {
       <WelcomeSetupModal
         visible={showSetup}
         wsUrl={wsUrl}
-        setWsUrl={setWsUrl}
+        setWsUrl={editWsUrl}
         username={username}
         setUsername={setUsername}
         password={password}
         setPassword={setPassword}
         onTestConnection={() => checkBackendHealth(wsUrl)}
-        onLogin={() => login({ onSuccess: () => markSetupComplete() })}
+        onLogin={async () => {
+          const trimmed = String(wsUrl || "").trim().replace(/\/+$/, "");
+          if (validateUrl(trimmed)) await saveWsUrl(trimmed);
+          await login({
+            onSuccess: async (accessToken) => {
+              await markSetupComplete();
+              setShowSetup(false);
+              setDismissedError("");
+              autoConnectStartedRef.current = true;
+              if (networkState?.isConnected !== false) connect(accessToken);
+              await showFirstRunHelpIfNeeded();
+            },
+          });
+        }}
         onContinue={finishSetup}
         backendReachable={backendReachable}
         isChecking={isCheckingBackend}
@@ -1434,12 +1559,20 @@ export default function App() {
         <SafeAreaView style={styles.settingsOverlay}>
           <SettingsScreen
             wsUrl={wsUrl}
-            setWsUrl={setWsUrl}
+            setWsUrl={editWsUrl}
             onSaveUrl={handleSaveServerUrl}
             onClose={() => setShowSettings(false)}
             onTestConnection={() => checkBackendHealth(wsUrl)}
-            onLogin={() => login()}
-            onLogout={() => logout({ onDisconnect: disconnect })}
+            onLogin={() => login({
+              onSuccess: (accessToken) => {
+                autoConnectStartedRef.current = true;
+                if (wsControlRef.current) {
+                  disconnect();
+                }
+                setTimeout(() => connect(accessToken), 400);
+              },
+            })}
+            onLogout={() => logout({ onDisconnect: userDisconnect })}
             username={username}
             setUsername={setUsername}
             password={password}
@@ -1459,9 +1592,16 @@ export default function App() {
             debugMode={showDebugDetails}
             setDebugMode={setShowDebugDetails}
             onClearData={async () => {
+              disconnect();
               await clearAllData();
+              autoConnectStartedRef.current = false;
+              lastProbedUrlRef.current = null;
               setShowSettings(false);
               setShowSetup(true);
+              if (validateUrl(API_URL)) {
+                lastProbedUrlRef.current = API_URL;
+                checkBackendHealth(API_URL, { quiet: true });
+              }
             }}
           />
         </SafeAreaView>
@@ -1531,7 +1671,7 @@ export default function App() {
               </View>
               <Text style={styles.offlineCtaText}>Not connected to the translator server yet.</Text>
               <Pressable
-                onPress={connect}
+                onPress={retryConnection}
                 style={({ pressed }) => [styles.offlineCtaBtn, pressed && styles.offlineCtaBtnPressed]}
                 accessibilityRole="button"
                 accessibilityLabel="Connect to server"
@@ -1815,7 +1955,7 @@ export default function App() {
             <IconControl
               icon={isConnected ? "radio" : "refresh"}
               label={isConnected ? "Online" : "Connect"}
-              onPress={isConnected ? disconnect : connect}
+              onPress={isConnected ? userDisconnect : retryConnection}
               active={isConnected}
               accessibilityLabel={isConnected ? "Disconnect from server" : "Connect to server"}
             />

@@ -1,4 +1,4 @@
-import { renderHook, act } from '@testing-library/react-hooks';
+import { renderHook, act } from '@testing-library/react-native';
 import { useMobileRecording } from '../hooks/useMobileRecording';
 
 describe('useMobileRecording', () => {
@@ -74,10 +74,6 @@ describe('useMobileRecording', () => {
 
   test('cancelUpload resets upload state', () => {
     const { result } = renderHook(() => useMobileRecording(mockProps));
-    
-    // Simulate uploading state
-    result.current.isUploading = true;
-    result.current.uploadProgress = 50;
 
     act(() => {
       result.current.cancelUpload();
@@ -85,5 +81,6 @@ describe('useMobileRecording', () => {
 
     expect(result.current.isUploading).toBe(false);
     expect(result.current.uploadProgress).toBe(0);
+    expect(mockProps.setStatus).toHaveBeenCalledWith("Upload cancelled");
   });
 });

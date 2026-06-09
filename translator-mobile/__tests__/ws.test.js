@@ -1,6 +1,18 @@
 import { apiToWsUrl, connectWS } from '../services/ws';
 
+const activeSockets = [];
+
 describe('WebSocket Service', () => {
+  afterEach(() => {
+    while (activeSockets.length > 0) {
+      const socket = activeSockets.pop();
+      try {
+        socket?.close?.();
+      } catch {
+        // Socket may already be closed.
+      }
+    }
+  });
   describe('apiToWsUrl', () => {
     test('converts HTTP to WS', () => {
       const result = apiToWsUrl('http://localhost:8000', '/ws/audio', 'token123');
@@ -14,7 +26,7 @@ describe('WebSocket Service', () => {
 
     test('handles existing query parameters', () => {
       const result = apiToWsUrl('http://localhost:8000?param=value', '/ws/audio', 'token123');
-      expect(result).toBe('ws://localhost:8000?param=value&access_token=token123');
+      expect(result).toBe('ws://localhost:8000/ws/audio?param=value&access_token=token123');
     });
 
     test('handles null token', () => {
@@ -34,6 +46,7 @@ describe('WebSocket Service', () => {
       const mockSetStatus = jest.fn();
       
       const wsControl = connectWS('ws://localhost:8000/ws/audio', mockOnMessage, mockSetStatus);
+      activeSockets.push(wsControl);
       
       expect(typeof wsControl.send).toBe('function');
       expect(typeof wsControl.close).toBe('function');
@@ -49,6 +62,7 @@ describe('WebSocket Service', () => {
       const mockSetStatus = jest.fn();
       
       const wsControl = connectWS('ws://localhost:8000/ws/audio', mockOnMessage, mockSetStatus);
+      activeSockets.push(wsControl);
       
       const result = wsControl.send('test message');
       expect(result).toBe(false);
@@ -59,6 +73,7 @@ describe('WebSocket Service', () => {
       const mockSetStatus = jest.fn();
       
       const wsControl = connectWS('ws://localhost:8000/ws/audio', mockOnMessage, mockSetStatus);
+      activeSockets.push(wsControl);
       
       expect(() => {
         wsControl.close(1000, 'Normal closure');
@@ -72,6 +87,7 @@ describe('WebSocket Service', () => {
       const newSetStatus = jest.fn();
       
       const wsControl = connectWS('ws://localhost:8000/ws/audio', mockOnMessage, mockSetStatus);
+      activeSockets.push(wsControl);
       
       wsControl.updateHandlers(newOnMessage, newSetStatus);
       
@@ -84,6 +100,7 @@ describe('WebSocket Service', () => {
       const mockSetStatus = jest.fn();
       
       const wsControl = connectWS('ws://localhost:8000/ws/audio', mockOnMessage, mockSetStatus);
+      activeSockets.push(wsControl);
       
       expect(() => {
         wsControl.forceReconnect();

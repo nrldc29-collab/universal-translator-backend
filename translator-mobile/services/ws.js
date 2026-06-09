@@ -14,10 +14,17 @@ const debugLog = (...args) => {
 };
 
 export const apiToWsUrl = (apiUrl, path, token) => {
-  let wsUrl = (apiUrl || API_URL).replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
-  const separator = wsUrl.includes('?') ? '&' : '?';
-  const tokenPart = token ? `${separator}access_token=${encodeURIComponent(token)}` : '';
-  return `${wsUrl}${path || '/ws/audio'}${tokenPart}`;
+  const raw = String(apiUrl || API_URL || "").trim().replace(/\/+$/, "");
+  const wsBase = raw.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
+  const [origin, queryString = ""] = wsBase.split("?");
+  const wsPath = path || "/ws/audio";
+  const normalizedPath = wsPath.startsWith("/") ? wsPath : `/${wsPath}`;
+  const params = new URLSearchParams(queryString);
+  if (token) {
+    params.set("access_token", token);
+  }
+  const query = params.toString();
+  return query ? `${origin}${normalizedPath}?${query}` : `${origin}${normalizedPath}`;
 };
 
 export const connectWS = (url, onMessage, setStatus, options = {}) => {
@@ -61,7 +68,11 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
       if (ws && ws.readyState === WebSocket.OPEN) {
         try {
           ws.send(JSON.stringify({ type: 'ping' }));
-          
+
+          if (pingTimeout) {
+            clearTimeout(pingTimeout);
+            pingTimeout = null;
+          }
           // Set timeout for pong response
           pingTimeout = setTimeout(() => {
             const timeSincePong = Date.now() - lastPongTime;

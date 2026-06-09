@@ -38,7 +38,7 @@ const RECORDING_OPTIONS = {
     linearPCMIsBigEndian: false,
     linearPCMIsFloat: false,
   },
-  isMeteringEnabled: Platform.OS === "ios",
+  isMeteringEnabled: true,
 };
 
 const sleep = (ms) => new Promise((resolve) => {
@@ -221,8 +221,10 @@ const captureSingleUtterance = async (generation) => {
     });
     await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
 
+    const audioBuffer = base64ToArrayBuffer(base64);
     return {
-      buffer: base64ToArrayBuffer(base64),
+      buffer: audioBuffer,
+      byteLength: audioBuffer.byteLength,
       audioLevel,
       voiceActive: true,
       meteringAvailable,

@@ -68,7 +68,7 @@ export default function WelcomeSetupModal({
               <TextInput
                 value={wsUrl}
                 onChangeText={setWsUrl}
-                placeholder="https://your-app.up.railway.app"
+                placeholder="http://192.168.1.100:8000"
                 placeholderTextColor="#64748b"
                 autoCapitalize="none"
                 autoCorrect={false}

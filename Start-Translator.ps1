@@ -693,6 +693,9 @@ if ($tunnelUrl) {
     throw "cloudflared did not publish a tunnel URL."
 }
 Write-Output ""
+Write-Output "Mobile (Expo Go on same Wi-Fi):"
+Write-Output "  .\Start-MobilePhoneMode.ps1"
+Write-Output ""
 Write-Output "Logs:"
 Write-Output "  Backend:  $backendErr"
 Write-Output "  Frontend: $frontendErr"

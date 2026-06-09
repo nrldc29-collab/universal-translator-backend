@@ -11,6 +11,13 @@ const path = require("path");
 const readline = require("readline");
 
 const root = process.cwd();
+const entry = path.join(root, "App.js");
+if (fs.existsSync(entry)) {
+  console.error(
+    "reset-project is disabled for Anai Translator. This app uses App.js (not expo-router).",
+  );
+  process.exit(1);
+}
 const oldDirs = ["app", "components", "hooks", "constants", "scripts"];
 const exampleDir = "app-example";
 const newAppDir = "app";

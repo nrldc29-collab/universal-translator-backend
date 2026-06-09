@@ -183,7 +183,10 @@ class AnaiTranslatorPipeline:
         translated_text = None
         cache_hit = False
         
-        if self.enable_predictive_cache and self.predictive_cache:
+        # Quality requests bypass the predictive cache so a prior fast-mode result
+        # is never served for a quality request (and vice versa). Marian keeps its
+        # own quality-aware cache, so repeated quality calls are still deduped.
+        if self.enable_predictive_cache and self.predictive_cache and not quality:
             # Check cache first
             cached = self.predictive_cache.get_translation(
                 improved_text,
@@ -213,8 +216,8 @@ class AnaiTranslatorPipeline:
                 improved_text, source_language, target_language, quality=quality,
             )
             
-            # Cache the result
-            if self.enable_predictive_cache and self.predictive_cache:
+            # Cache the result (fast mode only — see note above)
+            if self.enable_predictive_cache and self.predictive_cache and not quality:
                 self.predictive_cache.set_translation(
                     improved_text,
                     translated_text,

@@ -79,7 +79,7 @@ try {
         }
 
         Invoke-Step "Mobile lint" {
-            npm.cmd exec eslint -- App.js AppStyles.js app\_layout.js hooks\useMobileTts.js services\audio-stream.js services\ws.js
+            npm.cmd exec eslint -- App.js index.js AppStyles.js hooks\useMobileTts.js services\audio-stream.js services\ws.js
         }
     }
 
