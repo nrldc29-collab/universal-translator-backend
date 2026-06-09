@@ -129,8 +129,8 @@ export function useMobileTts() {
 
   async function playTtsAudioWithSettings(audioBase64, mimeType) {
     const extension = mimeType?.includes("mpeg") || mimeType?.includes("mp3") ? "mp3" : "wav";
-    const cacheDirectory = FileSystem["cacheDirectory"] || FileSystem["documentDirectory"] || "";
-    const encodingType = FileSystem["EncodingType"]?.Base64 || "base64";
+    const cacheDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory || "";
+    const encodingType = FileSystem.EncodingType?.Base64 || "base64";
     const uri = `${cacheDirectory}tts-${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
     let playbackSound = null;
 

@@ -17,7 +17,7 @@
         "projectId": "38c5acaf-9582-4533-8822-a31f06a6e21d"
       }
     },
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anaitranslator.app",
@@ -51,7 +51,8 @@
       ]
     },
     "web": {
-      "output": "static",
+      "bundler": "metro",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -74,12 +75,7 @@
         }
       ],
       "./plugins/withAndroidCleartext",
-      "expo-font",
-      "expo-router"
-    ],
-    "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
-    }
+      "expo-font"
+    ]
   }
 }

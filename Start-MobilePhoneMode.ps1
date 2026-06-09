@@ -67,6 +67,39 @@ function Stop-ExpoProcesses {
     }
 }
 
+function Wait-MetroReady {
+    param([int]$Attempts = 60)
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt += 1) {
+        try {
+            $status = Invoke-WebRequest -Uri "http://127.0.0.1:$ExpoPort/status" -TimeoutSec 5 -UseBasicParsing
+            if ($status.StatusCode -eq 200) {
+                return $true
+            }
+        } catch {
+            # Metro still starting.
+        }
+        Start-Sleep -Seconds 2
+    }
+    return $false
+}
+
+function Wait-ExpoBundleReady {
+    param([int]$Attempts = 90)
+    $bundleUrl = "http://127.0.0.1:$ExpoPort/index.bundle?platform=ios&dev=true&minify=false"
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt += 1) {
+        try {
+            $bundle = Invoke-WebRequest -Uri $bundleUrl -TimeoutSec 120 -UseBasicParsing
+            if ($bundle.StatusCode -eq 200 -and $bundle.RawContentLength -gt 100000) {
+                return $true
+            }
+        } catch {
+            # Bundle still compiling.
+        }
+        Start-Sleep -Seconds 3
+    }
+    return $false
+}
+
 if (-not $LanIp) {
     $LanIp = Get-PreferredLanIp
 }
@@ -80,7 +113,7 @@ Set-Content -LiteralPath $EnvPath -Encoding ascii -Value @(
 )
 
 if (-not (Test-HttpOk "$BackendUrl/health")) {
-    & (Join-Path $Root "Start-Translator.ps1") -SkipBuild -NoTunnel
+    & (Join-Path $Root "Start-Translator.ps1") -SkipBuild -NoTunnel -SkipProductTest
 }
 if (-not (Test-HttpOk "$BackendUrl/health")) {
     throw "Backend is not reachable at $BackendUrl/health. Check Wi-Fi and Windows firewall."
@@ -98,22 +131,46 @@ try {
     $expoStatusOk = $false
 }
 
-if (-not $expoStatusOk) {
+if (-not $expoStatusOk -or $RestartExpo) {
+    if ($RestartExpo) {
+        Stop-ExpoProcesses
+    }
     Remove-Item -LiteralPath $ExpoOut, $ExpoErr -Force -ErrorAction SilentlyContinue
     $env:EXPO_PUBLIC_API_URL = $BackendUrl
     $env:EXPO_PUBLIC_DEBUG_LOGS = "1"
     $env:EXPO_NO_TELEMETRY = "1"
-    $env:EXPO_OFFLINE = "1"
     $env:REACT_NATIVE_PACKAGER_HOSTNAME = $LanIp
+    $env:NODE_OPTIONS = "--max-old-space-size=8192"
+    $env:METRO_MAX_WORKERS = "1"
+    Remove-Item Env:EXPO_OFFLINE -ErrorAction SilentlyContinue
+
+    $expoArgs = @("expo", "start", "--lan", "--port", "$ExpoPort", "--max-workers", "1")
+    if ($RestartExpo) {
+        $expoArgs += "--clear"
+    }
+
+    $expoCommand = "set NODE_OPTIONS=--max-old-space-size=8192&& set METRO_MAX_WORKERS=1&& npx.cmd " + ($expoArgs -join " ")
     $process = Start-Process -FilePath "cmd.exe" `
-        -ArgumentList @("/c", "npx.cmd expo start --offline --port $ExpoPort --clear") `
+        -ArgumentList @("/c", $expoCommand) `
         -WorkingDirectory $MobileRoot `
         -WindowStyle Hidden `
         -RedirectStandardOutput $ExpoOut `
         -RedirectStandardError $ExpoErr `
         -PassThru
     Set-Content -LiteralPath $ExpoPidPath -Value $process.Id -Encoding ascii
-    Start-Sleep -Seconds 8
+
+    if (-not (Wait-MetroReady)) {
+        $tail = Get-Content -LiteralPath $ExpoOut -Tail 30 -ErrorAction SilentlyContinue
+        throw "Expo Metro did not become ready on port $ExpoPort. Recent log:`n$($tail -join "`n")"
+    }
+    if (-not (Wait-ExpoBundleReady)) {
+        $tail = Get-Content -LiteralPath $ExpoOut -Tail 40 -ErrorAction SilentlyContinue
+        throw "Expo bundle failed to compile for Expo Go. Recent log:`n$($tail -join "`n")"
+    }
+}
+
+if (Select-String -LiteralPath $ExpoErr -Pattern "unable to sign manifest" -Quiet -ErrorAction SilentlyContinue) {
+    throw "Expo manifest signing failed. Do not use --offline mode for Expo Go."
 }
 
 @"
@@ -124,9 +181,10 @@ Expo URL:    $ExpoUrl
 Open Expo Go on the phone and enter:
 $ExpoUrl
 
-If the phone cannot connect, keep the app running and allow these inbound Windows Firewall ports:
-- TCP $BackendPort for backend
-- TCP $ExpoPort for Expo Metro
+Requirements:
+- Phone and PC on the same Wi-Fi
+- Expo Go updated for SDK 54
+- Allow inbound Windows Firewall ports TCP $BackendPort and TCP $ExpoPort
 "@ | Set-Content -LiteralPath $SummaryPath -Encoding ascii
 
 Write-Output "Backend URL: $BackendUrl"
