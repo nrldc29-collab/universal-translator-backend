@@ -2,7 +2,8 @@ param(
     [string]$LanIp = "",
     [int]$BackendPort = 8000,
     [int]$ExpoPort = 8081,
-    [switch]$RestartExpo
+    [switch]$RestartExpo,
+    [switch]$UseTunnel
 )
 
 $ErrorActionPreference = "Stop"
@@ -84,12 +85,14 @@ function Wait-MetroReady {
 }
 
 function Wait-ExpoBundleReady {
-    param([int]$Attempts = 90)
+    param([int]$Attempts = 120)
+    $bundlePath = Join-Path $Logs "mobile-expo.bundle-test.js"
     $bundleUrl = "http://127.0.0.1:$ExpoPort/index.bundle?platform=ios&dev=true&minify=false"
     for ($attempt = 0; $attempt -lt $Attempts; $attempt += 1) {
         try {
-            $bundle = Invoke-WebRequest -Uri $bundleUrl -TimeoutSec 120 -UseBasicParsing
-            if ($bundle.StatusCode -eq 200 -and $bundle.RawContentLength -gt 100000) {
+            Invoke-WebRequest -Uri $bundleUrl -TimeoutSec 300 -OutFile $bundlePath
+            if ((Get-Item -LiteralPath $bundlePath).Length -gt 100000) {
+                Remove-Item -LiteralPath $bundlePath -Force -ErrorAction SilentlyContinue
                 return $true
             }
         } catch {
@@ -97,6 +100,7 @@ function Wait-ExpoBundleReady {
         }
         Start-Sleep -Seconds 3
     }
+    Remove-Item -LiteralPath $bundlePath -Force -ErrorAction SilentlyContinue
     return $false
 }
 
@@ -105,7 +109,7 @@ if (-not $LanIp) {
 }
 
 $BackendUrl = "http://$LanIp`:$BackendPort"
-$ExpoUrl = "exp://$LanIp`:$ExpoPort"
+$ExpoUrl = if ($UseTunnel) { "exp://127.0.0.1:$ExpoPort (use tunnel URL printed in $ExpoOut)" } else { "exp://$LanIp`:$ExpoPort" }
 
 Set-Content -LiteralPath $EnvPath -Encoding ascii -Value @(
     "EXPO_PUBLIC_API_URL=$BackendUrl",
@@ -144,7 +148,12 @@ if (-not $expoStatusOk -or $RestartExpo) {
     $env:METRO_MAX_WORKERS = "1"
     Remove-Item Env:EXPO_OFFLINE -ErrorAction SilentlyContinue
 
-    $expoArgs = @("expo", "start", "--lan", "--port", "$ExpoPort", "--max-workers", "1")
+    $expoArgs = @("expo", "start", "--port", "$ExpoPort", "--max-workers", "1")
+    if ($UseTunnel) {
+        $expoArgs += "--tunnel"
+    } else {
+        $expoArgs += "--lan"
+    }
     if ($RestartExpo) {
         $expoArgs += "--clear"
     }
@@ -182,8 +191,9 @@ Open Expo Go on the phone and enter:
 $ExpoUrl
 
 Requirements:
-- Phone and PC on the same Wi-Fi
-- Expo Go updated for SDK 54
+- Expo Go updated for SDK 54 (same major SDK as package.json)
+- If LAN fails, rerun with: Start-MobilePhoneMode.ps1 -RestartExpo -UseTunnel
+- Phone and PC on the same Wi-Fi for LAN mode
 - Allow inbound Windows Firewall ports TCP $BackendPort and TCP $ExpoPort
 "@ | Set-Content -LiteralPath $SummaryPath -Encoding ascii
 

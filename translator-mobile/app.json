@@ -3,16 +3,12 @@
     "name": "Anai Translator",
     "slug": "anai-translator",
     "version": "1.0.0",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "anaitranslator",
     "userInterfaceStyle": "dark",
     "extra": {
       "apiUrl": "",
-      "router": {},
       "eas": {
         "projectId": "38c5acaf-9582-4533-8822-a31f06a6e21d"
       }
