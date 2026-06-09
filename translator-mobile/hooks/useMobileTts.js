@@ -1,7 +1,7 @@
 /* eslint-disable import/namespace */
 import { useState, useRef, useEffect } from "react";
 import { Audio } from "expo-av";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as SecureStore from "expo-secure-store";
 
 const VOLUME_KEY = "tts_volume";

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SafeAreaView, View, Text, Pressable, useWindowDimensions, ScrollView, Modal, Linking, ActivityIndicator, Share } from "react-native";
 import Constants from "expo-constants";
+import * as SplashScreen from "expo-splash-screen";
 import * as Network from "expo-network";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
@@ -439,6 +440,7 @@ export default function App() {
   const showOfflineCta = authLoaded && !showSetup && !isConnected && validateUrl(wsUrl);
 
   useEffect(() => {
+    SplashScreen.hideAsync().catch(() => {});
     loadStoredData().then(() => setAuthLoaded(true));
     checkNetworkState();
     const interval = setInterval(checkNetworkState, 5000);
