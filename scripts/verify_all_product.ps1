@@ -50,6 +50,11 @@ Invoke-Step "Continuous speech audit" {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+Invoke-Step "Brain / confidence / cert tests" {
+    python -m pytest tests/test_communication_brain.py tests/test_confidence_latency.py -q --tb=line
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
 if ($liveArgs.Count -gt 0) {
     Invoke-Step 'Speech pipeline (14 languages)' {
         python scripts/verify_speech_pipeline.py $BackendUrl

@@ -103,13 +103,27 @@ def audit_core(live_url: str | None) -> Dimension:
     for rel in (
         "backend/pipeline.py",
         "backend/streaming.py",
+        "backend/communication_brain.py",
+        "backend/confidence.py",
         "speech/whisper_stt.py",
         "translation/hybrid_translator.py",
         "backend/mobile_interpreter.html",
         "frontend/src/main.jsx",
+        "frontend/src/hooks/useBrainState.js",
+        "frontend/src/utils/humanCertification.js",
         "translator-mobile/App.js",
+        "translator-mobile/utils/brainPlan.js",
+        "translator-mobile/utils/humanCertification.js",
+        "tests/test_communication_brain.py",
+        "tests/test_confidence_latency.py",
     ):
         add(dim, f"Core path exists: {rel}", (ROOT / rel).is_file())
+
+    web_main = read(ROOT / "frontend" / "src" / "main.jsx")
+    mobile_app = read(ROOT / "translator-mobile" / "App.js")
+    add(dim, "Web brain/confidence wiring", "applyConfidenceSignals" in web_main and "shouldSkipBrainTts" in web_main)
+    add(dim, "Mobile brain/confidence/cert wiring",
+        "applyConfidenceSignals" in mobile_app and "shouldSkipBrainTts" in mobile_app and "syncHumanCertStep" in mobile_app)
 
     if live_url:
         ok, msg = run_script("scripts/verify_speech_pipeline.py", live_url)
@@ -165,10 +179,14 @@ def audit_ops() -> Dimension:
     for rel in (
         ".github/workflows/ci.yml",
         ".github/workflows/production-smoke.yml",
+        ".github/workflows/railway-post-deploy.yml",
         "scripts/preflight_deploy.sh",
         "scripts/smoke_local.py",
+        "scripts/railway_public_setup.sh",
         "backend/api_health.py",
         "Start-Translator.ps1",
+        "railway.json",
+        "RAILWAY-DEPLOY.md",
     ):
         add(dim, f"Ops asset: {rel}", (ROOT / rel).is_file())
 
