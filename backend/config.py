@@ -564,6 +564,17 @@ def _railway_public_domain() -> str:
     return os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
 
 
+def get_consumer_cloud_url() -> str:
+    """Public HTTPS URL for consumer open-and-go (App Store / hosted PWA)."""
+    explicit = os.getenv("ANAI_CONSUMER_CLOUD_URL", "").strip().rstrip("/")
+    if explicit.startswith("http://") or explicit.startswith("https://"):
+        return explicit
+    domain = _railway_public_domain()
+    if domain:
+        return f"https://{domain}"
+    return ""
+
+
 def _is_railway_runtime() -> bool:
     return bool(
         _railway_public_domain()

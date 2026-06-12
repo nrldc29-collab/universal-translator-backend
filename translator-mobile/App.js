@@ -405,6 +405,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
     backendReachable,
     markBackendReachable,
     setupComplete,
+    discoveryComplete,
     isCheckingBackend,
     loadStoredData,
     saveWsUrl,
@@ -1144,13 +1145,17 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
   }, []);
 
   useEffect(() => {
-    if (!authLoaded) return;
+    if (!authLoaded || !discoveryComplete) return;
+    if (hasConsumerCloudBackend() && setupComplete && validateUrl(wsUrl)) {
+      setShowSetup(false);
+      return;
+    }
     if (!setupComplete || !validateUrl(wsUrl)) {
       setShowSetup(true);
     } else {
       setShowSetup(false);
     }
-  }, [authLoaded, setupComplete, validateUrl, wsUrl]);
+  }, [authLoaded, discoveryComplete, setupComplete, validateUrl, wsUrl]);
 
   const bakedApiUrl = useMemo(() => {
     const candidate = String(bootstrapApiUrl || API_URL || "").trim().replace(/\/+$/, "");
@@ -4273,7 +4278,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
     setShowSettings(false);
   }
 
-  if (!authLoaded) {
+  if (!authLoaded || (hasConsumerCloudBackend() && !discoveryComplete)) {
     return (
       <SafeAreaView style={styles.container}>
         <LoadingScreen />

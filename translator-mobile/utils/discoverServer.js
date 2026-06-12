@@ -1,5 +1,5 @@
 import Constants from "expo-constants";
-import { getConsumerCloudApiUrl } from "../constants/consumerCloud";
+import { getConsumerCloudApiUrl, rememberDiscoveredConsumerCloudUrl } from "../constants/consumerCloud";
 
 const METRO_PORTS = ["8082", "8081", "19000"];
 
@@ -153,7 +153,13 @@ async function fetchMobileConnectInfoOnce(apiBase, timeoutMs = 10000) {
     });
     if (!response.ok) return null;
     const data = await response.json();
-    return data && typeof data === "object" ? data : null;
+    if (data && typeof data === "object") {
+      if (data.consumer_cloud_url) {
+        rememberDiscoveredConsumerCloudUrl(data.consumer_cloud_url);
+      }
+      return data;
+    }
+    return null;
   } catch {
     return null;
   } finally {

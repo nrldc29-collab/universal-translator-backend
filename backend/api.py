@@ -428,9 +428,14 @@ def mobile_connect_info():
             web_app_https_url = urlunparse(parsed._replace(scheme="https", netloc=f"{parsed.hostname}:{https_port}", path="/mobile/app"))
         except Exception:
             web_app_https_url = ""
+    from backend.config import get_consumer_cloud_url
+
+    consumer_cloud_url = get_consumer_cloud_url() or backend_https_url or backend_url
     payload = {
         "build_id": info.get("build_id") or "",
         "expo_url": info.get("expo_url") or "",
+        "consumer_cloud_url": consumer_cloud_url or "",
+        "consumer_open_and_go": bool(consumer_cloud_url),
         "backend_url": backend_url,
         "backend_https_url": backend_https_url,
         "web_app_url": web_app_url,

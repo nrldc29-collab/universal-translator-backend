@@ -278,7 +278,19 @@ def audit_consumer_open_go() -> Dimension:
     add(dim, "Web same-origin hosted deploy", "SAME_ORIGIN_BACKEND" in web_main)
 
     add(dim, "Build-ConsumerApp.ps1", (ROOT / "Build-ConsumerApp.ps1").is_file())
+    add(dim, "Deploy-ConsumerCloud.ps1", (ROOT / "Deploy-ConsumerCloud.ps1").is_file())
     add(dim, "QUICKSTART cloud path", "Start talking" in read(ROOT / "QUICKSTART.md"))
+    add(dim, "Privacy policy page", (ROOT / "frontend" / "public" / "privacy.html").is_file())
+
+    api_health = read(ROOT / "backend" / "api_health.py")
+    add(dim, "Health consumer_cloud_url", "consumer_cloud_url" in api_health)
+    config = read(ROOT / "backend" / "config.py")
+    add(dim, "get_consumer_cloud_url config", "get_consumer_cloud_url" in config)
+
+    app_js = read(ROOT / "translator-mobile" / "App.js")
+    add(dim, "Consumer discovery loading gate", "discoveryComplete" in app_js)
+    auth_hook = read(ROOT / "translator-mobile" / "hooks" / "useMobileAuth.js")
+    add(dim, "Discovery complete hook", "discoveryComplete" in auth_hook)
 
     return dim
 

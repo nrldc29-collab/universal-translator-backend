@@ -4,6 +4,7 @@ import {
   getConsumerDemoCredentials,
   hasConsumerCloudBackend,
   isConsumerCloudUrl,
+  rememberDiscoveredConsumerCloudUrl,
 } from "../constants/consumerCloud";
 
 describe("consumerCloud", () => {
@@ -33,5 +34,11 @@ describe("consumerCloud", () => {
     delete process.env.EXPO_PUBLIC_CLOUD_DEMO_USER;
     delete process.env.EXPO_PUBLIC_CLOUD_DEMO_PASS;
     expect(getConsumerDemoCredentials()).toEqual({ username: "demo", password: "demo" });
+  });
+
+  test("rememberDiscoveredConsumerCloudUrl fills gap when env unset", () => {
+    delete process.env.EXPO_PUBLIC_CLOUD_API_URL;
+    rememberDiscoveredConsumerCloudUrl("https://discovered.up.railway.app");
+    expect(getConsumerCloudApiUrl()).toBe("https://discovered.up.railway.app");
   });
 });

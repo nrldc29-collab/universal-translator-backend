@@ -75,6 +75,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
   const [showRecentUrls, setShowRecentUrls] = useState(false);
   const [backendReachable, setBackendReachable] = useState(null);
   const [setupComplete, setSetupComplete] = useState(false);
+  const [discoveryComplete, setDiscoveryComplete] = useState(false);
   const [isCheckingBackend, setIsCheckingBackend] = useState(false);
   const validateUrl = validateServerUrl;
 
@@ -221,6 +222,10 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
       }
     } catch (error) {
       console.error("Error loading stored data:", error);
+    } finally {
+      if (!discoveryStale()) {
+        setDiscoveryComplete(true);
+      }
     }
   }
 
@@ -473,6 +478,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     backendReachable,
     markBackendReachable,
     setupComplete,
+    discoveryComplete,
     isCheckingBackend,
     loadStoredData,
     saveRecentUrl,

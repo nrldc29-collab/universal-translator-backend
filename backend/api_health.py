@@ -17,6 +17,7 @@ from urllib.error import URLError
 from urllib.request import Request as UrlRequest, urlopen
 
 from backend.config import (
+    get_consumer_cloud_url,
     get_stt_provider,
     get_stt_provider_url,
     get_stt_provider_ws_url,
@@ -97,11 +98,14 @@ def runtime_payload(include_details: bool = False) -> dict:
     """Compose the JSON payload returned by `/health`, `/ready`, etc."""
 
     ready = bool(runtime_state["ready"]) and not voice_warmup_blocks_ready()
+    consumer_url = get_consumer_cloud_url()
     payload = {
         "status": "ok" if ready else "warming",
         "ready": ready,
         "release": RELEASE_ID,
         "uptime_seconds": round(time() - runtime_state["started_at"], 2),
+        "consumer_open_and_go": bool(consumer_url),
+        "consumer_cloud_url": consumer_url or None,
     }
     readiness = runtime_state.get("readiness")
     if readiness and not ready:

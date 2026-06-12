@@ -12,12 +12,23 @@ function isHttpUrl(url) {
   return value.startsWith("http://") || value.startsWith("https://");
 }
 
+let discoveredConsumerCloudUrl = "";
+
+/** Remember cloud URL from /mobile/info (hosted deploy advertises itself). */
+export function rememberDiscoveredConsumerCloudUrl(url) {
+  const normalized = normalizeUrl(url);
+  if (isHttpUrl(normalized)) {
+    discoveredConsumerCloudUrl = normalized;
+  }
+}
+
 /** Hosted bridge URL baked into production builds (Railway, etc.). */
 export function getConsumerCloudApiUrl() {
   const fromEnv = normalizeUrl(process.env.EXPO_PUBLIC_CLOUD_API_URL || "");
   if (isHttpUrl(fromEnv)) return fromEnv;
   const fromExtra = normalizeUrl(Constants.expoConfig?.extra?.cloudApiUrl || "");
   if (isHttpUrl(fromExtra)) return fromExtra;
+  if (isHttpUrl(discoveredConsumerCloudUrl)) return discoveredConsumerCloudUrl;
   return "";
 }
 

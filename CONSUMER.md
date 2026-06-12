@@ -11,8 +11,14 @@ Download the app → tap **Start talking** → speak. No PC, no Wi‑Fi LAN setu
 ### Operator setup (one time)
 
 1. Deploy to Railway — see [RAILWAY-DEPLOY.md](RAILWAY-DEPLOY.md).
-2. Copy your `https://YOUR-SERVICE.up.railway.app` URL.
-3. Build the mobile app with that URL baked in:
+2. Set `ANAI_CONSUMER_CLOUD_URL=https://YOUR-SERVICE.up.railway.app` in Railway variables (optional — auto-detected from `RAILWAY_PUBLIC_DOMAIN`).
+3. Verify cloud + smoke:
+
+```powershell
+.\Deploy-ConsumerCloud.ps1 -CloudUrl "https://YOUR-SERVICE.up.railway.app"
+```
+
+4. Build the mobile app with that URL baked in:
 
 ```powershell
 $env:EXPO_PUBLIC_CLOUD_API_URL = "https://YOUR-SERVICE.up.railway.app"
