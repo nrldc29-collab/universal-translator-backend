@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import { getConsumerCloudApiUrl } from "../constants/consumerCloud";
 
 const METRO_PORTS = ["8082", "8081", "19000"];
 
@@ -372,6 +373,9 @@ async function collectBackendCandidates(fallback = "", options = {}) {
     candidates.push(normalized);
   };
 
+  const cloudUrl = getConsumerCloudApiUrl();
+  if (cloudUrl) addCandidate(cloudUrl);
+
   if (hostname) {
     const lanUrl = deriveLanBackendUrl(hostname);
     if (lanUrl) addCandidate(lanUrl);
@@ -442,12 +446,20 @@ export async function resolveServerUrl(fallback = "", options = {}) {
   }
   const { candidates, hostname } = await collectBackendCandidates(fallback, { shouldAbort });
 
-  const orderedCandidates = preferOffLan
+  const preferCloud = Boolean(options.preferCloud);
+  const cloudFirst = getConsumerCloudApiUrl();
+  let orderedCandidates = preferOffLan
     ? [
       ...candidates.filter((url) => isOffLanBackendUrl(url)),
       ...candidates.filter((url) => !isOffLanBackendUrl(url)),
     ]
-    : candidates;
+    : [...candidates];
+  if (preferCloud && cloudFirst) {
+    orderedCandidates = [
+      cloudFirst,
+      ...orderedCandidates.filter((url) => normalizeUrl(url) !== cloudFirst),
+    ];
+  }
 
   let healthResults;
   if (preferOffLan) {

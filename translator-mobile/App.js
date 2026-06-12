@@ -79,6 +79,11 @@ import TranscriptStackHeader from "./components/TranscriptStackHeader";
 import * as Clipboard from "expo-clipboard";
 import * as SecureStore from "expo-secure-store";
 import { MOBILE_BUILD_ID } from "./constants/mobileBuild";
+import {
+  getConsumerCloudApiUrl,
+  getConsumerDemoCredentials,
+  hasConsumerCloudBackend,
+} from "./constants/consumerCloud";
 import { FOCUSED_PRODUCT_UI, showAdvancedInterpreterChrome } from "./constants/productMode";
 import {
   FLOW_STEPS,
@@ -4169,6 +4174,45 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
     }
   }
 
+  async function handleStartCloud() {
+    const cloud = getConsumerCloudApiUrl();
+    if (!cloud || !validateUrl(cloud)) {
+      setStatus(BRIDGE_ACTION.invalidServerUrl);
+      setStatusType("error");
+      return;
+    }
+    const demo = getConsumerDemoCredentials();
+    pinActiveWsUrl(cloud);
+    setWsUrl(cloud);
+    await persistWsUrl(cloud);
+    if (demo.username) setUsername(demo.username);
+    if (demo.password) setPassword(demo.password);
+    const ok = await checkBackendHealth(cloud);
+    if (!mountedRef.current) return;
+    if (!ok) {
+      setStatus(BRIDGE_ACTION.testBridgeLink);
+      setStatusType("error");
+      return;
+    }
+    await login({
+      apiUrl: cloud,
+      username: demo.username,
+      password: demo.password,
+      onSuccess: async (accessToken) => {
+        if (!mountedRef.current) return;
+        await markSetupComplete();
+        setShowSetup(false);
+        setDismissedError("");
+        userPausedConnectionRef.current = false;
+        autoConnectStartedRef.current = true;
+        if (appStateRef.current === "active" && networkStateRef.current?.isConnected !== false) {
+          connect(accessToken);
+        }
+        await showFirstRunHelpIfNeeded();
+      },
+    });
+  }
+
   async function finishSetup() {
     const trimmed = String(wsUrl || "").trim().replace(/\/+$/, "");
     if (!validateUrl(trimmed)) {
@@ -4273,6 +4317,8 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
         setUsername={setUsername}
         password={password}
         setPassword={setPassword}
+        cloudApiUrl={hasConsumerCloudBackend() ? getConsumerCloudApiUrl() : ""}
+        onStartCloud={handleStartCloud}
         onTestConnection={() => checkBackendHealth(wsUrl)}
         onLogin={async () => {
           const trimmed = String(wsUrl || "").trim().replace(/\/+$/, "");

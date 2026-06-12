@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import { bridgeServerStatusMessages } from "../constants/productVoice";
 import {
+  getConsumerCloudApiUrl,
+  getConsumerDemoCredentials,
+  hasConsumerCloudBackend,
+} from "../constants/consumerCloud";
+import {
   checkBackendHealthUrl,
   deriveApiUrlFromExpo,
   isOffLanBackendHost,
@@ -62,8 +67,9 @@ export function isJwtExpired(token) {
 
 export function useMobileAuth({ defaultUrl = "", onStatus }) {
   const [token, setToken] = useState("");
-  const [username, setUsername] = useState("demo");
-  const [password, setPassword] = useState("demo");
+  const demoCreds = getConsumerDemoCredentials();
+  const [username, setUsername] = useState(demoCreds.username);
+  const [password, setPassword] = useState(demoCreds.password);
   const [wsUrl, setWsUrl] = useState(defaultUrl);
   const [recentUrls, setRecentUrls] = useState([]);
   const [showRecentUrls, setShowRecentUrls] = useState(false);
@@ -88,8 +94,12 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
       const storedToken = await SecureStore.getItemAsync(TOKEN_KEY);
       const storedUrlEarly = normalizeUrl(await SecureStore.getItemAsync(WS_URL_KEY));
       const bootstrapUrl = normalizeUrl(defaultUrl);
+      const cloudUrl = getConsumerCloudApiUrl();
       const trustedBootstrap = validateUrl(bootstrapUrl);
       let envUrl = trustedBootstrap ? bootstrapUrl : "";
+      if (!validateUrl(envUrl) && !storedUrlEarly && cloudUrl) {
+        envUrl = cloudUrl;
+      }
       if (!validateUrl(envUrl)) {
         envUrl = normalizeUrl(deriveApiUrlFromExpo());
       } else {
@@ -114,11 +124,15 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
       }
       if (!skipHeavyDiscovery && envUrl && validateUrl(envUrl)) {
         try {
-          let resolved = await resolveServerUrl(envUrl, { shouldAbort: discoveryStale });
+          let resolved = await resolveServerUrl(envUrl, {
+            preferCloud: hasConsumerCloudBackend(),
+            shouldAbort: discoveryStale,
+          });
           if (discoveryStale()) return;
           if (!resolved?.healthy) {
             const tunnelResolved = await resolveServerUrl(envUrl, {
               preferOffLan: true,
+              preferCloud: hasConsumerCloudBackend(),
               shouldAbort: discoveryStale,
             });
             if (discoveryStale()) return;
@@ -328,7 +342,15 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     }
   }
 
-  async function login({ onSuccess, skipHealthCheck = false, apiUrl } = {}) {
+  async function login({
+    onSuccess,
+    skipHealthCheck = false,
+    apiUrl,
+    username: usernameOverride,
+    password: passwordOverride,
+  } = {}) {
+    const loginUser = usernameOverride ?? username;
+    const loginPass = passwordOverride ?? password;
     const target = normalizeUrl(apiUrl || wsUrl);
     if (!validateUrl(target)) {
       onStatus?.("Invalid backend URL format", "error");
@@ -366,7 +388,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
             "Content-Type": "application/json",
             ...tunnelFetchHeaders(target),
           },
-          body: JSON.stringify({ username, password }),
+          body: JSON.stringify({ username: loginUser, password: loginPass }),
           signal,
         });
       } finally {
@@ -390,7 +412,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
       setToken(data.access_token);
       await saveWsUrl(target);
       if (signal.aborted) return false;
-      onStatus?.("Logged in as " + username, "success");
+      onStatus?.("Logged in as " + loginUser, "success");
       onSuccess?.(data.access_token);
       return true;
     } catch (error) {

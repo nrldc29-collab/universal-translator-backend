@@ -38,7 +38,10 @@
         "buildType": "app-bundle"
       },
       "env": {
-        "EXPO_PUBLIC_DEBUG_LOGS": "0"
+        "EXPO_PUBLIC_DEBUG_LOGS": "0",
+        "EXPO_PUBLIC_CLOUD_API_URL": "",
+        "EXPO_PUBLIC_CLOUD_DEMO_USER": "demo",
+        "EXPO_PUBLIC_CLOUD_DEMO_PASS": "demo"
       }
     }
   },

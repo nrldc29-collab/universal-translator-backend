@@ -3,7 +3,7 @@
     "name": "Anai",
     "slug": "anai-interpreter-v2",
     "version": "1.0.2",
-    "description": "Real-time conversation bridge — speak in your language, hear the translation. Self-hosted EN↔HT and 14 languages.",
+    "description": "Real-time conversation bridge — tap Start talking for cloud mode, or connect your own bridge. EN↔HT and 14 languages.",
     "runtimeVersion": "2026-06-11-fix152",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -11,6 +11,10 @@
     "userInterfaceStyle": "dark",
     "extra": {
       "apiUrl": "",
+      "cloudApiUrl": "",
+      "cloudDemoUser": "demo",
+      "cloudDemoPass": "demo",
+      "consumerOpenAndGo": true,
       "eas": {
         "projectId": "38c5acaf-9582-4533-8822-a31f06a6e21d"
       }

@@ -19,6 +19,8 @@ export default function WelcomeSetupModal({
   onLogin,
   onContinue,
   onDismiss,
+  onStartCloud,
+  cloudApiUrl = "",
   backendReachable,
   isChecking,
 }) {
@@ -62,8 +64,36 @@ export default function WelcomeSetupModal({
                 Welcome to <Text style={setupStyles.titleAccent}>Anai</Text>
               </Text>
               <Text style={setupStyles.subtitle}>
-                Bridge languages in real conversation. Link to your bridge server, then tap Start — each person can stay in their own language.
+                {cloudApiUrl
+                  ? "Talk across languages in real time. Start with Anai Cloud — no PC or Wi‑Fi setup — or connect your own bridge server."
+                  : "Bridge languages in real conversation. Link to your bridge server, then tap Start — each person can stay in their own language."}
               </Text>
+              {cloudApiUrl ? (
+                <Pressable
+                  onPress={onStartCloud}
+                  disabled={isChecking}
+                  style={({ pressed }) => [
+                    setupStyles.primaryBtn,
+                    setupStyles.cloudHeroBtn,
+                    pressed && setupStyles.btnPressed,
+                    isChecking && setupStyles.btnDisabled,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Start talking with Anai Cloud"
+                >
+                  {isChecking ? (
+                    <ActivityIndicator color="#07131f" />
+                  ) : (
+                    <View style={setupStyles.cloudHeroBtnInner}>
+                      <Ionicons name="cloud-outline" size={18} color="#07131f" />
+                      <Text style={setupStyles.primaryBtnText}>Start talking</Text>
+                    </View>
+                  )}
+                </Pressable>
+              ) : null}
+              {cloudApiUrl ? (
+                <Text style={setupStyles.cloudDivider}>or use your own bridge</Text>
+              ) : null}
               <View style={setupStyles.stepRow} accessibilityLabel={`Setup step ${setupProgress + 1} of 3`}>
                 {[0, 1, 2].map((i) => (
                   <View

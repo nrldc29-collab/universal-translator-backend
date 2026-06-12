@@ -1,6 +1,22 @@
 # Anai QuickStart
 
-Get a live conversation bridge running in three steps.
+## Consumer cloud (no PC) — App Store path
+
+1. Install Anai (TestFlight / Play internal / store build with cloud URL baked in).
+2. Tap **Start talking** on first launch.
+3. Allow microphone → speak. Continuous translation until Pause.
+
+Operators: deploy to Railway ([RAILWAY-DEPLOY.md](RAILWAY-DEPLOY.md)), then:
+
+```powershell
+.\Build-ConsumerApp.ps1 -CloudUrl "https://YOUR-SERVICE.up.railway.app"
+```
+
+See [CONSUMER.md](CONSUMER.md) for full consumer product details.
+
+---
+
+## Bridge mode (self-hosted PC) — three steps
 
 ## 1. Start the stack (PC)
 
@@ -55,4 +71,4 @@ Or with a running backend:
 python scripts/product_readiness.py --live http://127.0.0.1:8000
 ```
 
-Target: **10/10 on all five product dimensions**.
+Target: **10/10 on all product dimensions** (including consumer open-and-go).

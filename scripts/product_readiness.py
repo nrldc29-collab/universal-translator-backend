@@ -254,6 +254,35 @@ def audit_consumer() -> Dimension:
     return dim
 
 
+def audit_consumer_open_go() -> Dimension:
+    dim = Dimension("consumer_200", "Consumer open-and-go (200% target)")
+    mobile_cloud = read(ROOT / "translator-mobile" / "constants" / "consumerCloud.js")
+    add(dim, "Mobile consumer cloud module", "getConsumerCloudApiUrl" in mobile_cloud)
+    add(dim, "CONSUMER_OPEN_AND_GO enabled", "CONSUMER_OPEN_AND_GO = true" in mobile_cloud)
+
+    welcome = read(ROOT / "translator-mobile" / "components" / "WelcomeSetupModal.js")
+    add(dim, "Start talking cloud CTA", "onStartCloud" in welcome and "Start talking" in welcome)
+
+    discover = read(ROOT / "translator-mobile" / "utils" / "discoverServer.js")
+    add(dim, "Cloud URL in discovery", "getConsumerCloudApiUrl" in discover)
+    add(dim, "preferCloud discovery option", "preferCloud" in discover)
+
+    app_js = read(ROOT / "translator-mobile" / "App.js")
+    add(dim, "handleStartCloud wired", "handleStartCloud" in app_js)
+
+    add(dim, "CONSUMER.md guide", (ROOT / "CONSUMER.md").is_file())
+    eas = read(ROOT / "translator-mobile" / "eas.json")
+    add(dim, "EAS production cloud env keys", "EXPO_PUBLIC_CLOUD_API_URL" in eas)
+
+    web_main = read(ROOT / "frontend" / "src" / "main.jsx")
+    add(dim, "Web same-origin hosted deploy", "SAME_ORIGIN_BACKEND" in web_main)
+
+    add(dim, "Build-ConsumerApp.ps1", (ROOT / "Build-ConsumerApp.ps1").is_file())
+    add(dim, "QUICKSTART cloud path", "Start talking" in read(ROOT / "QUICKSTART.md"))
+
+    return dim
+
+
 def print_report(dims: list[Dimension]) -> int:
     print("\nAnai product readiness\n" + "=" * 40)
     all_pass = True
@@ -294,6 +323,7 @@ def main() -> int:
         audit_ops(),
         audit_ux(),
         audit_consumer(),
+        audit_consumer_open_go(),
     ]
     return print_report(dims)
 

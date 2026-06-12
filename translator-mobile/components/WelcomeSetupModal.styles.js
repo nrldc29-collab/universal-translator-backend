@@ -184,6 +184,23 @@ export default StyleSheet.create({
     shadowRadius: 14,
     elevation: 8,
   },
+  cloudHeroBtn: {
+    alignSelf: "stretch",
+    marginTop: 4,
+  },
+  cloudHeroBtnInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  cloudDivider: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+    marginTop: 4,
+  },
   continueBtn: {
     marginTop: 8,
   },
