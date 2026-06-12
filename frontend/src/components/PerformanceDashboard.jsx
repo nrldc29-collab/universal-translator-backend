@@ -131,12 +131,12 @@ export default function PerformanceDashboard({ backendUrl }) {
         )}
       </MetricCard>
 
-      <MetricCard title="Translation backend">
+      <MetricCard title="Bridge backend">
         <MetricRow label="Runtime" value={metrics?.translation?.runtime || '—'} mono />
         <MetricRow label="Backend" value={metrics?.translation?.backend || '—'} mono />
         <MetricRow label="Device" value={metrics?.translation?.device || '—'} mono />
         <MetricRow
-          label="Remote translator"
+          label="Remote bridge"
           value={(
             <StatusPill
               ok={metrics?.translation?.remote_translator_reachable}

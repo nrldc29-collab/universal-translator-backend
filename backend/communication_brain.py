@@ -29,11 +29,23 @@ DOMAIN_TERMS = {
 }
 STRICT_CONFIRM_DOMAINS = {"medical", "legal", "travel_safety"}
 PRECISION_FAST_LANE_DOMAINS = {"financial"}
+SAFE_LOCATION_TERMS = {"hospital", "clinic", "doctor", "pharmacy"}
+UNSAFE_MEDICAL_TERMS = {"medicine", "medication", "allergy", "pain", "dose", "dosage", "blood"}
 LANGUAGE_HINTS = {
     "en": {"hello", "please", "thank", "thanks", "where", "what", "need", "help", "price", "doctor", "bank", "room"},
     "es": {"hola", "gracias", "donde", "que", "necesito", "ayuda", "precio", "doctor", "banco", "habitacion"},
     "fr": {"bonjour", "merci", "ou", "quoi", "besoin", "aide", "prix", "docteur", "banque", "chambre"},
     "ht": {"bonjou", "mesi", "kote", "kisa", "bezwen", "ede", "pri", "dokte", "bank", "chanm"},
+    "de": {"hallo", "danke", "bitte", "wo", "hilfe", "arzt", "bank", "zimmer"},
+    "it": {"ciao", "grazie", "per", "favore", "dove", "aiuto", "medico", "banca"},
+    "pt": {"ola", "obrigado", "obrigada", "por", "favor", "onde", "ajuda", "medico", "banco"},
+    "nl": {"hallo", "dank", "alsjeblieft", "waar", "hulp", "arts", "bank"},
+    "ru": {"привет", "спасибо", "пожалуйста", "где", "помощь", "врач", "банк"},
+    "zh": {"你好", "谢谢", "哪里", "帮助", "医生", "银行"},
+    "ja": {"こんにちは", "ありがとう", "どこ", "助け", "病院", "銀行"},
+    "ko": {"안녕", "감사", "어디", "도움", "병원", "은행"},
+    "ar": {"مرحبا", "شكرا", "أين", "مساعدة", "طبيب", "بنك"},
+    "hi": {"नमस्ते", "धन्यवाद", "कहाँ", "मदद", "डॉक्टर", "बैंक"},
 }
 STOP_WORDS = {
     "the", "and", "for", "that", "this", "with", "you", "are", "was", "were",
@@ -104,14 +116,39 @@ def detect_tone(text: str, semantic_context: dict | None = None) -> str:
     return detected
 
 
+_INFORMAL_MARKERS = frozenset({
+    "yeah", "nah", "gonna", "wanna", "kinda", "sorta", "lol", "btw", "imo", "tbh",
+    "ain't", "y'all", "dunno", "gotta", "lemme", "bro", "dude", "mate",
+    "w ap", "n ap", "nap", "konnen", "pa", "gen", "ose", "tcheke",
+    "vale", "tio", "tío", "guay", "ouais", "mdr", "bref", "genre",
+    "tipo", "cara", "mano", "beleza", "jo", "ey", "hein", "quoi",
+})
+
+
+def detect_register(text: str) -> str:
+    lowered = (text or "").lower()
+    if any(
+        re.search(r"(?<!\w)" + re.escape(marker) + r"(?!\w)", lowered)
+        for marker in _INFORMAL_MARKERS
+    ):
+        return "informal"
+    if re.search(r"\b(yeah|yep|nope|ok|okay)\b", lowered):
+        return "informal"
+    return "neutral"
+
+
 def detect_emotion(text: str, tone: str) -> str:
     lowered = (text or "").lower()
-    if "angry" in lowered or "frustrated" in lowered or tone == "emphatic":
+    if any(term in lowered for term in ("angry", "frustrated", "enojado", "furioso", "fâché", "fache")):
         return "frustrated"
-    if "scared" in lowered or "worried" in lowered:
+    if any(term in lowered for term in ("scared", "worried", "miedo", "peur", "pè", "inquiet")):
         return "concerned"
-    if "sad" in lowered or "lonely" in lowered or "hurt" in lowered:
+    if any(term in lowered for term in ("sad", "lonely", "hurt", "triste", "trist", "malheureux")):
         return "sad"
+    if any(term in lowered for term in ("gracias", "merci", "mesi", "obrigado", "danke", "thank")):
+        return "warm"
+    if tone == "emphatic":
+        return "frustrated"
     if tone == "polite":
         return "warm"
     return "neutral"
@@ -331,13 +368,15 @@ def analyze_communication(
     context=None,
     speaker_context=None,
     semantic_context: dict | None = None,
+    source_language: str | None = None,
 ) -> dict:
     source_text = text or ""
     intent = detect_intent(source_text, semantic_context)
     tone = detect_tone(source_text, semantic_context)
     emotion = detect_emotion(source_text, tone)
-    words = detect_ambiguities(source_text)
-    amb_score = ambiguity_score(source_text)
+    register = detect_register(source_text)
+    words = detect_ambiguities(source_text, source_language)
+    amb_score = ambiguity_score(source_text, source_language)
     domains = detect_domains(source_text)
     ctx_match = context_match_score(source_text, context, speaker_context)
     speaker_style = speaker_style_profile(context, speaker_context)
@@ -356,11 +395,16 @@ def analyze_communication(
     elif intent == "emotional_statement":
         communication_state = "support_needed"
 
+    language_mix = detect_language_mix(source_text, source_language)
+
     return {
         "source": ENGINE_VERSION,
+        "source_language": source_language,
+        "language": language_mix,
         "intent": intent,
         "tone": tone,
         "emotion": emotion,
+        "register": register,
         "entities": detect_entities(source_text),
         "domains": domains,
         "urgency": round(urgency, 4),
@@ -426,7 +470,7 @@ def translation_quality_flags(
 def clarification_message(text: str, analysis: dict, reason: str) -> str:
     ambiguity = analysis.get("ambiguity", {})
     if ambiguity.get("words"):
-        return clarification_for(text, ambiguity.get("words", []))
+        return clarification_for(text, ambiguity.get("words", []), analysis.get("source_language"))
     domains = analysis.get("domains", {})
     high_stakes = domains.get("high_stakes") or []
     if high_stakes:
@@ -445,6 +489,14 @@ def clarification_message(text: str, analysis: dict, reason: str) -> str:
             return f"I may have missed '{value}'. Could you repeat that exact name, number, or code?"
     if reason == "untranslated_echo":
         return "I heard the words, but the translation did not change languages. Could you repeat it a little more clearly?"
+    if reason == "low_confidence":
+        if _safe_float(analysis.get("context_match"), 0.6) < 0.45:
+            return "That sounded off-topic from the conversation. Could you repeat it in context?"
+        if analysis.get("tone") == "emphatic":
+            return "I caught the emphasis but want to be sure — could you repeat that once?"
+        if ambiguity.get("words"):
+            return clarification_for(text, ambiguity.get("words", []))
+        return "I may have misunderstood. Could you repeat or rephrase that?"
     return "I may have misunderstood. Could you repeat or rephrase that?"
 
 
@@ -577,12 +629,25 @@ def precision_status(confidence: float, analysis: dict, quality_flags: list[str]
         if flag in quality_flags:
             hard_blockers.append(flag)
     strict_domains = sorted(domains & STRICT_CONFIRM_DOMAINS)
-    fast_lane = (
-        bool(domains)
-        and domains <= PRECISION_FAST_LANE_DOMAINS
+    source_tokens = set(_tokens(str(analysis.get("text") or "")))
+    safe_location_request = (
+        analysis.get("intent") == "question"
+        and bool(source_tokens & SAFE_LOCATION_TERMS)
+        and bool(source_tokens & {"where", "nearest", "closest"})
+        and not bool(source_tokens & UNSAFE_MEDICAL_TERMS)
+        and not analysis.get("entities")
         and not hard_blockers
-        and _safe_float(confidence) >= 0.78
-        and (not all_terms or exact_terms_preserved)
+        and _safe_float(analysis.get("ambiguity_score"), 0.0) < 0.35
+    )
+    fast_lane = (
+        (
+            bool(domains)
+            and domains <= PRECISION_FAST_LANE_DOMAINS
+            and not hard_blockers
+            and _safe_float(confidence) >= 0.78
+            and (not all_terms or exact_terms_preserved)
+        )
+        or (safe_location_request and _safe_float(confidence) >= 0.72)
     )
 
     if fast_lane:
@@ -605,6 +670,7 @@ def precision_status(confidence: float, analysis: dict, quality_flags: list[str]
         "domains": sorted(domains),
         "strict_domains": strict_domains,
         "fast_lane_domains": sorted(domains & PRECISION_FAST_LANE_DOMAINS),
+        "safe_location_request": safe_location_request,
         "blockers": hard_blockers,
     }
 
@@ -800,6 +866,12 @@ def decide_response(text: str, fallback_translation: str, confidence: float, ana
             "message": clarification_message(text, analysis, "missing_protected_terms"),
             "reason": "missing_protected_terms",
         }
+    if analysis.get("glossary_trusted"):
+        return {
+            "type": "translation",
+            "message": fallback_translation,
+            "reason": "glossary_trusted",
+        }
     precision = analysis.get("precision_status") or {}
     if "high_stakes" in quality_flags and precision.get("requires_confirmation", True):
         return {
@@ -939,6 +1011,20 @@ def evaluate_translation_brain(
     }
     analysis["language"] = detect_language_mix(source_text, source_language)
     protected_terms = extract_protected_terms(source_text)
+    session_id = None
+    if isinstance(context, dict):
+        session_id = context.get("session_id")
+    if session_id and source_language and target_language:
+        from backend.glossary import find_glossary_matches, get_session_glossary, glossary_blocks_clarification
+
+        glossary = get_session_glossary(session_id)
+        for entry in find_glossary_matches(source_text, glossary, source_language, target_language):
+            source_term = str(entry.get("source") or "").strip()
+            if source_term:
+                protected_terms.append({"type": "glossary", "value": source_term})
+        analysis["glossary_trusted"] = glossary_blocks_clarification(
+            source_text, fallback, glossary, source_language, target_language,
+        )
     analysis["protected_terms"] = {
         "all": protected_terms,
         "missing": missing_protected_terms(protected_terms, fallback),

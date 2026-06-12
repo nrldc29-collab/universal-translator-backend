@@ -1,11 +1,64 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import { bridgeServerStatusMessages } from "../constants/productVoice";
+import {
+  checkBackendHealthUrl,
+  deriveApiUrlFromExpo,
+  isOffLanBackendHost,
+  resolveServerUrl,
+  tunnelFetchHeaders,
+} from "../utils/discoverServer";
+
+let activeLoginAbort = null;
+let activeDiscoveryGeneration = 0;
+let activeHealthCheckGeneration = 0;
+
+export function cancelLogin() {
+  activeHealthCheckGeneration += 1;
+  if (activeLoginAbort) {
+    activeLoginAbort.abort();
+    activeLoginAbort = null;
+  }
+}
+
+export function cancelDiscovery() {
+  activeDiscoveryGeneration += 1;
+  activeHealthCheckGeneration += 1;
+}
 
 const TOKEN_KEY = "translator_token";
 const WS_URL_KEY = "translator_ws_url";
 const SETUP_COMPLETE_KEY = "translator_setup_complete";
 const RECENT_URLS_KEY = "recent_urls";
 const MAX_RECENT_URLS = 5;
+
+export function validateServerUrl(url) {
+  try {
+    const trimmed = String(url || "").trim();
+    if (!trimmed) return false;
+    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) return false;
+    const parsed = new URL(trimmed);
+    if (!parsed.hostname) return false;
+    if (/^(localhost|127\.0\.0\.1)$/i.test(parsed.hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isJwtExpired(token) {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length < 2) return false;
+    const payloadJson = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(payloadJson);
+    const exp = Number(payload.exp);
+    if (!Number.isFinite(exp) || exp <= 0) return false;
+    return Date.now() >= exp * 1000;
+  } catch {
+    return false;
+  }
+}
 
 export function useMobileAuth({ defaultUrl = "", onStatus }) {
   const [token, setToken] = useState("");
@@ -17,38 +70,119 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
   const [backendReachable, setBackendReachable] = useState(null);
   const [setupComplete, setSetupComplete] = useState(false);
   const [isCheckingBackend, setIsCheckingBackend] = useState(false);
+  const validateUrl = validateServerUrl;
+
+  useEffect(() => () => {
+    cancelLogin();
+    cancelDiscovery();
+  }, []);
 
   function normalizeUrl(url) {
     return String(url || "").trim().replace(/\/+$/, "");
   }
 
   async function loadStoredData() {
+    const discoveryGen = activeDiscoveryGeneration;
+    const discoveryStale = () => discoveryGen !== activeDiscoveryGeneration;
     try {
       const storedToken = await SecureStore.getItemAsync(TOKEN_KEY);
-      if (storedToken) {
-        setToken(storedToken);
-        onStatus?.("Token restored", "success");
+      const storedUrlEarly = normalizeUrl(await SecureStore.getItemAsync(WS_URL_KEY));
+      const bootstrapUrl = normalizeUrl(defaultUrl);
+      const trustedBootstrap = validateUrl(bootstrapUrl);
+      let envUrl = trustedBootstrap ? bootstrapUrl : "";
+      if (!validateUrl(envUrl)) {
+        envUrl = normalizeUrl(deriveApiUrlFromExpo());
+      } else {
+        const preferred = normalizeUrl(deriveApiUrlFromExpo(envUrl));
+        if (preferred && validateUrl(preferred)) {
+          envUrl = preferred;
+        }
       }
-      const envUrl = normalizeUrl(defaultUrl);
-      const storedUrl = normalizeUrl(await SecureStore.getItemAsync(WS_URL_KEY));
+      let skipHeavyDiscovery = false;
+      if (trustedBootstrap) {
+        envUrl = bootstrapUrl;
+        try {
+          const quickReady = await checkBackendHealthUrl(bootstrapUrl, {
+            timeoutMs: 5000,
+            requireReady: true,
+          });
+          setBackendReachable(quickReady ? true : null);
+          skipHeavyDiscovery = quickReady;
+        } catch {
+          setBackendReachable(null);
+        }
+      }
+      if (!skipHeavyDiscovery && envUrl && validateUrl(envUrl)) {
+        try {
+          let resolved = await resolveServerUrl(envUrl, { shouldAbort: discoveryStale });
+          if (discoveryStale()) return;
+          if (!resolved?.healthy) {
+            const tunnelResolved = await resolveServerUrl(envUrl, {
+              preferOffLan: true,
+              shouldAbort: discoveryStale,
+            });
+            if (discoveryStale()) return;
+            if (tunnelResolved?.healthy) {
+              resolved = tunnelResolved;
+            }
+          }
+          const tunnelBaked = normalizeUrl(process.env.EXPO_PUBLIC_TUNNEL_API_URL || "");
+          if (!resolved?.healthy && tunnelBaked && validateUrl(tunnelBaked)) {
+            const tunnelHealthy = await checkBackendHealthUrl(tunnelBaked, {
+              timeoutMs: 6000,
+              requireReady: true,
+            });
+            if (discoveryStale()) return;
+            if (tunnelHealthy) {
+              resolved = { apiUrl: tunnelBaked, healthy: true, mobileInfo: null, hostname: "" };
+            }
+          }
+          if (resolved?.healthy && resolved?.apiUrl && validateUrl(resolved.apiUrl)) {
+            envUrl = normalizeUrl(resolved.apiUrl);
+          }
+          if (discoveryStale()) return;
+          if (resolved?.healthy) {
+            setBackendReachable(true);
+          } else if (resolved?.apiUrl) {
+            setBackendReachable(false);
+          }
+        } catch (error) {
+          if (discoveryStale()) return;
+          console.error("Server discovery failed:", error);
+          setBackendReachable(await checkBackendHealthUrl(envUrl));
+        }
+      }
+      if (discoveryStale()) return;
+      const storedUrl = storedUrlEarly;
       let envChanged = false;
       // Prefer the baked-in Expo env URL when it changes (e.g. Start-MobilePhoneMode.ps1 refreshed LAN IP).
       if (envUrl && validateUrl(envUrl)) {
         envChanged = Boolean(storedUrl && storedUrl !== envUrl);
+        setWsUrl(envUrl);
         if (!storedUrl || envChanged) {
-          setWsUrl(envUrl);
           await SecureStore.setItemAsync(WS_URL_KEY, envUrl);
           if (envChanged) {
             setBackendReachable(null);
-            setSetupComplete(false);
-            await SecureStore.deleteItemAsync(SETUP_COMPLETE_KEY);
+            await SecureStore.deleteItemAsync(TOKEN_KEY);
           }
-        } else {
-          setWsUrl(storedUrl);
         }
       } else if (storedUrl && validateUrl(storedUrl)) {
         setWsUrl(storedUrl);
       }
+      if (discoveryStale()) return;
+      if (storedToken && !envChanged) {
+        if (isJwtExpired(storedToken)) {
+          setToken("");
+          await SecureStore.deleteItemAsync(TOKEN_KEY);
+          if (!discoveryStale()) onStatus?.("Session expired — sign in again", "warning");
+        } else {
+          setToken(storedToken);
+          if (!discoveryStale()) onStatus?.("Token restored", "success");
+        }
+      } else {
+        setToken("");
+      }
+      if (discoveryStale()) return;
       const storedUrls = await SecureStore.getItemAsync(RECENT_URLS_KEY);
       if (storedUrls) {
         try {
@@ -59,9 +193,17 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
           await SecureStore.deleteItemAsync(RECENT_URLS_KEY);
         }
       }
-      if (!envChanged) {
-        const storedSetup = await SecureStore.getItemAsync(SETUP_COMPLETE_KEY);
-        setSetupComplete(storedSetup === "1");
+      const storedSetup = await SecureStore.getItemAsync(SETUP_COMPLETE_KEY);
+      const activeUrl = normalizeUrl(
+        envUrl && validateUrl(envUrl) ? envUrl : storedUrl && validateUrl(storedUrl) ? storedUrl : "",
+      );
+      if (storedSetup === "1" || (activeUrl && validateUrl(activeUrl))) {
+        setSetupComplete(true);
+        if (storedSetup !== "1") {
+          await SecureStore.setItemAsync(SETUP_COMPLETE_KEY, "1");
+        }
+      } else {
+        setSetupComplete(false);
       }
     } catch (error) {
       console.error("Error loading stored data:", error);
@@ -99,105 +241,173 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     }
   }
 
-  function validateUrl(url) {
-    try {
-      const trimmed = String(url || "").trim();
-      if (!trimmed) return false;
-      if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) return false;
-      const parsed = new URL(trimmed);
-      return Boolean(parsed.hostname);
-    } catch {
-      return false;
-    }
-  }
-
-  async function checkBackendHealth(url, { quiet = false } = {}) {
+  async function checkBackendHealth(url, { quiet = false, shouldAbort } = {}) {
+    const checkGen = ++activeHealthCheckGeneration;
+    const isStale = () =>
+      checkGen !== activeHealthCheckGeneration
+      || (typeof shouldAbort === "function" && shouldAbort());
     const target = normalizeUrl(url || wsUrl);
     if (!validateUrl(target)) {
-      setBackendReachable(false);
+      if (!isStale()) setBackendReachable(false);
       return false;
     }
     if (/localhost|127\.0\.0\.1/i.test(target)) {
-      setBackendReachable(false);
+      if (!isStale()) setBackendReachable(false);
       if (!quiet) {
         onStatus?.("Use your PC's LAN IP (not localhost) — the phone cannot reach this machine.", "error");
       }
       return false;
     }
+    let controller = null;
     try {
       if (!quiet) {
         setIsCheckingBackend(true);
         onStatus?.("Checking server...", "connecting");
       }
-      const controller = new AbortController();
+      controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 12000);
-      const response = await fetch(`${target}/health`, {
-        method: "GET",
-        cache: "no-store",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      setBackendReachable(response.ok);
-      if (!quiet) {
-        if (response.ok) {
-          onStatus?.("Server reachable", "success");
-        } else {
-          onStatus?.(`Server responded with HTTP ${response.status}`, "error");
+      let response;
+      try {
+        response = await fetch(`${target}/health`, {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            ...tunnelFetchHeaders(target),
+          },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+      if (controller.signal.aborted || isStale()) return false;
+      let ready = true;
+      if (response.ok) {
+        try {
+          const payload = await response.json();
+          ready = payload?.ready !== false;
+        } catch {
+          ready = true;
         }
       }
-      return response.ok;
+      if (isStale()) return false;
+      // Reachable = HTTP response (warming still counts as reachable on LAN).
+      setBackendReachable(response.ok);
+      if (!quiet) {
+        const srv = bridgeServerStatusMessages();
+        if (response.ok && ready) {
+          onStatus?.(srv.reachable, "success");
+        } else if (response.ok && !ready) {
+          onStatus?.(srv.warming, "connecting");
+        } else {
+          onStatus?.(`Bridge server responded with HTTP ${response.status}`, "error");
+        }
+      }
+      return response.ok && ready;
     } catch (error) {
+      if (controller?.signal?.aborted || error?.name === "AbortError" || isStale()) {
+        return false;
+      }
       setBackendReachable(false);
       const message = String(error?.message || error || "");
       if (!quiet) {
+        const srv = bridgeServerStatusMessages();
         if (/abort|timeout/i.test(message)) {
-          onStatus?.("Server check timed out. Same Wi‑Fi? Firewall open on ports 8000 and 8081?", "error");
+          onStatus?.(srv.timeout, "error");
         } else if (/network request failed|failed to fetch|cleartext/i.test(message)) {
-          onStatus?.("Cannot reach server. Use your PC's LAN IP and allow HTTP through Windows Firewall.", "error");
+          onStatus?.(srv.cannotReachLan, "error");
         } else {
-          onStatus?.("Cannot reach server. Check URL, Wi‑Fi, and firewall.", "error");
+          onStatus?.(srv.cannotReach, "error");
         }
       }
       return false;
     } finally {
-      if (!quiet) {
+      if (!quiet && checkGen === activeHealthCheckGeneration) {
         setIsCheckingBackend(false);
       }
     }
   }
 
-  async function login({ onSuccess } = {}) {
-    if (!validateUrl(wsUrl)) {
+  async function login({ onSuccess, skipHealthCheck = false, apiUrl } = {}) {
+    const target = normalizeUrl(apiUrl || wsUrl);
+    if (!validateUrl(target)) {
       onStatus?.("Invalid backend URL format", "error");
-      return;
+      return false;
     }
+    cancelLogin();
+    let loginController = null;
     try {
       onStatus?.("Logging in...", "connecting");
-      const isHealthy = await checkBackendHealth(wsUrl);
-      if (!isHealthy) {
-        onStatus?.("Backend is not reachable. Check URL and ensure backend is running.", "error");
-        return;
+      if (!skipHealthCheck) {
+        const isHealthy = await checkBackendHealth(target);
+        if (!isHealthy) {
+          onStatus?.("Backend is not reachable. Check URL and ensure backend is running.", "error");
+          return false;
+        }
       }
-      const target = normalizeUrl(wsUrl);
-      const response = await fetch(`${target}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
-      });
+      loginController = new AbortController();
+      activeLoginAbort = loginController;
+      const { signal } = loginController;
+      if (signal.aborted) return false;
+      let loginHost = "";
+      try {
+        loginHost = new URL(target).hostname;
+      } catch {
+        loginHost = "";
+      }
+      const loginTimeoutMs = isOffLanBackendHost(loginHost) ? 25000 : 15000;
+      const loginTimeoutId = setTimeout(() => loginController.abort(), loginTimeoutMs);
+      let response;
+      try {
+        response = await fetch(`${target}/auth/login`, {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "application/json",
+            ...tunnelFetchHeaders(target),
+          },
+          body: JSON.stringify({ username, password }),
+          signal,
+        });
+      } finally {
+        clearTimeout(loginTimeoutId);
+      }
+      if (signal.aborted) return false;
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
         onStatus?.("Login failed: " + (data.detail || "Unknown error"), "error");
-        return;
+        return false;
       }
       const data = await response.json();
+      if (signal.aborted) return false;
+      if (isJwtExpired(data.access_token)) {
+        onStatus?.("Login returned an expired session — try again", "error");
+        return false;
+      }
+      if (signal.aborted) return false;
       await SecureStore.setItemAsync(TOKEN_KEY, data.access_token);
+      if (signal.aborted) return false;
       setToken(data.access_token);
-      await saveWsUrl(wsUrl);
+      await saveWsUrl(target);
+      if (signal.aborted) return false;
       onStatus?.("Logged in as " + username, "success");
       onSuccess?.(data.access_token);
+      return true;
     } catch (error) {
-      onStatus?.("Login error: " + error.message, "error");
+      if (loginController?.signal?.aborted || error?.name === "AbortError") {
+        return false;
+      }
+      const message = String(error?.message || error || "Unknown error");
+      if (/network request failed|failed to fetch|timeout|aborted/i.test(message)) {
+        onStatus?.("Cannot reach server — check Wi‑Fi and that the PC backend is running.", "error");
+      } else {
+        onStatus?.("Login error: " + message, "error");
+      }
+      return false;
+    } finally {
+      if (loginController && activeLoginAbort === loginController) {
+        activeLoginAbort = null;
+      }
     }
   }
 
@@ -220,6 +430,10 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     setWsUrl(defaultUrl || "");
   }
 
+  function markBackendReachable(value = true) {
+    setBackendReachable(Boolean(value));
+  }
+
   return {
     token,
     setToken,
@@ -235,6 +449,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     showRecentUrls,
     setShowRecentUrls,
     backendReachable,
+    markBackendReachable,
     setupComplete,
     isCheckingBackend,
     loadStoredData,
@@ -246,5 +461,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
     login,
     logout,
     clearAllData,
+    cancelLogin,
+    cancelDiscovery,
   };
 }

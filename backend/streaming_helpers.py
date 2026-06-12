@@ -37,13 +37,27 @@ def stream_debug_log(*args) -> None:
         print(*args, flush=True)
 
 
+def sanitize_text_for_tts(text: str) -> str:
+    """Strip markup/pause tokens that neural TTS would speak literally."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return cleaned
+    cleaned = re.sub(r"\[[a-z]{2,}(?:-[a-z0-9]+)?->[a-z]{2,}(?:-[a-z0-9]+)?\]\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"https?://\S+", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"_{1,2}([^_]+)_{1,2}", r"\1", cleaned)
+    cleaned = cleaned.replace("...", " ")
+    cleaned = re.sub(r"[\u200b-\u200d\ufeff]", "", cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
 def chunk_text_for_tts(text: str, max_chars: int | None = None, *, natural: bool | None = None) -> list[str]:
     """Split `text` into TTS-friendly chunks.
 
     When ``natural`` is true (default follows ``TTS_NATURAL_VOICE``), prefer
   one neural synthesis pass per sentence instead of many tiny clips.
     """
-    stripped = (text or "").strip()
+    stripped = sanitize_text_for_tts(text)
     if not stripped:
         return [text or ""]
 
@@ -90,7 +104,7 @@ def _chunk_text_natural(text: str, max_chars: int | None = None) -> list[str]:
     if len(text) <= max_pass:
         return [text]
 
-    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text) if part.strip()]
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?;:,。！？])\s*", text) if part.strip()]
     if not sentences:
         return [text]
 
@@ -114,15 +128,26 @@ def _chunk_text_natural(text: str, max_chars: int | None = None) -> list[str]:
     return chunks or [text]
 
 
+def _partial_length_units(text: str) -> int:
+    value = (text or "").strip()
+    if not value:
+        return 0
+    cjk_chars = len(re.findall(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u0600-\u06ff\u0900-\u097f]", value))
+    if cjk_chars >= max(2, int(len(value) * 0.25)):
+        return max(1, cjk_chars)
+    return len(value.split())
+
+
 def should_translate_partial(text: str) -> bool:
     """Return True when a partial transcript is worth translating live."""
 
     normalized = text.strip()
     if not normalized:
         return False
+    min_units = get_partial_translation_min_words()
     return (
-        bool(re.search(r"[.!?;:,]\s*$", normalized))
-        or len(normalized.split()) >= get_partial_translation_min_words()
+        bool(re.search(r"[.!?;:,。！？]\s*$", normalized))
+        or _partial_length_units(normalized) >= min_units
     )
 
 
@@ -142,6 +167,17 @@ def normalized_word(value: str) -> str:
 
 def folded_live_text(value: str) -> str:
     return " ".join(normalized_word(word) for word in normalize_live_text(value).split())
+
+
+def session_restore_payload(session_state: dict) -> dict:
+    """Normalize session bind state for reconnect clients (history + turns alias)."""
+    shared = session_state.get("shared") or {}
+    history = list(shared.get("history") or session_state.get("history") or [])
+    payload = dict(session_state)
+    payload["shared"] = shared
+    payload["history"] = history
+    payload["turns"] = history
+    return payload
 
 
 def live_translation_redundant(previous: str, current: str) -> bool:
@@ -295,12 +331,12 @@ class PipelineStepTimeout(RuntimeError):
     """Raised when a single pipeline step exceeds its budget."""
 
 
-async def run_pipeline_step(label: str, call, *args):
-    """Run `call(*args)` in a threadpool with the configured timeout."""
+async def run_pipeline_step(label: str, call, *args, **kwargs):
+    """Run `call(*args, **kwargs)` in a threadpool with the configured timeout."""
 
     timeout = get_pipeline_step_timeout_seconds()
     try:
-        return await asyncio.wait_for(run_in_threadpool(call, *args), timeout=timeout)
+        return await asyncio.wait_for(run_in_threadpool(call, *args, **kwargs), timeout=timeout)
     except asyncio.TimeoutError as exc:
         raise PipelineStepTimeout(f"{label} timed out after {timeout:g}s.") from exc
 
@@ -318,6 +354,7 @@ __all__ = [
     "normalize_live_text",
     "normalized_word",
     "folded_live_text",
+    "session_restore_payload",
     "live_translation_redundant",
     "is_internal_translation_artifact",
     "live_translation_delta",

@@ -52,6 +52,8 @@ DIALOGUE = (
 
 MAX_E2E_MS = 8000
 MIN_CHRF = 25.0  # smoke floor on unverified refs; raise after native verification
+MIN_TURN_CHRF = 35.0
+MAX_TURN_WER = 0.65
 
 
 def _normalize_words(text: str) -> list[str]:
@@ -86,6 +88,11 @@ def sentence_chrf(hypothesis: str, reference: str) -> float:
     if not hypothesis or not reference:
         return 0.0
     return round(CHRF(word_order=2).sentence_score(hypothesis, [reference]).score, 2)
+
+
+def has_negation(text: str) -> bool:
+    tokens = set(_normalize_words(text))
+    return bool(tokens & {"not", "don't", "doesn't", "cannot", "can't", "no", "pa", "san"})
 
 
 @dataclass
@@ -233,6 +240,18 @@ def main() -> int:
             failures.append(f"{r.source_lang}->{r.target_lang} request error")
         elif r.e2e_ms > MAX_E2E_MS:
             failures.append(f"{r.source_lang}->{r.target_lang} e2e {r.e2e_ms:.0f}ms > {MAX_E2E_MS}ms")
+        if not r.errors and r.chrf < MIN_TURN_CHRF:
+            failures.append(
+                f"{r.source_lang}->{r.target_lang} chrF++ {r.chrf:.1f} < {MIN_TURN_CHRF}"
+            )
+        if not r.errors and r.wer is not None and r.wer > MAX_TURN_WER:
+            failures.append(
+                f"{r.source_lang}->{r.target_lang} WER {r.wer:.2f} > {MAX_TURN_WER}"
+            )
+        if not r.errors and has_negation(r.translated_text) != has_negation(r.reference_translation):
+            failures.append(
+                f"{r.source_lang}->{r.target_lang} negation polarity does not match reference"
+            )
 
     report = {
         "base_url": args.base_url,
@@ -242,6 +261,12 @@ def main() -> int:
         "avg_chrfpp": round(avg_chrf, 2),
         "avg_wer": round(avg_wer, 3) if avg_wer is not None else None,
         "avg_e2e_ms": round(avg_e2e, 1),
+        "thresholds": {
+            "max_e2e_ms": MAX_E2E_MS,
+            "min_avg_chrfpp": args.min_chrf,
+            "min_turn_chrfpp": MIN_TURN_CHRF,
+            "max_turn_wer": MAX_TURN_WER,
+        },
         "results": [vars(r) for r in results],
         "failures": failures,
     }

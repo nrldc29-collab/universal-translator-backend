@@ -48,9 +48,17 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class AssistantChatRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+    translation_context: dict | None = None
+    metadata: dict | None = None
+
+
 __all__ = [
     "TextTranslationRequest",
     "TextToSpeechRequest",
     "ImageTranslationResponse",
     "LoginRequest",
+    "AssistantChatRequest",
 ]

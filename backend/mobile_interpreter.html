@@ -1,0 +1,3115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#03050a" />
+  <title>Anai</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #03050a; color: #e2e8f0; min-height: 100dvh;
+      background-image:
+        linear-gradient(rgba(103, 232, 249, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(103, 232, 249, 0.04) 1px, transparent 1px);
+      background-size: 28px 28px;
+      animation: cosmicDrift 36s ease-in-out infinite alternate;
+    }
+    @keyframes cosmicDrift {
+      0% { background-position: 0 0, 0 0; }
+      100% { background-position: 14px 10px, 10px 14px; }
+    }
+    .wrap { max-width: 480px; margin: 0 auto; padding: 10px 10px 24px; }
+    .panel {
+      position: relative;
+      border-radius: 36px; padding: 16px; background: rgba(8, 14, 30, 0.94);
+      border: 1px solid rgba(125, 211, 252, 0.18);
+      box-shadow: 0 24px 48px rgba(34, 211, 238, 0.1);
+      overflow: hidden;
+    }
+    .panel-shine {
+      position: absolute; left: 0; right: 0; top: 0; height: 3px;
+      background: linear-gradient(90deg, rgba(103, 232, 249, 0.45), rgba(45, 212, 191, 0.2), transparent);
+      pointer-events: none;
+    }
+    .panel-shine-bottom {
+      position: absolute; left: 32px; right: 32px; bottom: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(45, 212, 191, 0.18), rgba(103, 232, 249, 0.32));
+      pointer-events: none;
+    }
+    .panel.online { border-color: rgba(52, 211, 153, 0.38); box-shadow: 0 24px 48px rgba(52, 211, 153, 0.12); }
+    .panel.listening { border-color: rgba(45, 212, 191, 0.45); box-shadow: 0 0 28px rgba(52, 211, 153, 0.18); }
+    .panel.listening::after {
+      content: ""; position: absolute; inset: 2px; border-radius: 34px; border: 1.5px solid rgba(45, 212, 191, 0.45);
+      pointer-events: none; animation: panelPulse 2.2s ease-in-out infinite;
+    }
+    @keyframes panelPulse { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.55; } }
+    .neo-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; min-height: 56px; }
+    .neo-header-side { display: flex; align-items: center; justify-content: flex-end; gap: 6px; min-height: 36px; }
+    .neo-header-side.left { justify-content: flex-start; }
+    .neo-icon-btn {
+      width: 34px; height: 34px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(15, 23, 42, 0.72); color: #e2e8f0; font-size: 0.95rem; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .neo-icon-btn.live { border-color: rgba(45, 212, 191, 0.35); color: #a7f3d0; }
+    .neo-icon-btn:disabled { opacity: 0.4; cursor: default; }
+    .neo-brand { text-align: center; }
+    .neo-title { font-size: 1.55rem; font-weight: 900; letter-spacing: 0.06em; line-height: 1; color: #67e8f9; text-shadow: 0 0 12px rgba(34, 211, 238, 0.45); }
+    .neo-sub { font-size: 0.45rem; color: rgba(148, 163, 184, 0.55); font-weight: 800; letter-spacing: 0.38em; margin-top: 4px; }
+    .neo-status { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 3px 8px; border-radius: 999px; border: 1px solid rgba(148, 163, 184, 0.12); background: rgba(2, 6, 23, 0.42); font-size: 0.55rem; font-weight: 900; letter-spacing: 0.08em; }
+    .neo-status.live { cursor: pointer; border-color: rgba(52, 211, 153, 0.28); }
+    .help-backdrop {
+      display: none; position: fixed; inset: 0; background: rgba(2, 6, 23, 0.72); z-index: 38;
+      align-items: flex-end; justify-content: center;
+    }
+    .help-backdrop.on { display: flex; }
+    .help-sheet {
+      width: min(480px, 100%); max-height: 80dvh; background: #0a0f1d; border-top-left-radius: 24px;
+      border-top-right-radius: 24px; border: 1px solid rgba(103, 232, 249, 0.22); padding: 16px 16px 20px;
+      overflow: auto;
+    }
+    .help-sheet h3 { margin: 0 0 10px; color: #f8fafc; font-size: 1rem; }
+    .help-sheet ul { margin: 0; padding-left: 18px; color: #cbd5e1; font-size: 0.8rem; line-height: 1.5; }
+    .help-sheet li { margin-bottom: 8px; }
+    .help-actions { display: flex; gap: 8px; margin-top: 14px; }
+    .help-actions button {
+      flex: 1; padding: 11px; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(18, 24, 38, 0.95); color: #dbeafe; font-weight: 800; font-size: 0.78rem; cursor: pointer;
+    }
+    .help-actions button.primary { background: #22d3ee; color: #07131f; border-color: rgba(103, 232, 249, 0.45); }
+    .neo-dot { width: 6px; height: 6px; border-radius: 50%; background: #475569; }
+    .neo-dot.online { background: #34d399; box-shadow: 0 0 8px rgba(52, 211, 153, 0.9); }
+    .neo-dot.connecting { background: #22d3ee; box-shadow: 0 0 8px rgba(34, 211, 238, 0.7); }
+    .neo-dot.offline { background: #f87171; box-shadow: 0 0 6px rgba(248, 113, 113, 0.7); }
+    .conn-strip { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; padding: 7px 12px; border-radius: 999px; border: 1px solid rgba(52, 211, 153, 0.32); background: rgba(6, 44, 38, 0.55); color: #67e8f9; font-size: 0.72rem; font-weight: 900; letter-spacing: 0.06em; transition: border-color .25s, background .25s; }
+    .conn-strip.listening { border-color: rgba(52, 211, 153, 0.48); background: rgba(6, 52, 44, 0.72); color: #a7f3d0; }
+    .conn-strip.speaking { border-color: rgba(251, 191, 36, 0.38); background: rgba(42, 28, 8, 0.62); color: #fde68a; }
+    .conn-strip.translating { border-color: rgba(251, 191, 36, 0.32); background: rgba(36, 28, 10, 0.62); color: #fcd34d; }
+    .conn-strip.hidden { display: none; }
+    .badge { display: none; }
+    .banner {
+      margin-top: 10px; padding: 12px; border-radius: 14px;
+      background: rgba(18, 12, 28, 0.98); border: 1.5px solid rgba(248, 113, 113, 0.42);
+    }
+    .banner.ok { border-color: rgba(52, 211, 153, 0.35); background: rgba(6, 31, 28, 0.5); }
+    .banner h2 { margin: 0 0 6px; font-size: 0.95rem; }
+    .banner p { margin: 0; font-size: 0.82rem; color: #cbd5e1; line-height: 1.45; }
+    .meaning-banner {
+      display: none; align-items: center; gap: 8px; margin-top: 8px; padding: 10px 12px;
+      border-radius: 14px; border: 1px solid rgba(251, 191, 36, 0.42); background: rgba(42, 28, 8, 0.88);
+      color: #fde68a; font-size: 0.8rem; font-weight: 700; line-height: 1.35;
+    }
+    .meaning-banner.on { display: flex; }
+    .meaning-banner p { flex: 1; margin: 0; }
+    .meaning-banner button {
+      flex-shrink: 0; padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(251, 191, 36, 0.45);
+      background: rgba(251, 191, 36, 0.14); color: #fde68a; font-size: 0.72rem; font-weight: 900;
+    }
+    .meaning-banner .dismiss {
+      width: 28px; height: 28px; padding: 0; border-radius: 14px; border: none;
+      background: transparent; color: #94a3b8; font-size: 1rem; line-height: 1;
+    }
+    .meaning-banner.required {
+      border-color: rgba(248, 113, 113, 0.55); background: rgba(42, 16, 16, 0.92); color: #fecaca;
+    }
+    .brain-panel {
+      display: none; margin-top: 8px; padding: 10px 12px; border-radius: 14px;
+      border: 1px solid rgba(103, 232, 249, 0.28); background: rgba(8, 20, 38, 0.92);
+    }
+    .brain-panel.on { display: block; }
+    .brain-panel-head { display: flex; align-items: center; gap: 6px; font-size: 0.68rem; font-weight: 900; letter-spacing: 0.08em; color: #67e8f9; text-transform: uppercase; margin-bottom: 6px; }
+    .brain-panel-msg { margin: 0 0 8px; font-size: 0.78rem; color: #cbd5e1; line-height: 1.4; }
+    .brain-chip-row, .brain-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .brain-chip { padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(103, 232, 249, 0.22); background: rgba(103, 232, 249, 0.08); color: #a5f3fc; font-size: 0.68rem; font-weight: 800; }
+    .brain-actions button {
+      padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(103, 232, 249, 0.32);
+      background: rgba(103, 232, 249, 0.12); color: #a5f3fc; font-size: 0.68rem; font-weight: 900; cursor: pointer;
+    }
+    .confidence-banner {
+      display: none; margin-top: 8px; padding: 10px 12px; border-radius: 14px;
+      border: 1px solid rgba(251, 191, 36, 0.38); background: rgba(36, 28, 10, 0.88); color: #fde68a;
+      font-size: 0.78rem; font-weight: 700; line-height: 1.35;
+    }
+    .confidence-banner.on { display: flex; align-items: center; gap: 8px; }
+    .confidence-banner p { flex: 1; margin: 0; }
+    .confidence-banner button {
+      flex-shrink: 0; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(251, 191, 36, 0.4);
+      background: transparent; color: #fde68a; font-size: 0.68rem; font-weight: 900; cursor: pointer;
+    }
+    .reconnect-banner {
+      display: none; margin-top: 8px; padding: 10px 12px; border-radius: 14px;
+      border: 1px solid rgba(248, 113, 113, 0.45); background: rgba(42, 16, 16, 0.92); color: #fecaca;
+      font-size: 0.78rem; font-weight: 700; line-height: 1.35;
+    }
+    .reconnect-banner.on { display: flex; align-items: center; gap: 8px; }
+    .reconnect-banner p { flex: 1; margin: 0; }
+    .reconnect-banner button {
+      flex-shrink: 0; padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(248, 113, 113, 0.45);
+      background: rgba(248, 113, 113, 0.14); color: #fecaca; font-size: 0.68rem; font-weight: 900; cursor: pointer;
+    }
+    .routes { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 4px; border-radius: 999px; background: rgba(2, 6, 23, 0.42); border: 1px solid rgba(148, 163, 184, 0.1); }
+    .route {
+      flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+      border-radius: 999px; padding: 8px 10px;
+      background: rgba(12, 18, 38, 0.72); border: 1px solid rgba(148, 163, 184, 0.14);
+      font: inherit; color: inherit; margin: 0;
+    }
+    button.route { width: auto; appearance: none; -webkit-appearance: none; }
+    .route.active { border-color: rgba(45, 212, 191, 0.62); background: rgba(15, 45, 43, 0.95); box-shadow: 0 0 16px rgba(45, 212, 191, 0.15); }
+    .route .cap { display: block; font-size: 0.48rem; font-weight: 900; letter-spacing: 0.12em; color: #91a6c9; text-transform: uppercase; margin-bottom: 2px; }
+    .route.active .cap { color: #5eead4; }
+    .route .lang { font-size: 0.82rem; font-weight: 900; color: #f8fafc; }
+    .route.active .lang { color: #a5f3fc; text-shadow: 0 0 8px rgba(34, 211, 238, 0.35); }
+    .route.pickable { cursor: pointer; }
+    .route.pickable:active { opacity: 0.88; }
+    .lang-picker-backdrop {
+      display: none; position: fixed; inset: 0; background: rgba(2, 6, 23, 0.72); z-index: 40;
+      align-items: flex-end; justify-content: center;
+    }
+    .lang-picker-backdrop.on { display: flex; }
+    .lang-picker-sheet {
+      width: min(480px, 100%); max-height: 70dvh; background: #0a0f1d; border-top-left-radius: 24px;
+      border-top-right-radius: 24px; border: 1px solid rgba(103, 232, 249, 0.22); padding: 16px 16px 20px;
+      overflow: auto;
+    }
+    .lang-picker-sheet h3 { margin: 0 0 10px; color: #f8fafc; font-size: 1rem; }
+    .lang-picker-list { display: grid; gap: 6px; }
+    .lang-picker-list button {
+      display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px; border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.16); background: rgba(18, 24, 38, 0.95); color: #e2e8f0;
+      font-size: 0.88rem; font-weight: 800; cursor: pointer; text-align: left;
+    }
+    .lang-picker-list button.on { border-color: rgba(45, 212, 191, 0.55); background: rgba(15, 45, 43, 0.95); color: #a7f3d0; }
+    .swap { width: 38px; height: 38px; border-radius: 19px; flex-shrink: 0;
+      background: #67e8f9; color: #0f172a; border: none; font-weight: 900; font-size: 1rem;
+      box-shadow: 0 4px 10px rgba(34, 211, 238, 0.35); }
+    .start-wrap { display: flex; flex-direction: column; align-items: center; margin: 14px 0 8px; gap: 8px; }
+    .start-orb { position: relative; width: 164px; height: 164px; border-radius: 82px; }
+    .start-ring { position: absolute; inset: 0; border-radius: 50%; border: 1px solid rgba(103, 232, 249, 0.38); background: rgba(5, 7, 17, 0.35); }
+    .start-cosmic-outer, .start-cosmic-inner {
+      position: absolute; border-radius: 50%; pointer-events: none; opacity: 0;
+      transition: opacity 0.35s;
+    }
+    .start-cosmic-outer {
+      inset: -12px; border: 1.5px solid rgba(103, 232, 249, 0.22);
+      border-top-color: rgba(240, 171, 252, 0.55); border-right-color: rgba(103, 232, 249, 0.45);
+      animation: cosmicSpin 9s linear infinite;
+    }
+    .start-cosmic-inner {
+      inset: -6px; border: 1px solid rgba(45, 212, 191, 0.16);
+      border-bottom-color: rgba(103, 232, 249, 0.42); border-left-color: rgba(52, 211, 153, 0.38);
+      animation: cosmicSpinReverse 14s linear infinite;
+    }
+    .start-orb.armed .start-cosmic-outer, .start-orb.armed .start-cosmic-inner,
+    .start-orb.listening .start-cosmic-outer, .start-orb.listening .start-cosmic-inner { opacity: 1; }
+    @keyframes cosmicSpin { to { transform: rotate(360deg); } }
+    @keyframes cosmicSpinReverse { to { transform: rotate(-360deg); } }
+    .start-halo { position: absolute; inset: -6px; border-radius: 50%; border: 1px solid rgba(103, 232, 249, 0.28); background: rgba(45, 212, 191, 0.12); opacity: 0; transition: opacity 0.3s; }
+    .start-orb.listening .start-halo { opacity: 1; animation: pulse 1.4s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.35; } 50% { transform: scale(1.06); opacity: 0.75; } }
+    .start {
+      position: relative; z-index: 1; width: 118px; height: 118px; margin: 23px;
+      border-radius: 59px; border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(31, 41, 55, 0.92); color: #f8fafc; font-weight: 900; font-size: 0.95rem;
+      box-shadow: 0 0 18px rgba(34, 211, 238, 0.25);
+    }
+    .start::before { content: "🎤"; display: block; font-size: 1.6rem; margin-bottom: 4px; }
+    .start.offline { border: 2px solid rgba(251, 191, 36, 0.72); background: rgba(42, 29, 8, 0.92); box-shadow: 0 0 24px rgba(251, 191, 36, 0.25); }
+    .start.connected { border: 2px solid rgba(125, 211, 252, 0.72); }
+    .start.listening { border: 2px solid rgba(52, 211, 153, 0.78); background: rgba(6, 46, 42, 0.92); box-shadow: 0 0 28px rgba(52, 211, 153, 0.35); color: #a7f3d0; }
+    .start-label { color: #67e8f9; font-size: 0.9rem; font-weight: 900; text-shadow: 0 0 10px rgba(34, 211, 238, 0.35); }
+    .start-label.live { color: #a7f3d0; text-shadow: 0 0 10px rgba(52, 211, 153, 0.4); }
+    .flow { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; }
+    .step {
+      flex: 1; text-align: center; padding: 6px; border-radius: 999px; font-size: 0.62rem; font-weight: 900;
+      background: rgba(17, 24, 39, 0.88); color: #c7d2fe; border: 1px solid rgba(148, 163, 184, 0.14); opacity: 0.82;
+    }
+    .step.on { background: rgba(20, 184, 166, 0.32); color: #ecfdf5; border-color: rgba(45, 212, 191, 0.62); box-shadow: 0 0 12px rgba(45, 212, 191, 0.4); opacity: 1; }
+    .flow-connector {
+      width: 10px; height: 2px; border-radius: 999px; background: rgba(45, 212, 191, 0.22); opacity: 0.35; flex-shrink: 0;
+    }
+    .flow-connector.on { opacity: 1; animation: flowConnPulse 1.2s ease-in-out infinite; }
+    @keyframes flowConnPulse { 0%, 100% { opacity: 0.35; transform: scaleX(0.85); } 50% { opacity: 1; transform: scaleX(1.15); } }
+    .lane-bridge-span {
+      display: flex; align-items: center; justify-content: center; gap: 8px; height: 18px; margin: -2px 0 4px;
+    }
+    .lane-bridge-line { flex: 1; height: 2px; border-radius: 999px; background: rgba(45, 212, 191, 0.22); opacity: 0.35; }
+    .lane-bridge-span.on .lane-bridge-line { opacity: 0.85; animation: flowConnPulse 1.4s ease-in-out infinite; }
+    .lane-bridge-hub {
+      width: 20px; height: 20px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+      background: rgba(103, 232, 249, 0.08); border: 1px solid rgba(103, 232, 249, 0.2); color: #64748b; font-size: 0.62rem;
+    }
+    .lane-bridge-span.on .lane-bridge-hub {
+      color: #5eead4; border-color: rgba(45, 212, 191, 0.45); box-shadow: 0 0 12px rgba(34, 211, 238, 0.28);
+      animation: duplexBridgePulse 1.4s ease-in-out infinite;
+    }
+    @keyframes duplexBridgePulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+    .lane-wrap { display: flex; margin-top: 10px; border-radius: 20px; overflow: hidden; background: rgba(12, 18, 38, 0.56); border: 1px solid rgba(148, 163, 184, 0.1); box-shadow: 0 4px 24px rgba(0, 0, 0, 0.22); }
+    .lane-wrap.out { border-color: rgba(45, 212, 191, 0.2); }
+    .lane-wrap.live { border-color: rgba(96, 165, 250, 0.55); }
+    .lane-wrap.out.live { border-color: rgba(45, 212, 191, 0.62); }
+    .lane-accent { width: 3px; background: rgba(148, 163, 184, 0.35); margin: 14px 0; border-radius: 0 3px 3px 0; }
+    .lane-wrap.live .lane-accent { background: #93c5fd; }
+    .lane-wrap.out.live .lane-accent { background: #2dd4bf; }
+    .lane { flex: 1; padding: 12px 14px; background: transparent; border: none; margin: 0; }
+    .lane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+    .lane .label { font-size: 0.58rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; }
+    .lane-wrap.live .lane .label { color: #67e8f9; text-shadow: 0 0 8px rgba(34, 211, 238, 0.35); }
+    .lane-wrap.out.live .lane .label { color: #a7f3d0; text-shadow: 0 0 8px rgba(52, 211, 153, 0.35); }
+    .lane-badge {
+      display: none; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px;
+      font-size: 0.48rem; font-weight: 900; letter-spacing: 0.1em; color: #a5f3fc;
+      background: rgba(103, 232, 249, 0.1); border: 1px solid rgba(103, 232, 249, 0.28);
+    }
+    .lane-wrap.out .lane-badge { color: #bbf7d0; background: rgba(52, 211, 153, 0.1); border-color: rgba(52, 211, 153, 0.28); }
+    .lane-badge.on { display: inline-flex; }
+    .lane-badge::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #34d399; }
+    .lane .text { font-size: 1.05rem; line-height: 1.4; min-height: 1.4em; color: #f8fafc; }
+    .lane .text.placeholder { color: #64748b; font-style: italic; font-weight: 600; }
+    .lane-wrap.out .text { color: #a7f3d0; font-size: 1.15rem; font-weight: 800; }
+    .status {
+      position: relative; overflow: hidden;
+      margin-top: 10px; padding: 12px 12px 12px 16px; border-radius: 14px; background: rgba(31, 18, 21, 0.92);
+      border: 1px solid rgba(248, 113, 113, 0.35); font-size: 0.82rem; font-weight: 800;
+    }
+    .status::before {
+      content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 2px;
+      background: #f87171; opacity: 0.9;
+    }
+    .status.online { background: rgba(6, 31, 28, 0.88); border-color: rgba(52, 211, 153, 0.28); color: #bbf7d0; }
+    .status.online::before { background: #34d399; }
+    .status.listening { background: rgba(6, 44, 38, 0.92); border-color: rgba(52, 211, 153, 0.42); color: #a7f3d0; box-shadow: 0 0 16px rgba(52, 211, 153, 0.12); }
+    .status.listening::before { background: #34d399; }
+    .status.translating { background: rgba(42, 28, 8, 0.9); border-color: rgba(251, 191, 36, 0.38); color: #fde68a; }
+    .status.translating::before { background: #fbbf24; }
+    .status.speaking { background: rgba(40, 22, 58, 0.88); border-color: rgba(216, 180, 254, 0.35); color: #e9d5ff; }
+    .status.speaking::before { background: #d8b4fe; }
+    .status.online, .status.listening, .status.translating, .status.speaking { cursor: pointer; }
+    .debug-panel {
+      display: none; margin-top: 6px; padding: 10px 12px; border-radius: 12px;
+      background: rgba(12, 18, 38, 0.72); border: 1px solid rgba(103, 232, 249, 0.18);
+      font-size: 0.64rem; color: #94a3b8; line-height: 1.55;
+    }
+    .debug-panel.on { display: block; }
+    .debug-panel strong { color: #67e8f9; font-weight: 900; }
+    .meta { margin-top: 6px; font-size: 0.65rem; color: #64748b; font-weight: 600; }
+    .dock { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+    .dock button {
+      padding: 10px 6px; border-radius: 14px; border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(18, 24, 38, 0.95); color: #dbeafe; font-weight: 800; font-size: 0.68rem;
+    }
+    .dock button.primary { background: #22d3ee; color: #07131f; border-color: rgba(103, 232, 249, 0.45); }
+    .dock button.active { border-color: rgba(45, 212, 191, 0.45); color: #a7f3d0; }
+    .dock button:disabled { opacity: 0.45; }
+    .dock button.danger { border-color: rgba(248, 113, 113, 0.28); color: #fca5a5; }
+    .start-hint { color: #94a3b8; font-size: 0.72rem; font-weight: 700; text-align: center; max-width: 280px; line-height: 1.35; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(45, 212, 191, 0.18); background: rgba(2, 6, 23, 0.42); }
+    .live-status { display: none; align-items: center; justify-content: center; gap: 6px; margin-top: 6px; padding: 7px 12px; border-radius: 999px; border: 1px solid rgba(52, 211, 153, 0.32); background: rgba(6, 44, 38, 0.55); color: #34d399; font-size: 0.72rem; font-weight: 900; }
+    .live-status.on { display: inline-flex; }
+    .voice-meter { display: none; align-items: flex-end; justify-content: center; gap: 4px; height: 22px; margin-top: 4px; }
+    .voice-meter.on { display: flex; }
+    .voice-meter span { width: 4px; height: 18px; border-radius: 999px; background: #5eead4; box-shadow: 0 0 6px rgba(45, 212, 191, 0.45); animation: meterPulse 1s ease-in-out infinite; }
+    .voice-meter span:nth-child(2) { animation-delay: .12s; height: 12px; }
+    .voice-meter span:nth-child(3) { animation-delay: .24s; }
+    .voice-meter span:nth-child(4) { animation-delay: .36s; height: 14px; }
+    .voice-meter span:nth-child(5) { animation-delay: .48s; }
+    @keyframes meterPulse { 0%, 100% { transform: scaleY(0.45); opacity: .55; } 50% { transform: scaleY(1); opacity: 1; } }
+    .empty-state { margin-top: 8px; padding: 18px 16px; border-radius: 18px; border: 1px dashed rgba(148, 163, 184, 0.18); background: rgba(12, 18, 38, 0.35); text-align: center; }
+    .empty-state h3 { margin: 0 0 6px; font-size: 0.92rem; color: #e2e8f0; }
+    .empty-state p { margin: 0; font-size: 0.74rem; color: rgba(148, 163, 184, 0.82); line-height: 1.45; }
+    .empty-cta {
+      display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; padding: 9px 14px;
+      border-radius: 999px; border: none; background: #22d3ee; color: #07131f;
+      font-size: 0.74rem; font-weight: 900; box-shadow: 0 4px 12px rgba(34, 211, 238, 0.35);
+    }
+    .empty-cta:active { transform: scale(0.97); opacity: 0.92; }
+    .route-mode { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+    .route-mode-text { color: #cbd5e1; font-size: 0.68rem; font-weight: 800; }
+    .route-mode-chip {
+      display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.14); background: rgba(2, 6, 23, 0.36); color: #94a3b8;
+      font-size: 0.62rem; font-weight: 800; cursor: pointer;
+    }
+    .route-mode-chip.on { border-color: rgba(45, 212, 191, 0.4); background: rgba(45, 212, 191, 0.14); color: #a7f3d0; }
+    .route-mode-chip:active { transform: scale(0.97); opacity: 0.9; }
+    .stack-head { display: flex; align-items: center; gap: 6px; margin: 8px 0 4px; color: rgba(148, 163, 184, 0.72); font-size: 0.58rem; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; }
+    .turn-rail { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+    .turn-rail.hidden { display: none; }
+    .turn-chip {
+      text-align: left; padding: 8px 10px; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(12, 18, 38, 0.72); color: #cbd5e1; font-size: 0.72rem; font-weight: 700; line-height: 1.35;
+    }
+    .turn-chip-speaker { color: #67e8f9; font-weight: 900; display: block; margin-bottom: 2px; }
+    .turn-chip-source { color: #cbd5e1; display: block; }
+    .turn-chip-bridge { display: flex; align-items: center; gap: 4px; margin: 4px 0 2px; color: #5eead4; font-size: 0.58rem; }
+    .turn-chip-bridge-line { flex: 1; height: 1px; background: rgba(45, 212, 191, 0.35); }
+    .turn-chip-bridged { color: #a7f3d0; font-style: italic; font-weight: 800; display: block; }
+    .turn-chip.warn { border-color: rgba(251, 191, 36, 0.35); color: #fde68a; }
+    .turn-chip:active { transform: scale(0.99); opacity: 0.92; }
+    .stack-badge {
+      margin-left: auto; min-width: 18px; height: 18px; padding: 0 6px; border-radius: 9px;
+      background: rgba(45, 212, 191, 0.16); border: 1px solid rgba(45, 212, 191, 0.32);
+      color: #a7f3d0; font-size: 0.52rem; font-weight: 900; display: inline-flex; align-items: center; justify-content: center;
+    }
+    .lane-actions { display: none; gap: 6px; margin-top: 8px; }
+    .lane-actions.on { display: flex; }
+    .lane-actions button {
+      width: 34px; height: 34px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.2);
+      background: rgba(15, 23, 42, 0.78); color: #cbd5e1; font-size: 0.82rem; cursor: pointer;
+    }
+    .context-chip {
+      display: none; align-items: center; gap: 6px; margin: 6px 0 8px; padding: 7px 10px;
+      border-radius: 999px; border: 1px solid rgba(103, 232, 249, 0.22);
+      background: rgba(103, 232, 249, 0.08); color: #bae6fd; font-size: 0.72rem; font-weight: 700;
+    }
+    .context-chip.on { display: inline-flex; }
+    .semantic-panel {
+      display: none; margin-top: 6px; padding: 10px 12px; border-radius: 14px;
+      background: rgba(7, 17, 31, 0.95); border: 1px solid rgba(103, 232, 249, 0.22);
+      font-size: 0.72rem; color: #cbd5e1; line-height: 1.45;
+    }
+    .semantic-panel.on { display: block; }
+    .semantic-panel h4 { margin: 0 0 8px; color: #67e8f9; font-size: 0.62rem; font-weight: 900; letter-spacing: 0.1em; text-transform: uppercase; }
+    .semantic-badges { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+    .semantic-badge { padding: 6px 8px; border-radius: 8px; background: rgba(8, 145, 178, 0.28); color: #bae6fd; font-size: 0.64rem; font-weight: 800; }
+    .semantic-badge.mood { background: rgba(20, 184, 166, 0.24); color: #99f6e4; }
+    .semantic-topics { display: flex; flex-wrap: wrap; gap: 6px; }
+    .semantic-topic { padding: 4px 8px; border-radius: 999px; background: rgba(103, 232, 249, 0.1); border: 1px solid rgba(103, 232, 249, 0.22); color: #a5f3fc; font-size: 0.62rem; font-weight: 800; }
+    .context-chip::before {
+      content: ""; width: 6px; height: 6px; border-radius: 50%; background: #67e8f9;
+      box-shadow: 0 0 6px rgba(103, 232, 249, 0.55);
+    }
+    .duplex-panel {
+      margin-top: 8px; padding: 10px; border-radius: 14px;
+      background: rgba(12, 18, 38, 0.62); border: 1px solid rgba(45, 212, 191, 0.22);
+    }
+    .duplex-head { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; color: #94a3b8; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+    .duplex-meta { margin-left: auto; color: #67e8f9; font-size: 0.58rem; font-weight: 800; text-transform: none; letter-spacing: 0; }
+    .duplex-row { display: flex; align-items: stretch; gap: 8px; }
+    .duplex-person {
+      flex: 1; padding: 8px; border-radius: 12px; background: rgba(15, 23, 42, 0.55);
+      border: 1px solid rgba(148, 163, 184, 0.14); position: relative; overflow: hidden;
+    }
+    .duplex-person.active { border-color: rgba(45, 212, 191, 0.45); background: rgba(6, 44, 38, 0.55); }
+    .duplex-person.listening::after {
+      content: ""; position: absolute; inset: 0; background: rgba(45, 212, 191, 0.1);
+      animation: duplexPulse 1.6s ease-in-out infinite; pointer-events: none;
+    }
+    @keyframes duplexPulse { 0%, 100% { opacity: 0.2; } 50% { opacity: 0.55; } }
+    .duplex-bridge {
+      align-self: center; width: 28px; height: 28px; border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(103, 232, 249, 0.1); border: 1px solid rgba(103, 232, 249, 0.22); color: #67e8f9; font-size: 0.82rem;
+    }
+    .duplex-bridge.on {
+      border-color: rgba(45, 212, 191, 0.45); color: #5eead4;
+      box-shadow: 0 0 14px rgba(34, 211, 238, 0.28);
+      animation: duplexBridgePulse 1.4s ease-in-out infinite;
+    }
+    .duplex-label { color: #cbd5e1; font-size: 0.72rem; font-weight: 800; }
+    .duplex-person.active .duplex-label { color: #a7f3d0; }
+    .duplex-lang { color: #64748b; font-size: 0.64rem; font-weight: 700; margin-top: 2px; }
+    .duplex-live {
+      display: none; align-items: center; gap: 4px; margin-top: 4px; color: #6ee7b7;
+      font-size: 0.52rem; font-weight: 900; letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    .duplex-person.active .duplex-live { display: inline-flex; }
+    .duplex-live::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #34d399; }
+    .lane-wrap.out .lane-actions button { color: #bbf7d0; }
+    .assistant-backdrop {
+      display: none; position: fixed; inset: 0; background: rgba(2, 6, 23, 0.72); z-index: 40;
+      align-items: flex-end; justify-content: center;
+    }
+    .assistant-backdrop.on { display: flex; }
+    .assistant-sheet {
+      width: min(480px, 100%); max-height: 85dvh; background: #0a0f1d; border-top-left-radius: 24px;
+      border-top-right-radius: 24px; border: 1px solid rgba(103, 232, 249, 0.22); display: flex; flex-direction: column;
+    }
+    .assistant-head { display: flex; align-items: center; justify-content: space-between; padding: 14px; border-bottom: 1px solid rgba(148, 163, 184, 0.14); }
+    .assistant-head h3 { margin: 0; font-size: 1rem; color: #f8fafc; }
+    .assistant-status { font-size: 0.68rem; color: #94a3b8; font-weight: 800; margin-top: 2px; }
+    .assistant-status.ready { color: #6ee7b7; }
+    .assistant-status.bad { color: #fca5a5; }
+    .assistant-scroll { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .assistant-bubble { max-width: 85%; padding: 10px 12px; border-radius: 14px; font-size: 0.82rem; line-height: 1.4; }
+    .assistant-bubble.user { align-self: flex-end; background: rgba(8, 145, 178, 0.35); color: #ecfeff; }
+    .assistant-bubble.assistant { align-self: flex-start; background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(148, 163, 184, 0.16); color: #e2e8f0; }
+    .assistant-bubble.system { align-self: flex-start; background: rgba(31, 18, 21, 0.92); border: 1px solid rgba(248, 113, 113, 0.22); color: #fca5a5; }
+    .assistant-input-row { display: flex; gap: 8px; padding: 12px; border-top: 1px solid rgba(148, 163, 184, 0.14); }
+    .assistant-input {
+      flex: 1; min-height: 40px; max-height: 96px; padding: 10px 12px; border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.2); background: rgba(15, 23, 42, 0.78); color: #f8fafc; font-size: 0.85rem;
+    }
+    .assistant-send {
+      padding: 0 14px; border-radius: 999px; border: none; background: #22d3ee; color: #07131f;
+      font-weight: 900; font-size: 0.78rem; cursor: pointer;
+    }
+    .assistant-send:disabled { opacity: 0.45; cursor: default; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel" id="panel">
+      <div class="panel-shine" aria-hidden="true"></div>
+      <div class="panel-shine-bottom" aria-hidden="true"></div>
+      <div class="neo-header">
+        <div class="neo-header-side left">
+          <button type="button" class="neo-icon-btn" id="helpBtn" title="Help" aria-label="Open help tips">?</button>
+        </div>
+        <div class="neo-brand">
+          <div class="neo-title">Anai</div>
+          <div class="neo-status" id="badge" role="button" tabindex="0" aria-label="Bridge status"><span class="neo-dot offline" id="neoDot"></span><span id="badgeText">OFFLINE</span></div>
+        </div>
+        <div class="neo-header-side">
+          <button type="button" class="neo-icon-btn" id="shareBtn" disabled title="Share session" aria-label="Share session">↗</button>
+          <button type="button" class="neo-icon-btn" id="assistantBtn" disabled title="NAIA assistant" aria-label="Open NAIA assistant">✦</button>
+        </div>
+      </div>
+      <div class="conn-strip hidden" id="connStrip">✓ Bridge linked</div>
+
+      <div class="banner" id="banner">
+        <h2 id="bannerTitle">Bridge not linked</h2>
+        <p id="bannerText">Link the bridge, allow microphone, then tap Start — each person stays in their own language.</p>
+      </div>
+      <div class="meaning-banner" id="meaningBanner" role="alert">
+        <p id="meaningText">This bridged meaning may need a quick check before you rely on it.</p>
+        <button type="button" id="meaningReviewBtn">Review</button>
+        <button type="button" class="dismiss" id="meaningDismissBtn" aria-label="Dismiss">×</button>
+      </div>
+      <div class="brain-panel" id="brainPanel" aria-live="polite">
+        <div class="brain-panel-head">Meaning check <span id="brainRisk"></span></div>
+        <p class="brain-panel-msg" id="brainMessage"></p>
+        <div class="brain-chip-row" id="brainTerms"></div>
+        <div class="brain-actions" id="brainActions"></div>
+      </div>
+      <div class="confidence-banner" id="confidenceBanner" role="status">
+        <p id="confidenceText"></p>
+        <button type="button" id="confidenceDismissBtn">Dismiss</button>
+      </div>
+      <div class="reconnect-banner" id="reconnectBanner" role="alert">
+        <p>Bridge dropped. Tap Retry to reconnect.</p>
+        <button type="button" id="reconnectRetryBtn">Retry</button>
+        <button type="button" id="reconnectDismissBtn">×</button>
+      </div>
+
+      <div class="routes">
+        <button type="button" class="route active pickable" id="routeSource" aria-label="Choose source language">
+          <div class="cap">You speak</div>
+          <div class="lang" id="langSource">English</div>
+        </button>
+        <button class="swap" id="swapBtn" type="button" aria-label="Swap languages">⇄</button>
+        <button type="button" class="route pickable" id="routeTarget" aria-label="Choose target language">
+          <div class="cap" id="routeTargetCap">They hear</div>
+          <div class="lang" id="langTarget">Haitian Creole</div>
+        </button>
+      </div>
+
+      <div class="route-mode" id="routeMode">
+        <span class="route-mode-text" id="routeModeText">English → Haitian Creole</span>
+        <button type="button" class="route-mode-chip on" id="routeModeChip" aria-label="Toggle together mode">⇄ Together</button>
+      </div>
+
+      <div class="duplex-panel hidden" id="duplexPanel" aria-label="Conversation bridge">
+        <div class="duplex-head">
+          <span>Conversation bridge <small id="duplexSubtitle" style="opacity:.72;font-weight:600">· Each person stays in their language</small></span>
+          <span class="duplex-meta" id="duplexMeta">Auto-route</span>
+        </div>
+        <div class="duplex-row">
+          <div class="duplex-person" id="duplexPerson1">
+            <div class="duplex-label" id="duplexLabel1">Person 1</div>
+            <div class="duplex-lang" id="duplexLang1">English</div>
+            <div class="duplex-live" id="duplexLive1">Speaking</div>
+          </div>
+          <div class="duplex-bridge" id="duplexBridge" aria-hidden="true">⬡</div>
+          <div class="duplex-person" id="duplexPerson2">
+            <div class="duplex-label" id="duplexLabel2">Person 2</div>
+            <div class="duplex-lang" id="duplexLang2">Haitian Creole</div>
+            <div class="duplex-live" id="duplexLive2">Speaking</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="start-wrap">
+        <div class="start-orb" id="startOrb">
+          <div class="start-cosmic-outer" aria-hidden="true"></div>
+          <div class="start-cosmic-inner" aria-hidden="true"></div>
+          <div class="start-halo"></div>
+          <div class="start-ring"></div>
+          <button class="start offline" id="startBtn" type="button">Link bridge</button>
+        </div>
+        <div class="start-label" id="startLabel">Link bridge</div>
+        <div class="start-hint" id="startHint">Link bridge, then Start and speak</div>
+        <div class="voice-meter" id="voiceMeter"><span></span><span></span><span></span><span></span><span></span></div>
+        <div class="live-status" id="liveStatus">Bridge open — speak anytime</div>
+      </div>
+
+      <div class="flow">
+        <div class="step" id="stepListen">Hear</div>
+        <div class="flow-connector" id="flowConn1" aria-hidden="true"></div>
+        <div class="step" id="stepTranslate">Understand</div>
+        <div class="flow-connector" id="flowConn2" aria-hidden="true"></div>
+        <div class="step" id="stepSpeak">Bridge</div>
+      </div>
+
+      <div class="stack-head">⬡ Bridge exchanges <span class="stack-badge hidden" id="turnCountBadge">0</span></div>
+      <div class="context-chip" id="contextChip" role="status"></div>
+      <div class="semantic-panel" id="semanticPanel" aria-label="Conversation context"></div>
+      <div class="turn-rail hidden" id="turnRail" aria-label="Recent conversation exchanges"></div>
+
+      <div class="empty-state" id="emptyState">
+        <h3 id="emptyTitle">Ready to connect</h3>
+        <p id="emptyText">Tap Start once, then talk naturally. Anai bridges both sides of the conversation below.</p>
+        <button type="button" class="empty-cta" id="emptyStartBtn" hidden>🎤 Start speaking</button>
+      </div>
+
+      <div class="lane-wrap" id="sourceLane">
+        <div class="lane-accent"></div>
+        <div class="lane">
+          <div class="lane-head">
+            <div class="label" id="sourceLabel">You speak · English</div>
+            <span class="lane-badge" id="sourceBadge">LIVE</span>
+          </div>
+          <div class="text placeholder" id="sourceText">Your words, in your language</div>
+          <div class="lane-actions" id="sourceActions">
+            <button type="button" id="shareSourceBtn" title="Share source" aria-label="Share source text">↗</button>
+            <button type="button" id="copySourceBtn" title="Copy source" aria-label="Copy source text">⧉</button>
+          </div>
+        </div>
+      </div>
+      <div class="lane-bridge-span" id="laneBridgeSpan" aria-hidden="true">
+        <div class="lane-bridge-line"></div>
+        <div class="lane-bridge-hub">⬡</div>
+        <div class="lane-bridge-line"></div>
+      </div>
+      <div class="lane-wrap out" id="targetLane">
+        <div class="lane-accent"></div>
+        <div class="lane">
+          <div class="lane-head">
+            <div class="label" id="targetLabel">They hear · Haitian Creole</div>
+            <span class="lane-badge" id="targetBadge">LIVE</span>
+          </div>
+          <div class="text placeholder" id="targetText">Bridged words for the other person appear here</div>
+          <div class="lane-actions" id="targetActions">
+            <button type="button" id="shareTargetBtn" title="Share bridged meaning" aria-label="Share bridged meaning">↗</button>
+            <button type="button" id="copyTargetBtn" title="Copy bridged meaning" aria-label="Copy bridged meaning">⧉</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="status" id="statusLine" role="button" tabindex="0" aria-expanded="false" aria-label="Status details">Link your bridge below</div>
+      <div class="debug-panel" id="debugPanel" aria-label="Technical details"></div>
+      <div class="meta" id="metaLine">Build web-fix131 · same server as native app</div>
+
+      <div class="dock">
+        <button type="button" id="replayDockBtn" disabled>Replay bridge</button>
+        <button type="button" id="modeDockBtn">Together</button>
+        <button type="button" class="primary" id="connectBtn">Link bridge</button>
+        <button type="button" id="clearBtn" class="danger">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="lang-picker-backdrop" id="langPickerBackdrop" aria-hidden="true">
+    <div class="lang-picker-sheet" role="dialog" aria-label="Choose language">
+      <h3 id="langPickerTitle">Choose language</h3>
+      <div class="lang-picker-list" id="langPickerList"></div>
+    </div>
+  </div>
+
+  <div class="help-backdrop" id="helpBackdrop" aria-hidden="true">
+    <div class="help-sheet" role="dialog" aria-label="Help tips">
+      <h3>Quick tips</h3>
+      <ul>
+        <li>Tap <strong>You speak</strong> or <strong>They hear</strong> language pills to pick from all 14 languages.</li>
+        <li>Tap <strong>Link bridge</strong>, then <strong>Start</strong>, and speak naturally.</li>
+        <li>Tap <strong>Pause</strong> to stop the microphone; tap <strong>Start</strong> to resume.</li>
+        <li>Use <strong>Together</strong> so each person speaks their language — Anai bridges meaning both ways.</li>
+        <li>Tap lane <strong>↗</strong> or <strong>⧉</strong> to share or copy text.</li>
+        <li>Tap the <strong>status bar</strong> when connected for technical details.</li>
+        <li>Use <strong>↗</strong> in the header to share the current session.</li>
+        <li>Tap <strong>LIVE</strong> in the header or <strong>Linked</strong> in the dock to disconnect.</li>
+        <li>For slang or strong accents, follow the <strong>native speaker listen</strong> hint before relying on voice.</li>
+        <li>Tap <strong>meaning check</strong> chips to switch source language or repeat exact terms.</li>
+        <li>If Wi‑Fi drops, the strip shows reconnect progress; tap <strong>Retry</strong> if it fails.</li>
+      </ul>
+      <div class="help-actions">
+        <button type="button" id="helpAssistantBtn">Open NAIA assistant</button>
+        <button type="button" class="primary" id="helpCloseBtn">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="assistant-backdrop" id="assistantBackdrop" aria-hidden="true">
+    <div class="assistant-sheet" role="dialog" aria-label="NAIA assistant">
+      <div class="assistant-head">
+        <div>
+          <h3>NAIA Assistant</h3>
+          <div class="assistant-status" id="assistantStatus">Linking bridge…</div>
+        </div>
+        <button type="button" class="neo-icon-btn" id="assistantCloseBtn" aria-label="Close assistant">✕</button>
+      </div>
+      <div class="assistant-scroll" id="assistantScroll"></div>
+      <div class="assistant-input-row">
+        <textarea class="assistant-input" id="assistantInput" rows="1" placeholder="Ask the assistant…"></textarea>
+        <button type="button" class="assistant-send" id="assistantSendBtn" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const LANGS = {
+      en: "English",
+      es: "Spanish",
+      ht: "Haitian Creole",
+      fr: "French",
+      de: "German",
+      it: "Italian",
+      pt: "Portuguese",
+      nl: "Dutch",
+      ru: "Russian",
+      zh: "Chinese",
+      ja: "Japanese",
+      ko: "Korean",
+      ar: "Arabic",
+      hi: "Hindi",
+    };
+    const LANGUAGE_CODES = Object.keys(LANGS);
+    const PRODUCT_VOICE = {
+      bridgeLinked: "Bridge linked",
+      bridgeLive: "Bridge live",
+      bridgingOutLoud: "Bridging out loud",
+      understanding: "Understanding…",
+      bridgeOpen: "Bridge open — speak anytime",
+      bridgePaused: "Bridge paused",
+      bridgePausedTapStart: "Bridge paused — tap Start to listen",
+      routeTargetOneWay: "Bridged out",
+      routeTargetTwoWay: "They hear",
+      modeTogether: "Together",
+      modeForYou: "For you",
+      duplexInTurn: "In turn",
+      linkingBridge: "Linking bridge…",
+      bridgeDroppedTapLink: "Bridge dropped — tap Link bridge",
+      bridgeNotLinked: "Bridge not linked",
+      bridgeNotLinkedHint: "Tap Link bridge to open the conversation again.",
+      connectionLostRetry: "Bridge dropped — tap Retry",
+      connectionLostReconnect: "Bridge dropped — reconnecting…",
+      connectionClosedReconnect: "Bridge closed — reconnecting…",
+      connectionErrorTapLink: "Bridge error — tap Link bridge",
+      linkingBanner: "Linking bridge",
+      linkingBannerHint: "Allow microphone when asked, then tap Start and speak.",
+      connectedTapStart: "Bridge linked — tap Start when ready",
+      connectedBanner: "Bridge linked",
+      connectedBannerHint: "Tap Start when ready to open the bridge again.",
+      serverWarming: "Opening bridge server — retrying…",
+      serverNotReady: "Bridge server not ready — retrying…",
+      offlineTapLink: "Offline — tap Link bridge",
+      handshaking: "Opening bridge…",
+      waitingBridgedVoice: "Waiting for bridged voice",
+      preparingBridgedVoice: "Preparing bridged voice…",
+      bridgeVoiceSkipped: "Bridge voice skipped",
+      bridgeCleared: "Bridge cleared",
+      replayBridge: "Replay bridge",
+      turnCancelled: "Bridge turn cleared",
+      certRequiredVoice: "Trust before voice",
+      checkMeaningTrust: "Check meaning before trusting the bridge",
+      listeningClearer: "Listening for clearer speech",
+      listeningSpeak: "Listening — speak anytime",
+      backupBridgeListening: "Backup bridge listening — keep talking",
+      speakerSwitched: "Speaker switched — bridge listening",
+      reconnectedListening: "Bridge relinked — listening",
+      partialBridgeVoice: "Draft bridge voice…",
+      confirmBeforeVoice: "Trust check before voice",
+      readySpeakAgain: "Bridge open — speak again",
+      nothingToReplay: "No bridged voice to replay",
+      bridgeReady: "Bridge ready",
+    };
+    let langPickerSide = "";
+    const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    const SECURE_CONTEXT = window.isSecureContext === true;
+    let sourceLang = "en";
+    let targetLang = "ht";
+    let ws = null;
+    let connected = false;
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
+    let reconnectFailed = false;
+    let intentionalDisconnect = false;
+    const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000, 30000];
+    const MAX_RECONNECT_ATTEMPTS = RECONNECT_DELAYS.length;
+    let humanCertStepCurrent = "none";
+    let brainHints = {};
+    let brainUi = { message: "", repairOptions: [], highlightTerms: [], riskScore: null };
+    let suppressTurnAudio = false;
+    let listening = false;
+    let micPausedForDuplex = false;
+    let recorder = null;
+    let stream = null;
+    let activeMime = "";
+    let micReady = false;
+    let utteranceStopTimer = null;
+    let httpsAppUrl = "";
+    let sessionId = "web-" + Math.random().toString(36).slice(2, 10);
+    let deviceId = "safari-web";
+    let sessionStarted = false;
+    let barrierMode = true;
+    let audioQueue = Promise.resolve();
+    let lastReplayChunks = [];
+    let conversationTurns = [];
+    let turnCount = 0;
+    let assistantSessionId = "web-" + Math.random().toString(36).slice(2, 10);
+    let assistantMessages = [];
+    let assistantAvailable = null;
+    let assistantPending = false;
+    let assistantRequestGen = 0;
+    let assistantHealthGen = 0;
+    let assistantAbortController = null;
+    let assistantHealthAbort = null;
+
+    function abortWebAssistantRequests() {
+      assistantRequestGen += 1;
+      assistantHealthGen += 1;
+      assistantAbortController?.abort();
+      assistantAbortController = null;
+      assistantHealthAbort?.abort();
+      assistantHealthAbort = null;
+      if (assistantPending) {
+        assistantPending = false;
+        updateAssistantStatus();
+      }
+    }
+    let semanticContext = null;
+    let speakerRoute = { speakerIndex: 1, speakerLabel: "Person 1", routeConfidence: 1 };
+    let flowPhase = "";
+    let speaking = false;
+    let showDebugDetails = false;
+    let heartbeatTimer = null;
+    let pingTimeout = null;
+    let handshakeTimer = null;
+    let warmingRetryTimer = null;
+    let connectInFlight = false;
+    let connectGeneration = 0;
+    let activeMessageGen = 0;
+    let micLoopGeneration = 0;
+    let lastPongTime = Date.now();
+    const HEARTBEAT_MS = 15000;
+    const PING_TIMEOUT_MS = 5000;
+    const HANDSHAKE_TIMEOUT_MS = 25000;
+
+    const $ = (id) => document.getElementById(id);
+
+    function startWebHeartbeat() {
+      stopWebHeartbeat();
+      const activeSocket = ws;
+      lastPongTime = Date.now();
+      heartbeatTimer = setInterval(() => {
+        if (intentionalDisconnect || document.visibilityState === "hidden" || !navigator.onLine || ws !== activeSocket || ws?.readyState !== WebSocket.OPEN) return;
+        try { ws.send(JSON.stringify({ type: "ping" })); } catch (e) {}
+        if (pingTimeout) clearTimeout(pingTimeout);
+        pingTimeout = setTimeout(() => {
+          if (document.visibilityState === "hidden" || !navigator.onLine) return;
+          if (
+            !intentionalDisconnect
+            && ws === activeSocket
+            && ws?.readyState === WebSocket.OPEN
+            && Date.now() - lastPongTime > PING_TIMEOUT_MS
+          ) {
+            try { ws.close(4000, "Ping timeout"); } catch (e) {}
+          }
+        }, PING_TIMEOUT_MS);
+      }, HEARTBEAT_MS);
+    }
+
+    function stopWebHeartbeat() {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+      if (pingTimeout) {
+        clearTimeout(pingTimeout);
+        pingTimeout = null;
+      }
+    }
+
+    function clearHandshakeTimer() {
+      if (handshakeTimer) {
+        clearTimeout(handshakeTimer);
+        handshakeTimer = null;
+      }
+    }
+
+    function startHandshakeTimer() {
+      clearHandshakeTimer();
+      const activeSocket = ws;
+      handshakeTimer = setTimeout(() => {
+        handshakeTimer = null;
+        if (document.visibilityState === "hidden" || !navigator.onLine || ws !== activeSocket || intentionalDisconnect || connected) return;
+        if (ws?.readyState === WebSocket.OPEN) {
+          setStatus("Handshake timeout — reconnecting…");
+          try { ws.close(4002, "Handshake timeout"); } catch (e) {}
+        }
+      }, HANDSHAKE_TIMEOUT_MS);
+    }
+
+    function wsUrl() {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      return `${proto}//${location.host}/ws/audio`;
+    }
+
+    async function loadMobileInfo() {
+      try {
+        const base = location.origin.replace(/\/+$/, "");
+        const response = await fetch(`${base}/mobile/info`, { cache: "no-store" });
+        if (!response.ok) return;
+        const info = await response.json();
+        httpsAppUrl = String(info.web_app_https_url || "").trim();
+        if (!httpsAppUrl && info.backend_https_url) {
+          httpsAppUrl = `${String(info.backend_https_url).replace(/\/+$/, "")}/mobile/app`;
+        }
+      } catch (e) {
+        console.warn("mobile info fetch failed", e);
+      }
+    }
+
+    function micBlockedMessage() {
+      if (IS_IOS && !SECURE_CONTEXT) {
+        const target = httpsAppUrl || `https://${location.hostname}:8443/mobile/app`;
+        return {
+          title: "Microphone needs HTTPS",
+          text: `iPhone Safari blocks the mic on http:// pages. Open the secure link instead (accept the certificate warning once): ${target}`,
+          status: "Use HTTPS link for microphone",
+        };
+      }
+      return {
+        title: "Microphone blocked",
+        text: "Allow microphone for this site in browser settings, then tap Start again.",
+        status: "Microphone denied — check browser settings",
+      };
+    }
+
+    function updateConnStrip() {
+      const strip = $("connStrip");
+      if (!strip || strip.classList.contains("hidden")) return;
+      strip.classList.remove("listening", "speaking", "translating");
+      if (speaking) {
+        strip.classList.add("speaking");
+        strip.textContent = `✓ ${PRODUCT_VOICE.bridgingOutLoud}`;
+      } else if (flowPhase === "Translate") {
+        strip.classList.add("translating");
+        strip.textContent = `✓ ${PRODUCT_VOICE.understanding}`;
+      } else if (listening) {
+        strip.classList.add("listening");
+        strip.textContent = `✓ ${PRODUCT_VOICE.bridgeLive}`;
+      } else {
+        strip.textContent = `✓ ${PRODUCT_VOICE.bridgeLinked}`;
+      }
+    }
+
+    function updateDebugPanel() {
+      const panel = $("debugPanel");
+      const status = $("statusLine");
+      if (!panel) return;
+      panel.classList.toggle("on", showDebugDetails && connected);
+      status?.setAttribute("aria-expanded", showDebugDetails && connected ? "true" : "false");
+      if (!showDebugDetails || !connected) return;
+      const topics = semanticContext?.topics?.length ? semanticContext.topics.join(", ") : "—";
+      const terms = semanticContext?.technical_terms?.length ? semanticContext.technical_terms.join(", ") : "—";
+      const certLabel = humanCertStepCurrent === "none" ? "none" : humanCertStepCurrent;
+      const brainLabel = brainUi.message || (brainHints.skip_tts ? "skip voice" : "—");
+      panel.innerHTML = [
+        `<div><strong>Route</strong> ${LANGS[sourceLang] || sourceLang} ${barrierMode ? "↔" : "→"} ${LANGS[targetLang] || targetLang} · ${barrierMode ? "two-way" : "one-way"}</div>`,
+        `<div><strong>Speaker</strong> ${speakerRoute.speakerLabel} (#${speakerRoute.speakerIndex}) · ${speakerRoute.routeConfidence > 0 ? Math.round(speakerRoute.routeConfidence * 100) + "% route" : "auto-route"}</div>`,
+        `<div><strong>Flow</strong> ${flowPhase || "idle"} · mic: ${listening ? "on" : "off"} · tts: ${speaking ? "on" : "off"} · cert: ${certLabel}</div>`,
+        `<div><strong>Meaning check</strong> ${escapeHtml(brainLabel)}</div>`,
+        `<div><strong>Topics</strong> ${topics}</div>`,
+        `<div><strong>Terms</strong> ${terms}</div>`,
+        `<div><strong>Session</strong> ${sessionId} · turns: ${turnCount} · reconnects: ${reconnectAttempts}</div>`,
+      ].join("");
+    }
+
+    function toggleDebugDetails() {
+      if (!connected) return;
+      showDebugDetails = !showDebugDetails;
+      updateDebugPanel();
+      updateContextChip();
+      setStatus(
+        showDebugDetails ? "Technical details shown — tap status again to hide" : (listening ? "Listening — speak in your voice" : "Bridge ready — tap Start when ready"),
+        connected,
+        speaking ? "speaking" : listening ? "listening" : "",
+      );
+    }
+
+    function setBadge(text, mode) {
+      const dot = $("neoDot");
+      const label = $("badgeText");
+      const badge = $("badge");
+      const strip = $("connStrip");
+      if (label) {
+        if (mode === "online") label.textContent = "LIVE";
+        else if (mode === "connecting") label.textContent = "LINKING";
+        else label.textContent = "OFFLINE";
+      }
+      if (badge) {
+        badge.classList.toggle("live", mode === "online");
+        badge.setAttribute("aria-label", mode === "online" ? "Bridge LIVE — tap to disconnect" : mode === "connecting" ? "Linking bridge" : PRODUCT_VOICE.offlineTapLink);
+      }
+      if (dot) {
+        dot.className = "neo-dot" + (mode === "online" ? " online" : mode === "connecting" ? " connecting" : " offline");
+      }
+      if (strip) {
+        strip.classList.toggle("hidden", mode !== "online");
+        if (mode === "online") updateConnStrip();
+      }
+    }
+
+    function setStatus(text, online, tone) {
+      const el = $("statusLine");
+      el.textContent = text;
+      let cls = "status";
+      if (tone === "listening" || tone === "translating" || tone === "speaking") cls += " " + tone;
+      else if (online) cls += " online";
+      el.className = cls;
+    }
+
+    function setBanner(title, text, ok) {
+      $("bannerTitle").textContent = title;
+      $("bannerText").textContent = text;
+      $("banner").className = "banner" + (ok ? " ok" : "");
+    }
+
+    function asCertBool(value) {
+      if (typeof value === "boolean") return value;
+      if (typeof value === "number") return value !== 0;
+      if (value == null) return false;
+      return ["1", "true", "yes", "on"].includes(String(value).trim().toLowerCase());
+    }
+
+    function humanCertStep(message) {
+      const step = String(message?.human_certification_step || "").toLowerCase();
+      if (step === "required" || step === "advisory") return step;
+      if (asCertBool(message?.needs_native_certification)) return "required";
+      if (asCertBool(message?.native_speaker_listen_recommended)) return "advisory";
+      return "none";
+    }
+
+    function certificationBanner(message, step = humanCertStep(message)) {
+      const text = String(
+        message?.certification_message
+        || message?.confidence_message
+        || message?.clarify_message
+        || message?.message
+        || "",
+      ).trim();
+      if (text) return text;
+      if (step === "required") return "Have a fluent native speaker listen before you rely on the spoken bridge.";
+      if (step === "advisory") return "Honor native speech — confirm accent and cultural tone sound natural.";
+      return "";
+    }
+
+    function shouldBlockTtsForCert(step) {
+      return step === "required";
+    }
+
+    function resolveConfidenceWarning(payload = {}) {
+      const certStep = humanCertStep(payload);
+      if (certStep !== "none") return "";
+      const needsConfirm = asCertBool(payload.needs_confirmation);
+      const needsNativeCert = asCertBool(payload.needs_native_certification);
+      const nativeListen = asCertBool(payload.native_speaker_listen_recommended);
+      const lowConfidence = asCertBool(payload.low_confidence);
+      if (!needsConfirm && !lowConfidence && !needsNativeCert && !nativeListen) return "";
+      return String(
+        payload.confidence_message
+        || payload.certification_message
+        || (needsConfirm
+          ? "High-stakes bridge — verify with a human interpreter before acting on this."
+          : lowConfidence
+            ? "Moderate confidence — double-check important details."
+            : ""),
+      ).trim();
+    }
+
+    function certTurnFlags(message) {
+      const step = humanCertStep(message);
+      return {
+        certStep: step,
+        nativeListen: step === "advisory" || step === "required",
+        clarify: asCertBool(message?.clarify)
+          || asCertBool(message?.needs_confirmation)
+          || step === "required"
+          || asCertBool(message?.low_confidence),
+      };
+    }
+
+    function extractBrainPlan(payload = {}) {
+      const plan = payload.cip_response_plan || payload.response_plan || null;
+      const hints = payload.cip_client_hints || payload.client_hints || plan?.client_hints || {};
+      const repairOptions = payload.cip_repair_options || plan?.repair_options || [];
+      return {
+        plan: plan && typeof plan === "object" ? plan : null,
+        hints: hints && typeof hints === "object" ? hints : {},
+        repairOptions: Array.isArray(repairOptions) ? repairOptions : [],
+      };
+    }
+
+    function compactRepairLabel(option = {}) {
+      if (option.type === "auto_switch_source_language") return `Using ${String(option.language || "").toUpperCase()}`;
+      if (option.type === "switch_source_language") return `Switch to ${String(option.language || "").toUpperCase()}`;
+      if (option.type === "repeat_terms") return "Repeat exact terms";
+      if (option.type === "confirm_exact") return "Confirm exact words";
+      if (option.type === "choose_meaning") return `Meaning of ${option.word}`;
+      if (option.type === "repeat_slowly") return "Repeat slowly";
+      if (option.type === "preserve_code_switch") return "Keep mixed language";
+      return option.label || "Repair";
+    }
+
+    function shouldSkipBrainTts(payload = null, storedHints = {}) {
+      if (payload) {
+        const hints = extractBrainPlan(payload).hints;
+        if (Boolean(hints?.skip_tts || hints?.tts_mode === "skip")) return true;
+        if (payload?.stage === "translation_safety") return true;
+        if (shouldBlockTtsForCert(humanCertStep(payload))) return true;
+        return false;
+      }
+      if (Boolean(storedHints?.skip_tts || storedHints?.tts_mode === "skip")) return true;
+      return false;
+    }
+
+    function shouldSuppressTtsPlayback(message = null) {
+      return suppressTurnAudio
+        || shouldBlockTtsForCert(humanCertStepCurrent)
+        || shouldSkipBrainTts(message, brainHints);
+    }
+
+    function syncHumanCertStep(step) {
+      humanCertStepCurrent = step === "advisory" || step === "required" ? step : "none";
+    }
+
+    function showConfidenceWarning(message) {
+      const banner = $("confidenceBanner");
+      const text = $("confidenceText");
+      if (!banner || !text || !message) return;
+      text.textContent = message;
+      banner.classList.add("on");
+    }
+
+    function hideConfidenceWarning() {
+      $("confidenceBanner")?.classList.remove("on");
+    }
+
+    function showReconnectFailure() {
+      reconnectFailed = true;
+      $("reconnectBanner")?.classList.add("on");
+      setBadge("Offline");
+      setStatus(PRODUCT_VOICE.connectionLostRetry);
+    }
+
+    function hideReconnectFailure() {
+      reconnectFailed = false;
+      $("reconnectBanner")?.classList.remove("on");
+    }
+
+    function renderBrainPanel() {
+      const panel = $("brainPanel");
+      if (!panel) return;
+      const hasContent = Boolean(
+        brainUi.message
+        || brainUi.repairOptions.length
+        || brainUi.highlightTerms.length
+        || (typeof brainUi.riskScore === "number" && brainUi.riskScore > 0),
+      );
+      panel.classList.toggle("on", hasContent);
+      if (!hasContent) return;
+      const risk = $("brainRisk");
+      if (risk) {
+        risk.textContent = typeof brainUi.riskScore === "number" && brainUi.riskScore > 0
+          ? `${Math.round(brainUi.riskScore * 100)}% risk`
+          : "";
+      }
+      const msg = $("brainMessage");
+      if (msg) msg.textContent = brainUi.message || "";
+      const terms = $("brainTerms");
+      if (terms) {
+        terms.innerHTML = brainUi.highlightTerms.slice(0, 4).map((term) =>
+          `<span class="brain-chip">${escapeHtml(term)}</span>`,
+        ).join("");
+      }
+      const actions = $("brainActions");
+      if (actions) {
+        actions.innerHTML = brainUi.repairOptions.slice(0, 3).map((option, index) =>
+          `<button type="button" data-repair="${index}">${escapeHtml(compactRepairLabel(option))}</button>`,
+        ).join("");
+        actions.querySelectorAll("[data-repair]").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const index = Number(btn.getAttribute("data-repair"));
+            runRepairOption(brainUi.repairOptions[index]);
+          });
+        });
+      }
+    }
+
+    function resetBrainRuntimeUi() {
+      brainHints = {};
+      brainUi = { message: "", repairOptions: [], highlightTerms: [], riskScore: null };
+      renderBrainPanel();
+    }
+
+    function resetCertRuntimeUi() {
+      syncHumanCertStep("none");
+      suppressTurnAudio = false;
+      hideMeaningCheck();
+      hideConfidenceWarning();
+    }
+
+    function applyConfidenceSignals(payload = {}) {
+      const warning = resolveConfidenceWarning(payload);
+      if (!warning) {
+        hideConfidenceWarning();
+        return;
+      }
+      showConfidenceWarning(warning);
+    }
+
+    function applyCertificationFromMessage(message) {
+      const step = humanCertStep(message);
+      const banner = certificationBanner(message, step);
+      syncHumanCertStep(step);
+      if (step === "required") {
+        if (shouldBlockTtsForCert(step)) stopPlaybackQueue();
+        showMeaningCheck(banner, "required");
+        setStatus(PRODUCT_VOICE.certRequiredVoice);
+        return step;
+      }
+      if (step === "advisory") {
+        showMeaningCheck(banner, "advisory");
+        return step;
+      }
+      return "none";
+    }
+
+    function applyBrainPayload(payload = {}) {
+      applyConfidenceSignals(payload);
+      const { plan, hints, repairOptions } = extractBrainPlan(payload);
+      if (!plan && Object.keys(hints).length === 0 && repairOptions.length === 0) return null;
+
+      const repeatedTerms = repairOptions
+        .filter((option) => option?.type === "repeat_terms")
+        .flatMap((option) => option.terms || []);
+      const highlightTerms = [...new Set(
+        (repeatedTerms.length ? repeatedTerms : (hints.highlight_terms || []))
+          .filter((value) => typeof value === "string" && value.trim()),
+      )];
+      const repairedLanguage = hints.repaired_source_language || plan?.suggested_source_language;
+      const languageAutoRepaired = Boolean(hints.language_auto_repaired);
+      const suggestSwitch = Boolean(hints.suggest_source_language_switch);
+      const skipTts = Boolean(hints.skip_tts || hints.tts_mode === "skip");
+      const speakerShift = Boolean(hints.speaker_shift || plan?.turn_policy?.speaker_shift);
+      const riskScore = Number.isFinite(Number(plan?.meaning_risk_score))
+        ? Number(plan.meaning_risk_score)
+        : Number.isFinite(Number(payload.meaning_risk_score))
+          ? Number(payload.meaning_risk_score)
+          : null;
+
+      brainHints = hints;
+      let message = "";
+      if (languageAutoRepaired && repairedLanguage) {
+        message = `Source auto-switched to ${LANGS[repairedLanguage] || repairedLanguage}`;
+        if (repairedLanguage !== sourceLang) {
+          sourceLang = repairedLanguage;
+          updateRouteLabels();
+          sendConfig();
+        }
+        hideMeaningCheck();
+      } else if (suggestSwitch && repairedLanguage) {
+        message = `Source sounds like ${LANGS[repairedLanguage] || repairedLanguage}`;
+      } else if (repairOptions.some((option) => option?.type === "repeat_terms")) {
+        message = "Exact term check needed";
+      } else if (repairOptions.some((option) => option?.type === "confirm_exact")) {
+        message = "Confirm exact words before speaking";
+      } else if (plan?.turn_policy?.mode === "guarded_translate") {
+        message = "Guarded bridge active";
+      } else if (skipTts) {
+        message = "Voice skipped for confirmation";
+      } else if (speakerShift && payload.speaker_label) {
+        message = `${payload.speaker_label} speaking now`;
+      }
+
+      if (skipTts) {
+        stopPlaybackQueue();
+        suppressTurnAudio = true;
+      } else if (!shouldBlockTtsForCert(humanCertStepCurrent)) {
+        suppressTurnAudio = false;
+      }
+
+      brainUi = {
+        message,
+        repairOptions,
+        highlightTerms,
+        riskScore,
+      };
+      renderBrainPanel();
+      updateDebugPanel();
+      return { message, speakerShift, skipTts };
+    }
+
+    function runRepairOption(option = {}) {
+      if (!option || typeof option !== "object") return;
+      if ((option.type === "switch_source_language" || option.type === "auto_switch_source_language") && option.language) {
+        sourceLang = option.language;
+        updateRouteLabels();
+        sendConfig();
+        brainUi = { ...brainUi, message: `Source set to ${LANGS[option.language] || option.language}` };
+        renderBrainPanel();
+        setStatus(`Source set to ${LANGS[option.language] || option.language}`, connected);
+        return;
+      }
+      if (option.type === "choose_meaning" && option.word) {
+        const choices = Array.isArray(option.options) ? option.options.join(" / ") : "the intended meaning";
+        showMeaningCheck(`For "${option.word}", say: ${choices}`, "advisory");
+        setStatus("Choose the intended meaning", connected);
+        return;
+      }
+      hideMeaningCheck();
+      setStatus(option.label || "Please repeat", connected);
+      if (!listening && connected) startMic().catch(() => {});
+    }
+
+    function mapSessionHistoryToTurns(history = [], limit = 3) {
+      if (!Array.isArray(history) || history.length === 0) return [];
+      return history
+        .map((turn, index) => {
+          const sourceText = turn.source_text || turn.original_text || "";
+          const translatedText = turn.translated_text || turn.text || "";
+          if (!sourceText && !translatedText) return null;
+          const flags = certTurnFlags(turn);
+          return {
+            id: turn.id || `restore-${index}`,
+            speakerLabel: turn.speaker_label || `Person ${turn.speaker_index || 1}`,
+            sourceText,
+            translatedText,
+            clarify: flags.clarify,
+            nativeListen: flags.nativeListen,
+            certStep: flags.certStep,
+          };
+        })
+        .filter(Boolean)
+        .slice(-limit);
+    }
+
+    function showMeaningCheck(message, step = "advisory") {
+      const banner = $("meaningBanner");
+      const text = $("meaningText");
+      if (!banner || !text) return;
+      text.textContent = message || "This bridged meaning may need a quick check before you rely on it.";
+      banner.classList.toggle("required", step === "required");
+      banner.classList.add("on");
+    }
+
+    function hideMeaningCheck() {
+      const banner = $("meaningBanner");
+      if (!banner) return;
+      banner.classList.remove("on", "required");
+    }
+
+    function reviewMeaningCheck() {
+      hideMeaningCheck();
+      $("targetLane")?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      setStatus("Review the bridged meaning above", connected);
+    }
+
+    function updateConnectDock() {
+      const btn = $("connectBtn");
+      if (!btn) return;
+      if (connected) {
+        btn.textContent = "Linked";
+        btn.classList.remove("primary");
+        btn.classList.add("active");
+      } else {
+        btn.textContent = "Link bridge";
+        btn.classList.add("primary");
+        btn.classList.remove("active");
+      }
+      const assistantBtn = $("assistantBtn");
+      if (assistantBtn) {
+        assistantBtn.disabled = !connected;
+        assistantBtn.classList.toggle("live", connected);
+      }
+      const shareBtn = $("shareBtn");
+      if (shareBtn) {
+        const source = $("sourceText");
+        const target = $("targetText");
+        const hasShare = (source && !source.classList.contains("placeholder") && source.textContent.trim())
+          || (target && !target.classList.contains("placeholder") && target.textContent.trim());
+        shareBtn.disabled = !connected || !hasShare;
+        shareBtn.classList.toggle("live", connected && hasShare);
+      }
+    }
+
+    async function shareWebSession() {
+      const source = $("sourceText");
+      const target = $("targetText");
+      const sourceText = source && !source.classList.contains("placeholder") ? source.textContent.trim() : "";
+      const targetText = target && !target.classList.contains("placeholder") ? target.textContent.trim() : "";
+      if (!sourceText && !targetText) {
+        setStatus("Nothing to share yet", connected);
+        return;
+      }
+      const srcName = LANGS[sourceLang] || sourceLang;
+      const tgtName = LANGS[targetLang] || targetLang;
+      const lines = [];
+      if (sourceText) lines.push(`${srcName}: ${sourceText}`);
+      if (targetText) lines.push(`${tgtName}: ${targetText}`);
+      const message = `Anai\n${srcName} → ${tgtName}\n\n${lines.join("\n\n")}`;
+      try {
+        if (navigator.share) {
+          await navigator.share({ title: "Anai", text: message });
+          setStatus("Shared session", connected);
+        } else {
+          await navigator.clipboard.writeText(message);
+          setStatus("Session copied to clipboard", connected);
+        }
+      } catch (e) {
+        if (e?.name !== "AbortError") setStatus("Could not share session", connected);
+      }
+    }
+
+    function updateTurnCountBadge() {
+      const badge = $("turnCountBadge");
+      if (!badge) return;
+      if (turnCount > 0) {
+        badge.textContent = String(turnCount);
+        badge.classList.remove("hidden");
+      } else {
+        badge.classList.add("hidden");
+      }
+    }
+
+    function apiBase() {
+      return location.origin.replace(/\/+$/, "");
+    }
+
+    function escapeHtml(text) {
+      return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function getAssistantContext() {
+      const sourceEl = $("sourceText");
+      const targetEl = $("targetText");
+      const sourceText = sourceEl && !sourceEl.classList.contains("placeholder") ? sourceEl.textContent.trim() : "";
+      const targetText = targetEl && !targetEl.classList.contains("placeholder") ? targetEl.textContent.trim() : "";
+      return {
+        source_language: sourceLang,
+        target_language: targetLang,
+        source_text: sourceText,
+        translated_text: targetText,
+        barrier_mode: barrierMode,
+        recent_turns: conversationTurns.slice(-5),
+      };
+    }
+
+    function openHelpSheet() {
+      $("helpBackdrop")?.classList.add("on");
+      $("helpBackdrop")?.setAttribute("aria-hidden", "false");
+    }
+
+    function closeHelpSheet() {
+      $("helpBackdrop")?.classList.remove("on");
+      $("helpBackdrop")?.setAttribute("aria-hidden", "true");
+    }
+
+    function updateAssistantStatus() {
+      const status = $("assistantStatus");
+      const sendBtn = $("assistantSendBtn");
+      const input = $("assistantInput");
+      if (!status) return;
+      status.classList.remove("ready", "bad");
+      if (assistantAvailable === false) {
+        status.textContent = "Unavailable";
+        status.classList.add("bad");
+      } else if (assistantAvailable === true) {
+        status.textContent = "Ready";
+        status.classList.add("ready");
+      } else {
+        status.textContent = PRODUCT_VOICE.linkingBridge;
+      }
+      const canSend = assistantAvailable !== false && !assistantPending && Boolean(input?.value?.trim());
+      if (sendBtn) sendBtn.disabled = !canSend;
+      if (input) input.disabled = assistantAvailable === false || assistantPending;
+    }
+
+    async function checkAssistantHealth() {
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      assistantHealthGen += 1;
+      const checkGen = assistantHealthGen;
+      assistantHealthAbort?.abort();
+      assistantHealthAbort = new AbortController();
+      assistantAvailable = null;
+      updateAssistantStatus();
+      try {
+        const res = await fetch(`${apiBase()}/api/assistant/health`, {
+          signal: assistantHealthAbort.signal,
+        });
+        if (checkGen !== assistantHealthGen) return;
+        const body = await res.json().catch(() => ({}));
+        if (checkGen !== assistantHealthGen) return;
+        assistantAvailable = Boolean(body.available);
+      } catch (e) {
+        if (e?.name === "AbortError" || checkGen !== assistantHealthGen) return;
+        assistantAvailable = false;
+      }
+      if (checkGen !== assistantHealthGen) return;
+      assistantHealthAbort = null;
+      updateAssistantStatus();
+    }
+
+    function renderAssistantMessages() {
+      const scroll = $("assistantScroll");
+      if (!scroll) return;
+      if (!assistantMessages.length) {
+        scroll.innerHTML = '<div class="assistant-bubble assistant">Ask about meaning, request a rephrase, or get a language tip.</div>';
+        return;
+      }
+      scroll.innerHTML = assistantMessages.map((msg) => {
+        const cls = msg.role === "user" ? "user" : msg.role === "system" ? "system" : "assistant";
+        return `<div class="assistant-bubble ${cls}">${escapeHtml(msg.text)}</div>`;
+      }).join("");
+      scroll.scrollTop = scroll.scrollHeight;
+    }
+
+    function openAssistantSheet() {
+      if (!connected) return;
+      $("assistantBackdrop")?.classList.add("on");
+      $("assistantBackdrop")?.setAttribute("aria-hidden", "false");
+      if (assistantAvailable === null) checkAssistantHealth();
+      renderAssistantMessages();
+      updateAssistantStatus();
+    }
+
+    function closeAssistantSheet() {
+      $("assistantBackdrop")?.classList.remove("on");
+      $("assistantBackdrop")?.setAttribute("aria-hidden", "true");
+    }
+
+    async function sendAssistantMessage() {
+      const input = $("assistantInput");
+      const text = (input?.value || "").trim();
+      if (!text || assistantPending || assistantAvailable === false) return;
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      input.value = "";
+      assistantMessages.push({ role: "user", text });
+      assistantPending = true;
+      assistantRequestGen += 1;
+      const reqGen = assistantRequestGen;
+      assistantAbortController?.abort();
+      assistantAbortController = new AbortController();
+      renderAssistantMessages();
+      updateAssistantStatus();
+      try {
+        const res = await fetch(`${apiBase()}/api/assistant/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: text,
+            session_id: assistantSessionId,
+            translation_context: getAssistantContext(),
+          }),
+          signal: assistantAbortController.signal,
+        });
+        if (reqGen !== assistantRequestGen) return;
+        const body = await res.json().catch(() => ({}));
+        if (reqGen !== assistantRequestGen) return;
+        if (!res.ok) {
+          const detail = body?.detail || (res.status === 503 ? "Assistant is not available right now." : `Request failed (HTTP ${res.status}).`);
+          assistantMessages.push({ role: "system", text: detail });
+        } else {
+          assistantMessages.push({ role: "assistant", text: body.response || "(no response)" });
+        }
+      } catch (e) {
+        if (e?.name === "AbortError" || reqGen !== assistantRequestGen) return;
+        assistantMessages.push({ role: "system", text: `Network error: ${e?.message || e}` });
+      } finally {
+        if (reqGen !== assistantRequestGen) return;
+        assistantPending = false;
+        if (assistantAbortController?.signal?.aborted) {
+          assistantAbortController = null;
+          return;
+        }
+        assistantAbortController = null;
+        renderAssistantMessages();
+        updateAssistantStatus();
+      }
+    }
+
+    function updateContextChip() {
+      const chip = $("contextChip");
+      const panel = $("semanticPanel");
+      if (!chip) return;
+      const mood = semanticContext?.conversation_mood || semanticContext?.mood;
+      const intent = semanticContext?.last_intent || semanticContext?.intent;
+      const topics = Array.isArray(semanticContext?.topics) ? semanticContext.topics : [];
+      let label = "";
+      if (mood && intent && mood !== "neutral") label = `${intent} · ${mood}`;
+      else if (intent && intent !== "statement") label = String(intent);
+      else if (mood && mood !== "neutral") label = String(mood);
+      else if (topics.length) label = topics.slice(0, 2).join(", ");
+      if (!label) {
+        chip.classList.remove("on");
+        chip.textContent = "";
+      } else {
+        chip.textContent = label;
+        chip.classList.add("on");
+      }
+      if (!panel) return;
+      const showPanel = !showDebugDetails && topics.length > 0;
+      panel.classList.toggle("on", showPanel);
+      if (!showPanel) {
+        panel.innerHTML = "";
+        return;
+      }
+      const intentLabel = intent || "statement";
+      const moodLabel = mood || "neutral";
+      panel.innerHTML = [
+        "<h4>Conversation context</h4>",
+        `<div class="semantic-badges"><span class="semantic-badge">Intent: ${escapeHtml(intentLabel)}</span><span class="semantic-badge mood">Mood: ${escapeHtml(moodLabel)}</span></div>`,
+        `<div class="semantic-topics">${topics.slice(0, 5).map((topic) => `<span class="semantic-topic">${escapeHtml(topic)}</span>`).join("")}</div>`,
+      ].join("");
+    }
+
+    async function copyLaneText(which) {
+      const el = $(which === "source" ? "sourceText" : "targetText");
+      if (!el || el.classList.contains("placeholder")) {
+        setStatus("Nothing to copy yet", connected);
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(el.textContent.trim());
+        setStatus(which === "source" ? "Your words copied" : "Bridged meaning copied", connected);
+      } catch (e) {
+        setStatus("Could not copy text", connected);
+      }
+    }
+
+    async function shareLaneText(which) {
+      const el = $(which === "source" ? "sourceText" : "targetText");
+      if (!el || el.classList.contains("placeholder")) {
+        setStatus("Nothing to share yet", connected);
+        return;
+      }
+      const text = el.textContent.trim();
+      if (!navigator.share) {
+        await copyLaneText(which);
+        return;
+      }
+      try {
+        await navigator.share({ text });
+        setStatus(which === "source" ? "Shared your words" : "Shared bridged meaning", connected);
+      } catch (e) {
+        if (e?.name !== "AbortError") setStatus("Could not share text", connected);
+      }
+    }
+
+    function clearReconnectTimer() {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    }
+
+    function scheduleWebReconnect() {
+      if (intentionalDisconnect || connectInFlight || reconnectTimer || document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        clearReconnectTimer();
+        showReconnectFailure();
+        updateConnectDock();
+        return;
+      }
+      const attempt = reconnectAttempts + 1;
+      const delay = RECONNECT_DELAYS[reconnectAttempts++];
+      setBadge("Reconnecting", "connecting");
+      setStatus(`Reconnecting ${attempt}/${MAX_RECONNECT_ATTEMPTS} in ${delay / 1000}s…`);
+      const strip = $("connStrip");
+      if (strip) {
+        strip.classList.remove("hidden");
+        strip.textContent = `↻ Reconnecting ${attempt}/${MAX_RECONNECT_ATTEMPTS}`;
+      }
+      clearReconnectTimer();
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (!intentionalDisconnect && !connectInFlight && document.visibilityState !== "hidden" && navigator.onLine) connect();
+      }, delay);
+    }
+
+    function disconnectWeb() {
+      if (resumeWebDebounceTimer) {
+        clearTimeout(resumeWebDebounceTimer);
+        resumeWebDebounceTimer = null;
+      }
+      resumeMicAfterForeground = false;
+      intentionalDisconnect = true;
+      connectInFlight = false;
+      connectGeneration += 1;
+      activeMessageGen = 0;
+      micLoopGeneration += 1;
+      audioQueue = Promise.resolve();
+      if (warmingRetryTimer) {
+        clearTimeout(warmingRetryTimer);
+        warmingRetryTimer = null;
+      }
+      stopWebHeartbeat();
+      clearHandshakeTimer();
+      clearReconnectTimer();
+      reconnectAttempts = 0;
+      hideReconnectFailure();
+      resetCertRuntimeUi();
+      resetBrainRuntimeUi();
+      stopMic();
+      if (ws) {
+        try { ws.close(); } catch (e) {}
+        ws = null;
+      }
+      connected = false;
+      listening = false;
+      speaking = false;
+      showDebugDetails = false;
+      sessionStarted = false;
+      $("panel")?.classList.remove("online", "listening");
+      setBadge("Offline");
+      setBanner(PRODUCT_VOICE.bridgeNotLinked, PRODUCT_VOICE.bridgeNotLinkedHint, false);
+      setStatus(PRODUCT_VOICE.bridgeDroppedTapLink);
+      updateConnectDock();
+      updateStartButton();
+      updateDebugPanel();
+      closeAssistantSheet();
+      closeHelpSheet();
+      semanticContext = null;
+      updateContextChip();
+      updateEmptyState();
+    }
+
+    function setStep(name) {
+      flowPhase = name || "";
+      ["Listen", "Translate", "Speak"].forEach((n) => {
+        $("step" + n).classList.toggle("on", n === name);
+      });
+      const conn1 = $("flowConn1");
+      const conn2 = $("flowConn2");
+      if (conn1) conn1.classList.toggle("on", name === "Translate" || name === "Speak");
+      if (conn2) conn2.classList.toggle("on", name === "Speak");
+      updateLaneBridgeSpan();
+      updateConnStrip();
+    }
+
+    function updateLaneBridgeSpan() {
+      const span = $("laneBridgeSpan");
+      if (!span) return;
+      span.classList.toggle("on", Boolean(listening || speaking || flowPhase === "Translate" || flowPhase === "Speak"));
+    }
+
+    function syncSpeakerRoute(data) {
+      if (!data || typeof data !== "object") return;
+      if (data.speaker_index != null) speakerRoute.speakerIndex = Number(data.speaker_index) || 1;
+      if (data.speaker_label) speakerRoute.speakerLabel = data.speaker_label;
+      if (data.route_confidence != null || data.confidence != null) {
+        speakerRoute.routeConfidence = Number(data.route_confidence ?? data.confidence ?? speakerRoute.routeConfidence);
+      }
+      if (data.source_language) sourceLang = data.source_language;
+      if (data.target_language) targetLang = data.target_language;
+      updateRouteLabels();
+      updateDuplexPanel();
+      updateDebugPanel();
+    }
+
+    function updateDuplexPanel() {
+      const panel = $("duplexPanel");
+      if (!panel) return;
+      const show = connected && barrierMode;
+      panel.classList.toggle("hidden", !show);
+      if (!show) return;
+      const srcName = LANGS[sourceLang] || sourceLang;
+      const tgtName = LANGS[targetLang] || targetLang;
+      const conf = speakerRoute.routeConfidence > 0
+        ? `${Math.round(speakerRoute.routeConfidence * 100)}% route`
+        : "Auto-route";
+      $("duplexMeta").textContent = conf;
+      const p1Active = Number(speakerRoute.speakerIndex) === 1;
+      const p2Active = Number(speakerRoute.speakerIndex) === 2;
+      $("duplexPerson1").classList.toggle("active", p1Active);
+      $("duplexPerson2").classList.toggle("active", p2Active);
+      $("duplexPerson1").classList.toggle("listening", p1Active && listening);
+      $("duplexPerson2").classList.toggle("listening", p2Active && listening);
+      $("duplexLabel1").textContent = p1Active ? speakerRoute.speakerLabel : "Person 1";
+      $("duplexLabel2").textContent = p2Active ? speakerRoute.speakerLabel : "Person 2";
+      $("duplexLang1").textContent = srcName;
+      $("duplexLang2").textContent = tgtName;
+      const live1 = $("duplexLive1");
+      const live2 = $("duplexLive2");
+      if (live1) live1.textContent = p1Active && listening ? "Speaking" : PRODUCT_VOICE.duplexInTurn;
+      if (live2) live2.textContent = p2Active && listening ? "Speaking" : PRODUCT_VOICE.duplexInTurn;
+      const bridge = $("duplexBridge");
+      if (bridge) bridge.classList.toggle("on", Boolean(listening || speaking));
+      updateLaneBridgeSpan();
+    }
+
+    function rememberTurn(data) {
+      const sourceText = data.source_text || data.original_text || ($("sourceText")?.textContent || "").trim();
+      const translatedText = data.translated_text || data.text || ($("targetText")?.textContent || "").trim();
+      if (!sourceText && !translatedText) return;
+      const flags = certTurnFlags(data);
+      const turn = {
+        id: Date.now(),
+        speakerLabel: data.speaker_label || "Speaker",
+        sourceText,
+        translatedText,
+        clarify: flags.clarify,
+        nativeListen: flags.nativeListen,
+        certStep: flags.certStep,
+      };
+      conversationTurns = [...conversationTurns, turn].slice(-3);
+      turnCount += 1;
+      updateTurnCountBadge();
+      renderTurnRail();
+    }
+
+    function renderTurnRail() {
+      const rail = $("turnRail");
+      if (!rail) return;
+      if (!conversationTurns.length) {
+        rail.classList.add("hidden");
+        rail.innerHTML = "";
+        return;
+      }
+      rail.classList.remove("hidden");
+      rail.innerHTML = conversationTurns.map((turn) => {
+        const badges = turn.certStep === "required" ? " 🛡" : turn.nativeListen ? " 👂" : "";
+        const label = `<span class="turn-chip-speaker">${escapeHtml(turn.speakerLabel)}${badges}</span>`
+          + `<span class="turn-chip-source">${escapeHtml(turn.sourceText)}</span>`
+          + `<span class="turn-chip-bridge" aria-hidden="true">⬡<span class="turn-chip-bridge-line"></span></span>`
+          + `<span class="turn-chip-bridged">${escapeHtml(turn.translatedText)}</span>`;
+        return `<button type="button" class="turn-chip${turn.clarify || turn.nativeListen ? " warn" : ""}" data-id="${turn.id}">${label}</button>`;
+      }).join("");
+      rail.querySelectorAll(".turn-chip").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const id = btn.getAttribute("data-id");
+          const turn = conversationTurns.find((item) => String(item.id) === id);
+          if (!turn) return;
+          const text = `${turn.sourceText}\n→ ${turn.translatedText}`;
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus("Copied turn to clipboard", connected);
+          } catch (e) {
+            setStatus("Could not copy turn", connected);
+          }
+        });
+      });
+    }
+
+    function updateRouteLabels() {
+      const srcName = LANGS[sourceLang] || sourceLang;
+      const tgtName = LANGS[targetLang] || targetLang;
+      $("langSource").textContent = srcName;
+      $("langTarget").textContent = tgtName;
+      $("sourceLabel").textContent = `You speak · ${srcName}`;
+      $("targetLabel").textContent = barrierMode ? `They hear · ${tgtName}` : `Bridged out · ${tgtName}`;
+      const p1Active = barrierMode ? Number(speakerRoute.speakerIndex) === 1 : true;
+      const p2Active = barrierMode && Number(speakerRoute.speakerIndex) === 2;
+      $("routeSource").classList.toggle("active", p1Active);
+      $("routeTarget").classList.toggle("active", p2Active);
+      const routeModeText = $("routeModeText");
+      if (routeModeText) {
+        const speakerHint = barrierMode && speakerRoute.routeConfidence > 0
+          ? ` · ${speakerRoute.speakerLabel} on the bridge`
+          : "";
+        routeModeText.textContent = barrierMode
+          ? `${srcName} ↔ ${tgtName}${speakerHint}`
+          : `${srcName} → ${tgtName}`;
+      }
+      updateDuplexPanel();
+    }
+
+    function setLaneLive(id, live) {
+      const lane = $(id);
+      if (lane) lane.classList.toggle("live", Boolean(live));
+      const badge = $(id === "sourceLane" ? "sourceBadge" : "targetBadge");
+      if (badge) badge.classList.toggle("on", Boolean(live));
+      const actions = $(id === "sourceLane" ? "sourceActions" : "targetActions");
+      if (actions) actions.classList.toggle("on", Boolean(live));
+      updateConnectDock();
+    }
+
+    function pickMime() {
+      const types = IS_IOS
+        ? ["audio/mp4", "audio/aac", "audio/webm", "audio/webm;codecs=opus"]
+        : ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+      for (const t of types) {
+        if (window.MediaRecorder && MediaRecorder.isTypeSupported(t)) return t;
+      }
+      return "";
+    }
+
+    async function requestMicStream() {
+      const advanced = {
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      };
+      try {
+        return await navigator.mediaDevices.getUserMedia(advanced);
+      } catch (e) {
+        console.warn("enhanced mic constraints failed, retrying basic audio", e);
+        return await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+    }
+
+    async function ensureMicAccess() {
+      if (IS_IOS && !SECURE_CONTEXT) {
+        const msg = micBlockedMessage();
+        setBanner(msg.title, msg.text, false);
+        setStatus(msg.status);
+        return false;
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setStatus("Microphone not supported in this browser");
+        return false;
+      }
+      try {
+        if (!stream) {
+          stream = await requestMicStream();
+        }
+        micReady = true;
+        return true;
+      } catch (e) {
+        const msg = micBlockedMessage();
+        setBanner(msg.title, msg.text, false);
+        setStatus(e?.name === "NotAllowedError" ? "Microphone denied — allow in Safari settings" : msg.status);
+        micReady = false;
+        return false;
+      }
+    }
+
+    function createMediaRecorder(inputStream) {
+      const preferred = pickMime();
+      const attempts = [];
+      if (preferred) attempts.push(preferred);
+      attempts.push("");
+      for (const mime of attempts) {
+        try {
+          if (mime && (!window.MediaRecorder || !MediaRecorder.isTypeSupported(mime))) continue;
+          const recorderInstance = mime
+            ? new MediaRecorder(inputStream, { mimeType: mime })
+            : new MediaRecorder(inputStream);
+          const resolvedMime = recorderInstance.mimeType || mime || preferred || "audio/mp4";
+          return { recorder: recorderInstance, mime: resolvedMime };
+        } catch (e) {
+          console.warn("MediaRecorder init failed for", mime || "default", e);
+        }
+      }
+      return null;
+    }
+
+    async function recordOneUtterance(loopGen) {
+      if (!stream || !listening || loopGen !== micLoopGeneration) return;
+      const created = createMediaRecorder(stream);
+      if (!created) {
+        setStatus("Microphone format not supported in this browser");
+        listening = false;
+        updateStartButton();
+        return;
+      }
+      activeMime = created.mime;
+      const chunks = [];
+      const utteranceRecorder = created.recorder;
+      utteranceRecorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+      };
+      await new Promise((resolve) => {
+        utteranceRecorder.onstop = async () => {
+          try {
+            if (loopGen !== micLoopGeneration || !listening) {
+              resolve();
+              return;
+            }
+            const blob = new Blob(chunks, { type: activeMime || "audio/mp4" });
+            if (blob.size > 0) {
+              await sendChunkWithMeta(blob);
+            }
+          } catch (e) {
+            console.warn("utterance upload failed", e);
+          }
+          resolve();
+        };
+        utteranceRecorder.onerror = (e) => {
+          console.warn("recorder error", e);
+          resolve();
+        };
+        try {
+          utteranceRecorder.start();
+        } catch (e) {
+          console.warn("recorder start failed", e);
+          resolve();
+          return;
+        }
+        if (utteranceStopTimer) clearTimeout(utteranceStopTimer);
+        utteranceStopTimer = setTimeout(() => {
+          utteranceStopTimer = null;
+          if (
+            loopGen !== micLoopGeneration
+            || !listening
+            || document.visibilityState === "hidden"
+            || !navigator.onLine
+          ) {
+            resolve();
+            return;
+          }
+          try {
+            if (utteranceRecorder.state !== "inactive") utteranceRecorder.stop();
+          } catch (e) {
+            resolve();
+          }
+        }, IS_IOS ? 4200 : 6000);
+      });
+    }
+
+    async function micUtteranceLoop(loopGen) {
+      while (
+        listening
+        && connected
+        && loopGen === micLoopGeneration
+        && document.visibilityState !== "hidden"
+        && navigator.onLine
+      ) {
+        if (micPausedForDuplex) {
+          await new Promise((resolve) => setTimeout(resolve, IS_IOS ? 180 : 120));
+          continue;
+        }
+        await recordOneUtterance(loopGen);
+        if (!listening || loopGen !== micLoopGeneration) break;
+        await new Promise((resolve) => setTimeout(resolve, IS_IOS ? 180 : 120));
+      }
+    }
+
+    async function sendChunkWithMeta(blob) {
+      const activeSocket = ws;
+      if (!blob || blob.size <= 0 || !activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
+      const buf = await blob.arrayBuffer();
+      if (ws !== activeSocket || ws.readyState !== WebSocket.OPEN) return;
+      const mime = activeMime || pickMime() || "audio/mp4";
+      sendJson({
+        type: "chunk_meta",
+        sent_at_ms: Date.now(),
+        bytes: buf.byteLength,
+        mime_type: mime,
+        audio_level: 0.55,
+        client_voice_active: true,
+        voice_active: true,
+      });
+      if (ws !== activeSocket || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(buf);
+      sendJson({ type: "finalize" });
+    }
+
+    function sendJson(obj) {
+      if (intentionalDisconnect || activeMessageGen !== connectGeneration) return;
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    }
+
+    function sendConfig() {
+      sendJson({
+        type: "config",
+        session_id: sessionId,
+        device_id: deviceId,
+        speaker: "auto",
+        speaker_mode: "auto",
+        source_language: sourceLang,
+        target_language: targetLang,
+        barrier_mode: barrierMode,
+      });
+    }
+
+    function sendStart() {
+      const mime = pickMime() || "audio/webm";
+      sendJson({
+        type: "start",
+        session_id: sessionId,
+        device_id: deviceId,
+        speaker_name: "Mobile",
+        speaker_mode: "auto",
+        source_language: sourceLang,
+        target_language: targetLang,
+        barrier_mode: barrierMode,
+        mime_type: mime,
+      });
+      sessionStarted = true;
+    }
+
+    function updateBarrierChip() {
+      const chip = $("routeModeChip");
+      if (chip) {
+        chip.textContent = barrierMode ? `⇄ ${PRODUCT_VOICE.modeTogether}` : `→ ${PRODUCT_VOICE.modeForYou}`;
+        chip.classList.toggle("on", barrierMode);
+        chip.setAttribute("aria-label", barrierMode ? "Switch to for you mode" : "Switch to together mode");
+      }
+      const dockBtn = $("modeDockBtn");
+      if (dockBtn) {
+        dockBtn.textContent = barrierMode ? PRODUCT_VOICE.modeTogether : PRODUCT_VOICE.modeForYou;
+        dockBtn.classList.toggle("active", barrierMode);
+        dockBtn.setAttribute("aria-label", barrierMode ? "Switch to for you mode" : "Switch to together mode");
+      }
+    }
+
+    function toggleBarrierMode() {
+      barrierMode = !barrierMode;
+      updateBarrierChip();
+      updateRouteLabels();
+      if (connected) {
+        sendConfig();
+        sessionStarted = false;
+        sendStart();
+      }
+      const targetCap = $("routeTargetCap");
+      if (targetCap) targetCap.textContent = barrierMode ? PRODUCT_VOICE.routeTargetTwoWay : PRODUCT_VOICE.routeTargetOneWay;
+      setStatus(barrierMode ? "Together — both sides bridged" : "For you — one-way bridge", connected);
+      updateDebugPanel();
+    }
+
+    function stopPlaybackQueue() {
+      audioQueue = Promise.resolve();
+      speaking = false;
+      updateConnStrip();
+    }
+
+    function enqueueAudio(b64, mime, message = null) {
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (shouldSuppressTtsPlayback(message)) return;
+      const playbackGen = connectGeneration;
+      audioQueue = audioQueue.then(async () => {
+        if (
+          intentionalDisconnect
+          || playbackGen !== connectGeneration
+          || document.visibilityState === "hidden"
+          || !navigator.onLine
+        ) return;
+        try {
+          const raw = atob(b64);
+          const arr = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+          const blob = new Blob([arr], { type: mime || "audio/wav" });
+          const url = URL.createObjectURL(blob);
+          await new Promise((resolve, reject) => {
+            const a = new Audio(url);
+            a.onended = () => { URL.revokeObjectURL(url); resolve(); };
+            a.onerror = reject;
+            a.play().catch(reject);
+          });
+        } catch (e) {
+          console.warn("audio play failed", e);
+        }
+      });
+    }
+
+    function handleMessage(data) {
+      if (typeof data !== "object" || !data) return;
+      if (data.type !== "pong" && activeMessageGen !== connectGeneration) return;
+      const webUiActive = document.visibilityState !== "hidden" && navigator.onLine;
+      switch (data.type) {
+        case "pong":
+          break;
+        case "error":
+          if (data.warming) {
+            if (activeMessageGen !== connectGeneration) break;
+            setBadge("Warming", "connecting");
+            setStatus(data.message || PRODUCT_VOICE.serverWarming);
+            if (warmingRetryTimer) clearTimeout(warmingRetryTimer);
+            const warmingGen = connectGeneration;
+            try { ws?.close(); } catch (e) {}
+            ws = null;
+            warmingRetryTimer = setTimeout(() => {
+              warmingRetryTimer = null;
+              if (intentionalDisconnect || warmingGen !== connectGeneration || document.visibilityState === "hidden" || !navigator.onLine) return;
+              connect();
+            }, 2500);
+            break;
+          }
+          setStatus(data.message || data.error || "Bridge server error", connected);
+          break;
+        case "ready":
+          reconnectAttempts = 0;
+          hideReconnectFailure();
+          clearReconnectTimer();
+          clearHandshakeTimer();
+          connected = true;
+          $("panel").classList.add("online");
+          setBadge("Standby", "online");
+          setBanner("Bridge linked", "Tap Start, then speak naturally. Anai bridges meaning out loud.", true);
+          setStatus(PRODUCT_VOICE.connectedTapStart, true);
+          updateConnectDock();
+          if (!sessionStarted) sendStart();
+          if (resumeMicAfterForeground && connected && !listening) {
+            resumeMicAfterForeground = false;
+            startMic().catch(() => {});
+          }
+          updateStartButton();
+          updateDuplexPanel();
+          break;
+        case "listening":
+          lastPongTime = Date.now();
+          syncSpeakerRoute(data);
+          setStatus(PRODUCT_VOICE.listeningSpeak, true, "listening");
+          if (listening) setStep("Listen");
+          if (
+            !listening
+            && document.visibilityState !== "hidden"
+            && navigator.onLine
+            && resumeMicAfterForeground
+          ) {
+            resumeMicAfterForeground = false;
+            startMic().catch(() => {});
+          }
+          break;
+        case "partial_transcription":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          if (humanCertStepCurrent !== "required") {
+            suppressTurnAudio = false;
+          }
+          syncHumanCertStep("none");
+          hideMeaningCheck();
+          $("sourceText").classList.remove("placeholder");
+          $("sourceText").textContent = data.text || "";
+          setLaneLive("sourceLane", Boolean(data.text));
+          updateEmptyState();
+          setStep("Listen");
+          if (data.stage === "partial_low_confidence") {
+            showMeaningCheck(data.message || "Listening for clearer speech…", "advisory");
+          }
+          if (!suppressTurnAudio) setStatus("Listening…", true);
+          break;
+        case "final_transcription":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          $("sourceText").classList.remove("placeholder");
+          $("sourceText").textContent = data.text || data.source_text || "";
+          setLaneLive("sourceLane", Boolean(data.text || data.source_text));
+          updateEmptyState();
+          setStep("Translate");
+          setStatus(PRODUCT_VOICE.understanding, true, "translating");
+          break;
+        case "cip": {
+          const brainUpdate = applyBrainPayload(data);
+          if (brainUpdate?.message && webUiActive) {
+            setStatus(brainUpdate.message, connected);
+          }
+          break;
+        }
+        case "translation":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          applyBrainPayload(data);
+          if (data.semantic_context) {
+            semanticContext = data.semantic_context;
+            updateContextChip();
+          }
+          $("sourceText").classList.remove("placeholder");
+          $("targetText").classList.remove("placeholder");
+          if (data.source_text || data.original_text) $("sourceText").textContent = data.source_text || data.original_text;
+          $("targetText").textContent = data.translated_text || data.text || "";
+          setLaneLive("sourceLane", Boolean(data.source_text || data.original_text));
+          setLaneLive("targetLane", Boolean(data.translated_text || data.text));
+          updateEmptyState();
+          applyCertificationFromMessage(data);
+          rememberTurn(data);
+          setStatus(PRODUCT_VOICE.bridgeReady, connected);
+          break;
+        case "partial_translation":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          if (!suppressTurnAudio) {
+            $("targetText").classList.remove("placeholder");
+            $("targetText").textContent = data.text || data.translated_text || "";
+            setLaneLive("targetLane", Boolean(data.text || data.translated_text));
+            updateEmptyState();
+            setStep("Translate");
+            setStatus(PRODUCT_VOICE.understanding, true, "translating");
+            const partialThreshold = typeof data.confidence_threshold === "number" ? data.confidence_threshold : 0.72;
+            applyBrainPayload(data);
+            const partialCertStep = applyCertificationFromMessage(data);
+            if (partialCertStep === "required") {
+              showMeaningCheck(certificationBanner(data, partialCertStep), "required");
+            } else if (partialCertStep === "none" && (
+              data.low_confidence
+              || (typeof data.confidence === "number" && data.confidence < partialThreshold)
+            )) {
+              showMeaningCheck(data.confidence_message || "Listening for clearer speech…", "advisory");
+            }
+          }
+          break;
+        case "live_translation":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          applyBrainPayload(data);
+          if (data.semantic_context) {
+            semanticContext = data.semantic_context;
+            updateContextChip();
+          }
+          if (!suppressTurnAudio) {
+            $("targetText").classList.remove("placeholder");
+            $("targetText").textContent = data.text || data.translated_text || "";
+            setLaneLive("targetLane", Boolean(data.text || data.translated_text));
+            updateEmptyState();
+            setStep("Translate");
+            const liveThreshold = typeof data.confidence_threshold === "number" ? data.confidence_threshold : 0.72;
+            if (shouldSkipBrainTts(data, brainHints)) {
+              stopPlaybackQueue();
+              suppressTurnAudio = true;
+              const gateMsg = data.confidence_message || data.certification_message || data.clarify_message || "Check meaning";
+              if (
+                shouldBlockTtsForCert(humanCertStep(data))
+                || asCertBool(data.needs_confirmation)
+                || data.stage === "cip_clarification"
+              ) {
+                showMeaningCheck(gateMsg, "required");
+              } else {
+                showMeaningCheck(gateMsg, "advisory");
+              }
+            } else {
+              suppressTurnAudio = false;
+              const liveConfidenceLow = data.low_confidence
+                || (typeof data.confidence === "number" && data.confidence < liveThreshold);
+              if (liveConfidenceLow) {
+                showMeaningCheck(data.confidence_message || "Listening for clearer speech…", "advisory");
+              }
+              setStatus(PRODUCT_VOICE.understanding, true, "translating");
+            }
+          }
+          if (data.session) {
+            const session = data.session;
+            const history = session.turns || session.history || session.shared?.history || [];
+            if (Array.isArray(history) && history.length) {
+              conversationTurns = mapSessionHistoryToTurns(history, 3);
+              turnCount = history.length;
+              updateTurnCountBadge();
+              renderTurnRail();
+            }
+          }
+          break;
+        case "final":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          applyBrainPayload(data);
+          if (data.semantic_context) {
+            semanticContext = data.semantic_context;
+            updateContextChip();
+          }
+          if (!suppressTurnAudio) {
+            $("targetText").classList.remove("placeholder");
+            $("targetText").textContent = data.translated_text || data.text || "";
+            setLaneLive("targetLane", Boolean(data.translated_text || data.text));
+            updateEmptyState();
+            setStep("Speak");
+            setStatus(`${PRODUCT_VOICE.bridgingOutLoud}…`, true, "speaking");
+          }
+          {
+            const certStep = applyCertificationFromMessage(data);
+            const blockContinuousAudio = shouldSkipBrainTts(data, brainHints)
+              || asCertBool(data.needs_confirmation)
+              || data.stage === "cip_clarification";
+            if (blockContinuousAudio) {
+              if (shouldSkipBrainTts(data, brainHints)) stopPlaybackQueue();
+              suppressTurnAudio = true;
+              showMeaningCheck(data.confidence_message || data.clarify_message || "Check meaning", "advisory");
+            } else {
+              suppressTurnAudio = false;
+              if (brainHints?.skip_tts || brainHints?.tts_mode === "skip") {
+                brainHints = { ...brainHints, skip_tts: false, tts_mode: undefined };
+              }
+              if (asCertBool(data.low_confidence)) {
+                showMeaningCheck(data.confidence_message || "Moderate confidence — double-check important details.", "advisory");
+              }
+            }
+            rememberTurn(data);
+          }
+          if (data.session) {
+            const session = data.session;
+            const history = session.turns || session.history || session.shared?.history || [];
+            if (Array.isArray(history) && history.length) {
+              conversationTurns = mapSessionHistoryToTurns(history, 3);
+              turnCount = history.length;
+              updateTurnCountBadge();
+              renderTurnRail();
+            }
+          }
+          break;
+        case "clarify":
+        case "meaning_check":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          if (data.stage === "partial_low_confidence" || data.stage === "final_low_confidence") {
+            syncHumanCertStep("none");
+            suppressTurnAudio = false;
+            showMeaningCheck(
+              data.message || (data.stage === "partial_low_confidence"
+                ? "Listening for clearer speech…"
+                : "Moderate confidence — double-check important details."),
+              "advisory",
+            );
+            setStatus(
+              data.stage === "partial_low_confidence" ? PRODUCT_VOICE.listeningClearer : PRODUCT_VOICE.readySpeakAgain,
+              connected,
+              "listening",
+            );
+            break;
+          }
+          stopPlaybackQueue();
+          applyBrainPayload(data);
+          {
+            const certStep = applyCertificationFromMessage(data);
+            const clarifyText = certificationBanner(data, certStep) || data.message || "Check meaning";
+            if (certStep === "required" || data.stage === "cip_clarification" || asCertBool(data.needs_confirmation)) {
+              suppressTurnAudio = true;
+              showMeaningCheck(clarifyText, certStep === "required" ? "required" : "advisory");
+            } else {
+              suppressTurnAudio = false;
+              showMeaningCheck(clarifyText, certStep === "advisory" ? "advisory" : "advisory");
+            }
+            $("targetText").classList.remove("placeholder");
+            if (data.message) $("targetText").textContent = data.message;
+            setLaneLive("targetLane", Boolean(data.message));
+            updateEmptyState();
+            setStatus(certStep === "required" ? PRODUCT_VOICE.certRequiredVoice : PRODUCT_VOICE.checkMeaningTrust, connected, "translating");
+          }
+          break;
+        case "cancelled":
+          stopPlaybackQueue();
+          if (webUiActive) setStatus(PRODUCT_VOICE.turnCancelled, connected);
+          break;
+        case "vad_error":
+          if (webUiActive) setStatus(data.message || "Audio fallback active — keep talking", connected);
+          break;
+        case "active_speaker":
+        case "speaker_detected":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          {
+            const env = String(data.optimization?.environment || "").toLowerCase();
+            if (["restaurant", "street", "crowded", "noisy"].includes(env)) {
+              setStatus("Noisy environment — speak closer to the mic", connected, "listening");
+            } else if (data.speaker_label || data.speaker) {
+              setStatus(`${data.speaker_label || data.speaker} speaking`, connected, "listening");
+            }
+          }
+          break;
+        case "turn":
+          syncSpeakerRoute(data);
+          {
+            const brainUpdate = applyBrainPayload(data);
+            if (brainUpdate?.message && webUiActive) setStatus(brainUpdate.message, connected);
+          }
+          if (data.behavior === "hold" || data.behavior === "playback" || data.allowed === false) {
+            micPausedForDuplex = true;
+            if (data.reason) setStatus(data.reason, connected);
+          } else if (
+            data.behavior === "interruption"
+            || data.behavior === "turn_shift"
+            || data.behavior === "overlap"
+          ) {
+            stopPlaybackQueue();
+            micPausedForDuplex = false;
+            if (webUiActive && data.behavior === "turn_shift") setStatus(PRODUCT_VOICE.speakerSwitched, connected, "listening");
+          } else if (listening && data.allowed !== false && !speaking) {
+            micPausedForDuplex = false;
+            if (webUiActive) setStatus(PRODUCT_VOICE.listeningSpeak, connected, "listening");
+          }
+          break;
+        case "config_ack":
+        case "session_sync":
+        case "session_restored":
+          syncSpeakerRoute(data);
+          if (data.barrier_mode != null) {
+            barrierMode = Boolean(data.barrier_mode);
+            updateBarrierChip();
+          }
+          if (data.type === "session_restored" || data.type === "session_sync") {
+            const session = data.session || {};
+            const history = session.turns || session.history || session.shared?.history || [];
+            if (Array.isArray(history) && history.length) {
+              conversationTurns = mapSessionHistoryToTurns(history, 3);
+              turnCount = history.length;
+              updateTurnCountBadge();
+              renderTurnRail();
+              const lastTurn = history[history.length - 1];
+              if (lastTurn?.source_text) {
+                $("sourceText").classList.remove("placeholder");
+                $("sourceText").textContent = lastTurn.source_text;
+                setLaneLive("sourceLane", true);
+              }
+              if (lastTurn?.translated_text) {
+                $("targetText").classList.remove("placeholder");
+                $("targetText").textContent = lastTurn.translated_text;
+                setLaneLive("targetLane", true);
+              }
+              updateEmptyState();
+            }
+            micPausedForDuplex = false;
+            if (listening) setStatus(PRODUCT_VOICE.reconnectedListening, true, "listening");
+          }
+          break;
+        case "tts_start":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          if (data.partial) {
+            if (shouldSuppressTtsPlayback(data)) break;
+            speaking = true;
+            updateConnStrip();
+            setStatus(PRODUCT_VOICE.partialBridgeVoice, true, "speaking");
+            break;
+          }
+          if (shouldSuppressTtsPlayback(data)) {
+            stopPlaybackQueue();
+            setStatus(PRODUCT_VOICE.confirmBeforeVoice, connected);
+            break;
+          }
+          speaking = true;
+          micPausedForDuplex = true;
+          updateConnStrip();
+          lastReplayChunks = [];
+          $("replayDockBtn").disabled = true;
+          setStep("Speak");
+          setStatus(`${PRODUCT_VOICE.bridgingOutLoud}…`, true, "speaking");
+          updateDebugPanel();
+          break;
+        case "tts_audio_chunk":
+          syncSpeakerRoute(data);
+          if (!webUiActive) break;
+          if (shouldSuppressTtsPlayback(data)) break;
+          if (data.audio_base64) {
+            lastReplayChunks.push({ b64: data.audio_base64, mime: data.mime_type });
+            enqueueAudio(data.audio_base64, data.mime_type, data);
+            $("replayDockBtn").disabled = false;
+          }
+          setStep("Speak");
+          break;
+        case "tts_end":
+          syncSpeakerRoute(data);
+          if (data.partial) break;
+          speaking = false;
+          micPausedForDuplex = false;
+          if (!webUiActive) break;
+          if (shouldSuppressTtsPlayback(data)) break;
+          updateConnStrip();
+          setStatus(PRODUCT_VOICE.readySpeakAgain, true);
+          setStep(listening ? "Listen" : "");
+          updateDebugPanel();
+          break;
+        case "semantic_context":
+          if (!webUiActive) break;
+          semanticContext = data;
+          updateContextChip();
+          updateDebugPanel();
+          break;
+        case "stage": {
+          const stageLabel = (() => {
+            const text = String(data.message || "").trim();
+            switch (data.stage) {
+              case "queued": return text || "Audio queued for bridging…";
+              case "translation": return text || PRODUCT_VOICE.understanding;
+              case "stt": return text || "Transcribing…";
+              case "tts": return text || PRODUCT_VOICE.preparingBridgedVoice;
+              case "tts_skipped": return text || PRODUCT_VOICE.bridgeVoiceSkipped;
+              case "smoothing": return text || "Short burst ignored";
+              case "partial_timeout":
+              case "live_text_timeout": return text || "Still processing — hang on…";
+              case "partial_degraded": return text || "Catching up…";
+              case "turn_held": return text || PRODUCT_VOICE.waitingBridgedVoice;
+              case "weak_audio": return text || "Move closer to the mic";
+              default: return text || data.stage || "";
+            }
+          })();
+          if (data.stage === "partial_low_confidence" || data.stage === "weak_audio") {
+            showMeaningCheck(stageLabel, "advisory");
+          }
+          if (data.stage === "tts_skipped") {
+            const skipReason = String(data.message || stageLabel || "");
+            const benignSkip = /already streamed|browser voice handles|live voice/i.test(skipReason);
+            if (benignSkip) {
+              if (brainHints?.skip_tts || brainHints?.tts_mode === "skip") {
+                brainHints = { ...brainHints, skip_tts: false, tts_mode: undefined };
+              }
+              suppressTurnAudio = false;
+              micPausedForDuplex = false;
+            } else {
+              stopPlaybackQueue();
+              suppressTurnAudio = true;
+            }
+          }
+          if (data.stage === "turn_held") {
+            micPausedForDuplex = true;
+          }
+          if (webUiActive && stageLabel) setStatus(stageLabel, connected);
+          break;
+        }
+        case "pong":
+          lastPongTime = Date.now();
+          if (pingTimeout) {
+            clearTimeout(pingTimeout);
+            pingTimeout = null;
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
+    function updateStartButton() {
+      const btn = $("startBtn");
+      const orb = $("startOrb");
+      const label = $("startLabel");
+      const hint = $("startHint");
+      let text = "Link bridge";
+      let hintText = "Tap Link bridge, then Start and speak";
+      let btnClass = "start offline";
+      orb?.classList.remove("listening", "armed");
+      if (connected) {
+        text = listening ? "Pause" : "Start";
+        hintText = listening
+          ? "Tap Pause to stop the microphone"
+          : "Tap Start, then speak";
+        btnClass = listening ? "start listening" : "start connected";
+        orb?.classList.add("armed");
+        if (listening) orb?.classList.add("listening");
+      }
+      btn.textContent = text;
+      btn.className = btnClass;
+      if (label) {
+        label.textContent = text;
+        label.classList.toggle("live", listening);
+      }
+      if (hint) hint.textContent = hintText;
+      const live = $("liveStatus");
+      if (live) live.classList.toggle("on", connected && listening);
+      const meter = $("voiceMeter");
+      if (meter) meter.classList.toggle("on", connected && listening);
+      const panel = $("panel");
+      if (panel) panel.classList.toggle("listening", connected && listening);
+      updateConnStrip();
+      updateDuplexPanel();
+      updateDebugPanel();
+      updateEmptyState();
+      updateConnectDock();
+    }
+
+    function updateEmptyState() {
+      const empty = $("emptyState");
+      if (!empty) return;
+      const source = $("sourceText");
+      const target = $("targetText");
+      const hasText = (source && !source.classList.contains("placeholder") && source.textContent.trim())
+        || (target && !target.classList.contains("placeholder") && target.textContent.trim());
+      const show = connected && !hasText;
+      empty.style.display = show ? "block" : "none";
+      const title = $("emptyTitle");
+      const text = $("emptyText");
+      const cta = $("emptyStartBtn");
+      if (!show) return;
+      if (listening) {
+        if (title) title.textContent = "Bridging live";
+        if (text) text.textContent = "Speak in your natural voice — Anai understands and bridges meaning out loud.";
+        if (cta) cta.hidden = true;
+      } else if (connected) {
+        if (title) title.textContent = PRODUCT_VOICE.bridgePaused;
+        if (text) text.textContent = "Tap Start when you're ready to open the bridge again.";
+        if (cta) cta.hidden = false;
+      } else {
+        if (title) title.textContent = "Ready to connect";
+        if (text) text.textContent = "Tap Start once, then talk naturally. Your words and bridged meaning appear below.";
+        if (cta) cta.hidden = false;
+      }
+    }
+
+    function closeLanguagePicker() {
+      langPickerSide = "";
+      const backdrop = $("langPickerBackdrop");
+      if (backdrop) {
+        backdrop.classList.remove("on");
+        backdrop.setAttribute("aria-hidden", "true");
+      }
+    }
+
+    function applyLanguageSelection(side, code) {
+      if (!code || !LANGS[code]) return;
+      if (side === "source") sourceLang = code;
+      else targetLang = code;
+      closeLanguagePicker();
+      updateRouteLabels();
+      if (connected) {
+        sendConfig();
+        sessionStarted = false;
+        sendStart();
+      }
+      setStatus(
+        side === "source"
+          ? `You speak · ${LANGS[code]}`
+          : `${barrierMode ? "They hear" : "Bridged out"} · ${LANGS[code]}`,
+        connected,
+      );
+    }
+
+    function openLanguagePicker(side) {
+      langPickerSide = side === "target" ? "target" : "source";
+      const backdrop = $("langPickerBackdrop");
+      const list = $("langPickerList");
+      const title = $("langPickerTitle");
+      if (!backdrop || !list) return;
+      if (title) {
+        title.textContent = langPickerSide === "source" ? "You speak" : (barrierMode ? "They hear" : "Bridged out");
+      }
+      const activeCode = langPickerSide === "source" ? sourceLang : targetLang;
+      list.innerHTML = LANGUAGE_CODES.map((code) =>
+        `<button type="button" class="${code === activeCode ? "on" : ""}" data-lang="${code}">${escapeHtml(LANGS[code])}</button>`,
+      ).join("");
+      list.querySelectorAll("[data-lang]").forEach((btn) => {
+        btn.addEventListener("click", () => applyLanguageSelection(langPickerSide, btn.getAttribute("data-lang")));
+      });
+      backdrop.classList.add("on");
+      backdrop.setAttribute("aria-hidden", "false");
+    }
+
+    function swapLanguages() {
+      const t = sourceLang;
+      sourceLang = targetLang;
+      targetLang = t;
+      updateRouteLabels();
+      if (connected) {
+        sendConfig();
+        sessionStarted = false;
+        sendStart();
+      }
+    }
+
+    async function waitForServerReady(maxAttempts = 12) {
+      const base = location.origin.replace(/\/+$/, "");
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        if (intentionalDisconnect || document.visibilityState === "hidden" || !navigator.onLine) return false;
+        try {
+          const response = await fetch(`${base}/health`, { cache: "no-store" });
+          if (response.ok) {
+            const health = await response.json().catch(() => ({}));
+            if (health.ready !== false) return true;
+          }
+        } catch (e) {
+          // Server may still be starting.
+        }
+        if (intentionalDisconnect) return false;
+        setStatus(attempt === 0 ? "Opening bridge server…" : `Opening bridge… (${attempt + 1}/${maxAttempts})`);
+        for (let waited = 0; waited < 2000; waited += 250) {
+          if (intentionalDisconnect || document.visibilityState === "hidden" || !navigator.onLine) return false;
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+      }
+      return false;
+    }
+
+    async function connect() {
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (connectInFlight) return;
+      if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+      if (ws?.readyState === WebSocket.CLOSING) {
+        try { ws.close(); } catch (e) {}
+        ws = null;
+      }
+      connectInFlight = true;
+      intentionalDisconnect = false;
+      hideReconnectFailure();
+      const attemptGen = ++connectGeneration;
+      if (IS_IOS && !SECURE_CONTEXT) {
+        await loadMobileInfo();
+        const msg = micBlockedMessage();
+        setBanner(msg.title, msg.text, false);
+        setStatus(msg.status);
+        connectInFlight = false;
+        return;
+      }
+      setBadge("Linking", "connecting");
+      setStatus(PRODUCT_VOICE.linkingBridge);
+      setBanner(PRODUCT_VOICE.linkingBanner, PRODUCT_VOICE.linkingBannerHint, false);
+      const serverReady = await waitForServerReady();
+      if (intentionalDisconnect || attemptGen !== connectGeneration) {
+        connectInFlight = false;
+        return;
+      }
+      if (!serverReady) {
+        setStatus(PRODUCT_VOICE.serverNotReady);
+        connectInFlight = false;
+        if (document.visibilityState !== "hidden" && navigator.onLine) {
+          scheduleWebReconnect();
+        }
+        return;
+      }
+      try {
+        ws = new WebSocket(wsUrl());
+      } catch (e) {
+        connectInFlight = false;
+        setStatus(PRODUCT_VOICE.connectionErrorTapLink);
+        return;
+      }
+      ws.binaryType = "arraybuffer";
+      const activeSocket = ws;
+      ws.onopen = () => {
+        if (ws !== activeSocket || attemptGen !== connectGeneration) return;
+        connectInFlight = false;
+        activeMessageGen = connectGeneration;
+        setStatus(PRODUCT_VOICE.handshaking);
+        startWebHeartbeat();
+        startHandshakeTimer();
+      };
+      ws.onmessage = (ev) => {
+        if (ws !== activeSocket) return;
+        if (typeof ev.data === "string") {
+          try { handleMessage(JSON.parse(ev.data)); } catch (e) { console.warn(e); }
+        }
+      };
+      ws.onclose = (ev) => {
+        if (ws !== activeSocket || attemptGen !== connectGeneration) return;
+        connectInFlight = false;
+        stopWebHeartbeat();
+        clearHandshakeTimer();
+        ws = null;
+        if (!intentionalDisconnect && ev.code === 1013) {
+          connected = false;
+          listening = false;
+          speaking = false;
+          sessionStarted = false;
+          $("panel")?.classList.remove("online", "listening");
+          setBadge("Warming", "connecting");
+          setStatus(PRODUCT_VOICE.serverWarming);
+          updateConnectDock();
+          updateStartButton();
+          if (warmingRetryTimer) clearTimeout(warmingRetryTimer);
+          const warmingGen = connectGeneration;
+          warmingRetryTimer = setTimeout(() => {
+            warmingRetryTimer = null;
+            if (intentionalDisconnect || warmingGen !== connectGeneration || document.visibilityState === "hidden" || !navigator.onLine) return;
+            connect();
+          }, 2500);
+          return;
+        }
+        if (listening && ws && ws.readyState === WebSocket.OPEN) {
+          try { ws.send(JSON.stringify({ type: "finalize" })); } catch (e) {}
+        }
+        if (!intentionalDisconnect && ev.code !== 1000 && ev.code !== 1001 && ev.code !== 1013) {
+          connected = false;
+          listening = false;
+          micPausedForDuplex = false;
+          speaking = false;
+          sessionStarted = false;
+          $("panel")?.classList.remove("online", "listening");
+          setBadge("Reconnecting", "connecting");
+          setStatus(PRODUCT_VOICE.connectionLostReconnect);
+          updateConnectDock();
+          updateStartButton();
+          scheduleWebReconnect();
+          return;
+        }
+        if (!intentionalDisconnect && (ev.code === 1000 || ev.code === 1001)) {
+          connected = false;
+          listening = false;
+          speaking = false;
+          sessionStarted = false;
+          $("panel")?.classList.remove("online", "listening");
+          setBadge("Reconnecting", "connecting");
+          setStatus(PRODUCT_VOICE.connectionClosedReconnect);
+          updateConnectDock();
+          updateStartButton();
+          scheduleWebReconnect();
+          return;
+        }
+        disconnectWeb();
+      };
+      ws.onerror = () => {
+        if (ws !== activeSocket || attemptGen !== connectGeneration) return;
+        connectInFlight = false;
+        setStatus(PRODUCT_VOICE.connectionErrorTapLink);
+      };
+    }
+
+    async function startMic() {
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (intentionalDisconnect) return;
+      if (!connected) {
+        await connect();
+        if (intentionalDisconnect || !connected) return;
+      }
+      const allowed = await ensureMicAccess();
+      if (!allowed || intentionalDisconnect || !connected) return;
+      if (!sessionStarted) sendStart();
+      if (listening) return;
+      listening = true;
+      micLoopGeneration += 1;
+      const loopGen = micLoopGeneration;
+      setStep("Listen");
+      setBanner("Bridge live", "Speak in your natural voice — meaning bridges out loud.", true);
+      setStatus("Bridge live — speak now", true);
+      updateStartButton();
+      micUtteranceLoop(loopGen).catch((e) => {
+        console.warn("mic loop failed", e);
+        setStatus("Microphone error — tap Start again");
+        listening = false;
+        updateStartButton();
+      });
+    }
+
+    function stopMic() {
+      micLoopGeneration += 1;
+      listening = false;
+      if (utteranceStopTimer) {
+        clearTimeout(utteranceStopTimer);
+        utteranceStopTimer = null;
+      }
+      try {
+        if (recorder && recorder.state !== "inactive") recorder.stop();
+      } catch (e) {}
+      recorder = null;
+      stream?.getTracks?.().forEach((t) => t.stop());
+      stream = null;
+      micReady = false;
+      if (connected) {
+        setBanner(PRODUCT_VOICE.connectedBanner, PRODUCT_VOICE.connectedBannerHint, true);
+        setStatus(PRODUCT_VOICE.bridgePausedTapStart, true);
+        setStep("");
+      }
+      updateStartButton();
+      updateDuplexPanel();
+      updateDebugPanel();
+    }
+
+    function clearPanel() {
+      $("sourceText").textContent = "Your words will appear here";
+      $("sourceText").classList.add("placeholder");
+      $("targetText").textContent = barrierMode
+        ? "Bridged words for the other person appear here"
+        : "Your bridged meaning appears here";
+      $("targetText").classList.add("placeholder");
+      setLaneLive("sourceLane", false);
+      setLaneLive("targetLane", false);
+      resetCertRuntimeUi();
+      resetBrainRuntimeUi();
+      lastReplayChunks = [];
+      conversationTurns = [];
+      turnCount = 0;
+      semanticContext = null;
+      speakerRoute = { speakerIndex: 1, speakerLabel: "Person 1", routeConfidence: 1 };
+      updateContextChip();
+      updateTurnCountBadge();
+      renderTurnRail();
+      updateRouteLabels();
+      $("replayDockBtn").disabled = true;
+      updateEmptyState();
+      setStep("");
+      updateDebugPanel();
+      setStatus(PRODUCT_VOICE.bridgeCleared, connected);
+    }
+
+    $("confidenceDismissBtn")?.addEventListener("click", hideConfidenceWarning);
+    $("reconnectRetryBtn")?.addEventListener("click", async () => {
+      hideReconnectFailure();
+      reconnectAttempts = 0;
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      await connect();
+    });
+    $("reconnectDismissBtn")?.addEventListener("click", hideReconnectFailure);
+    $("shareBtn")?.addEventListener("click", shareWebSession);
+    $("helpBtn")?.addEventListener("click", openHelpSheet);
+    $("helpCloseBtn")?.addEventListener("click", closeHelpSheet);
+    $("helpBackdrop")?.addEventListener("click", (event) => {
+      if (event.target === $("helpBackdrop")) closeHelpSheet();
+    });
+    $("helpAssistantBtn")?.addEventListener("click", () => {
+      closeHelpSheet();
+      if (connected) openAssistantSheet();
+    });
+    $("badge")?.addEventListener("click", () => {
+      if (connected) disconnectWeb();
+    });
+    $("badge")?.addEventListener("keydown", (event) => {
+      if ((event.key === "Enter" || event.key === " ") && connected) {
+        event.preventDefault();
+        disconnectWeb();
+      }
+    });
+
+    $("statusLine")?.addEventListener("click", toggleDebugDetails);
+    $("statusLine")?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggleDebugDetails();
+      }
+    });
+
+    $("connectBtn").addEventListener("click", async () => {
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (connected) {
+        disconnectWeb();
+        return;
+      }
+      await ensureMicAccess();
+      await connect();
+    });
+    $("assistantBtn")?.addEventListener("click", openAssistantSheet);
+    $("assistantCloseBtn")?.addEventListener("click", closeAssistantSheet);
+    $("assistantBackdrop")?.addEventListener("click", (event) => {
+      if (event.target === $("assistantBackdrop")) closeAssistantSheet();
+    });
+    $("assistantSendBtn")?.addEventListener("click", sendAssistantMessage);
+    $("assistantInput")?.addEventListener("input", updateAssistantStatus);
+    $("assistantInput")?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendAssistantMessage();
+      }
+    });
+    $("copySourceBtn")?.addEventListener("click", () => copyLaneText("source"));
+    $("copyTargetBtn")?.addEventListener("click", () => copyLaneText("target"));
+    $("shareSourceBtn")?.addEventListener("click", () => shareLaneText("source"));
+    $("shareTargetBtn")?.addEventListener("click", () => shareLaneText("target"));
+    $("startBtn").addEventListener("click", async () => {
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (!connected) {
+        await ensureMicAccess();
+        await connect();
+        return;
+      }
+      if (!listening) await startMic();
+      else stopMic();
+    });
+    $("clearBtn").addEventListener("click", clearPanel);
+    $("modeDockBtn")?.addEventListener("click", toggleBarrierMode);
+    $("meaningReviewBtn")?.addEventListener("click", reviewMeaningCheck);
+    $("meaningDismissBtn")?.addEventListener("click", hideMeaningCheck);
+    function replayLastTranslation() {
+      if (!lastReplayChunks.length) {
+        setStatus(PRODUCT_VOICE.nothingToReplay);
+        return;
+      }
+      speaking = true;
+      updateConnStrip();
+      setStatus(`${PRODUCT_VOICE.bridgingOutLoud}…`, true, "speaking");
+      lastReplayChunks.forEach((chunk) => enqueueAudio(chunk.b64, chunk.mime));
+      const replayGen = connectGeneration;
+      audioQueue = audioQueue.then(() => {
+        if (intentionalDisconnect || replayGen !== connectGeneration) return;
+        speaking = false;
+        updateConnStrip();
+        updateDebugPanel();
+      });
+    }
+    $("replayDockBtn")?.addEventListener("click", replayLastTranslation);
+    $("swapBtn").addEventListener("click", swapLanguages);
+    $("routeSource")?.addEventListener("click", () => openLanguagePicker("source"));
+    $("routeTarget")?.addEventListener("click", () => openLanguagePicker("target"));
+    $("langPickerBackdrop")?.addEventListener("click", (event) => {
+      if (event.target === $("langPickerBackdrop")) closeLanguagePicker();
+    });
+    $("routeModeChip")?.addEventListener("click", toggleBarrierMode);
+    $("emptyStartBtn")?.addEventListener("click", async () => {
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (!connected) {
+        await ensureMicAccess();
+        await connect();
+        return;
+      }
+      if (!listening) await startMic();
+    });
+
+    let resumeWebDebounceTimer = null;
+    let resumeMicAfterForeground = false;
+
+    function tryResumeWebConnection() {
+      if (intentionalDisconnect || connectInFlight || document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
+      if (ws?.readyState === WebSocket.CLOSING) {
+        try { ws.close(); } catch (e) {}
+        ws = null;
+      }
+      connect();
+    }
+
+    function scheduleResumeWebConnection(delayMs = 250) {
+      if (intentionalDisconnect) return;
+      if (resumeWebDebounceTimer) clearTimeout(resumeWebDebounceTimer);
+      resumeWebDebounceTimer = setTimeout(() => {
+        resumeWebDebounceTimer = null;
+        if (!navigator.onLine || document.visibilityState === "hidden") return;
+        tryResumeWebConnection();
+      }, delayMs);
+    }
+
+    function pauseWebOnBackground() {
+      abortWebAssistantRequests();
+      speaking = false;
+      if (resumeWebDebounceTimer) {
+        clearTimeout(resumeWebDebounceTimer);
+        resumeWebDebounceTimer = null;
+      }
+      if (warmingRetryTimer) {
+        clearTimeout(warmingRetryTimer);
+        warmingRetryTimer = null;
+      }
+      if (utteranceStopTimer) {
+        clearTimeout(utteranceStopTimer);
+        utteranceStopTimer = null;
+      }
+      stopWebHeartbeat();
+      clearHandshakeTimer();
+      clearReconnectTimer();
+      resumeMicAfterForeground = listening;
+      if (listening) stopMic();
+    }
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        scheduleResumeWebConnection(250);
+      } else {
+        pauseWebOnBackground();
+      }
+    });
+    window.addEventListener("pageshow", () => scheduleResumeWebConnection(250));
+    window.addEventListener("online", () => scheduleResumeWebConnection(400));
+    window.addEventListener("offline", () => {
+      abortWebAssistantRequests();
+      if (resumeWebDebounceTimer) {
+        clearTimeout(resumeWebDebounceTimer);
+        resumeWebDebounceTimer = null;
+      }
+      stopWebHeartbeat();
+      clearHandshakeTimer();
+      clearReconnectTimer();
+      if (warmingRetryTimer) {
+        clearTimeout(warmingRetryTimer);
+        warmingRetryTimer = null;
+      }
+      if (utteranceStopTimer) {
+        clearTimeout(utteranceStopTimer);
+        utteranceStopTimer = null;
+      }
+    });
+
+    updateRouteLabels();
+    updateBarrierChip();
+    updateConnectDock();
+    updateTurnCountBadge();
+    updateStartButton();
+    updateEmptyState();
+    loadMobileInfo().then(() => {
+      if (IS_IOS && !SECURE_CONTEXT) {
+        const msg = micBlockedMessage();
+        setBanner(msg.title, msg.text, false);
+        setStatus(msg.status);
+        return;
+      }
+      if (document.visibilityState !== "hidden" && navigator.onLine) connect();
+    });
+  </script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 
 export function useMobileConnectionState() {
   const [status, setStatus] = useState('Idle');
@@ -6,10 +6,8 @@ export function useMobileConnectionState() {
   const [isConnected, setIsConnected] = useState(false);
   const [networkState, setNetworkState] = useState(null);
 
+  // Updated synchronously in App.js alongside setIsConnected (not from React state).
   const isConnectedRef = useRef(false);
-  useEffect(() => {
-    isConnectedRef.current = isConnected;
-  }, [isConnected]);
 
   return {
     status,

@@ -40,6 +40,8 @@ jobs:
           PY
       - name: Offline smoke check
         run: python scripts/smoke_local.py
+      - name: Product readiness (static)
+        run: python scripts/product_readiness.py --static-only
       - name: Run backend tests
         run: python -m pytest -q
 

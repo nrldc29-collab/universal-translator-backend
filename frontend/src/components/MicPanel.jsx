@@ -2,7 +2,7 @@
  * MicPanel -- single mic orb with live HUD, voice meter, and status.
  */
 import React from 'react';
-import { Activity, Clock3, Mic, UserRound, Zap } from 'lucide-react';
+import { Activity, Clock3, Mic, UserRound, Volume2, Zap } from 'lucide-react';
 import ThinkingIndicator from './ThinkingIndicator';
 
 export default function MicPanel({
@@ -37,10 +37,20 @@ export default function MicPanel({
       >
         <span className="voice-field" aria-hidden="true" />
         <span className="energy-rim" aria-hidden="true" />
+        {playing ? (
+          <>
+            <span className="orb-bridge-ring outer" aria-hidden="true" />
+            <span className="orb-bridge-ring inner" aria-hidden="true" />
+          </>
+        ) : null}
         <span className="orb-ring" />
         <span className="orb-spin" />
         <MicGrille />
-        <Mic className="mic-icon" size={58} strokeWidth={2.2} aria-hidden="true" />
+        {playing ? (
+          <Volume2 className="mic-icon" size={54} strokeWidth={2.2} aria-hidden="true" />
+        ) : (
+          <Mic className="mic-icon" size={58} strokeWidth={2.2} aria-hidden="true" />
+        )}
         {perceivedListening && (
           <span className="rec-led" aria-hidden="true">
             <svg width="26" height="26" viewBox="0 0 26 26">
@@ -56,7 +66,7 @@ export default function MicPanel({
       <p className="mic-hint">{micHint}</p>
 
       {processing && !streaming && !playing && (
-        <ThinkingIndicator stage="translating" message="Working on your translation…" className="mic-thinking" />
+        <ThinkingIndicator stage="translating" message="Understanding meaning…" className="mic-thinking" />
       )}
 
       {!perceivedListening && (
@@ -80,12 +90,12 @@ export default function MicPanel({
           <div className="status-panel status-panel-live" data-tone="listening" aria-live="polite">
             <div className="status-primary">
               <Activity size={13} strokeWidth={2.6} aria-hidden="true" />
-              <span>Live — speak anytime</span>
+              <span>Bridge live — speak anytime</span>
             </div>
           </div>
           {onStopListening && (
             <button type="button" className="stop-listening-btn" onClick={onStopListening}>
-              Stop listening
+              Pause bridge
             </button>
           )}
         </>
@@ -94,7 +104,7 @@ export default function MicPanel({
       {/* Replay fallback */}
       {audioReplayAvailable && autoPlayFailed && (
         <button className="neo-play-btn" type="button" onClick={playTranslationAudio} disabled={playing}>
-          <Zap size={13} /> Play Voice
+          <Zap size={13} /> Play bridged voice
         </button>
       )}
     </section>

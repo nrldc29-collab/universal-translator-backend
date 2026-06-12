@@ -18,22 +18,22 @@ const TOUR_STEPS = [
   {
     key: 'welcome',
     icon: Sparkles,
-    title: 'Welcome to Anai Translator',
-    description: 'Speak in one language and hear a natural translation instantly. Works in your browser and on your phone.',
-    spotlightHint: 'You are in the right place — setup takes less than a minute.',
+    title: 'Welcome to Anai',
+    description: 'Bridge languages in real conversation. Each person stays in their own language — Anai carries meaning across, out loud.',
+    spotlightHint: 'You are in the right place — opening the bridge takes less than a minute.',
   },
   {
     key: 'mic',
     icon: Mic,
-    title: 'Tap to speak',
-    description: 'Tap the microphone to speak, or use the Type button to enter text. Anai translates and plays the result out loud.',
+    title: 'Open the bridge',
+    description: 'Tap the microphone to open the bridge, or use Type to bridge text. Anai hears, understands, and speaks meaning across languages. For slang, accents, or emotional tone, honor native speech — Anai prompts you when trust matters.',
     spotlightHint: 'Look for the large mic button in the center of the screen.',
   },
   {
     key: 'languages',
     icon: Languages,
     title: 'Pick your languages',
-    description: 'Use the language bar to choose source and target. Tap Flip to swap direction anytime.',
+    description: 'Pick the two languages you are bridging. You speak on one side; they hear on the other. Tap Flip to reverse.',
     spotlightHint: 'Language chips sit just above the mic — tap either side to change.',
   },
   {

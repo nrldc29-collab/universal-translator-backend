@@ -19,6 +19,8 @@ export function useStreamHeartbeat({ socketRef, setPipelineStage, setStatus }) {
     clearStreamHeartbeat();
     streamHeartbeatRef.current = { timer: null, missed: 0 };
     const timer = window.setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
       if (socketRef.current !== socket) {
         clearStreamHeartbeat();
         return;
@@ -26,12 +28,22 @@ export function useStreamHeartbeat({ socketRef, setPipelineStage, setStatus }) {
       if (socket.readyState !== WebSocket.OPEN) return;
       streamHeartbeatRef.current.missed += 1;
       if (streamHeartbeatRef.current.missed > STREAM_HEARTBEAT_MAX_MISSES) {
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
         setPipelineStage('Connection heartbeat missed');
         setStatus('Reconnecting stream...');
-        socket.close();
+        try {
+          socket.close();
+        } catch {
+          // Socket may already be closing.
+        }
         return;
       }
-      socket.send(JSON.stringify({ type: 'ping' }));
+      try {
+        socket.send(JSON.stringify({ type: 'ping' }));
+      } catch {
+        clearStreamHeartbeat();
+      }
     }, STREAM_HEARTBEAT_MS);
     streamHeartbeatRef.current.timer = timer;
   }

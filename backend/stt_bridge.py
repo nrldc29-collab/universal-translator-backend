@@ -95,6 +95,22 @@ class STTBridge:
             return self._check_streaming_health()
         return self._get_local_stt().preload()
 
+    def transcribe_result(self, audio_path: str, source_language: str | None = None, **kwargs):
+        """Transcribe audio and return text plus optional acoustic confidence."""
+        from speech.whisper_stt import TranscriptionResult
+
+        if self.is_streaming:
+            from speech.whisper_stt import normalize_transcript
+
+            text = self._transcribe_streaming(audio_path, source_language)
+            language = str(source_language or "en").lower().split("-")[0]
+            text = normalize_transcript(text, language)
+            from backend.confidence import estimate_stt_confidence
+
+            heuristic_conf = estimate_stt_confidence(text) if text else None
+            return TranscriptionResult(text=text, confidence=heuristic_conf)
+        return self._get_local_stt().transcribe_result(audio_path, source_language, **kwargs)
+
     def transcribe(self, audio_path: str, source_language: str | None = None) -> str:
         """Transcribe an audio file to text.
 
@@ -141,7 +157,9 @@ class STTBridge:
                 model="base",
                 language=language,
             )
-            text = result.get("text", "")
+            from speech.whisper_stt import normalize_transcript
+
+            text = normalize_transcript(result.get("text", ""), language)
             logger.info(
                 "Streaming transcription complete: %d chars, model=%s",
                 len(text),

@@ -1,8 +1,10 @@
 {
   "expo": {
-    "name": "Anai Translator",
-    "slug": "anai-translator",
-    "version": "1.0.0",
+    "name": "Anai",
+    "slug": "anai-interpreter-v2",
+    "version": "1.0.2",
+    "description": "Real-time conversation bridge — speak in your language, hear the translation. Self-hosted EN↔HT and 14 languages.",
+    "runtimeVersion": "2026-06-11-fix152",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "anaitranslator",
@@ -19,8 +21,11 @@
       "bundleIdentifier": "com.anaitranslator.app",
       "buildNumber": "1",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Anai Translator needs microphone access to capture speech for real-time translation.",
-        "NSLocalNetworkUsageDescription": "Anai Translator connects to your local translation server.",
+        "NSMicrophoneUsageDescription": "Anai needs microphone access to hear your side of the conversation bridge.",
+        "NSLocalNetworkUsageDescription": "Anai connects to your local bridge server on the same Wi‑Fi.",
+        "NSBonjourServices": [
+          "_expo._tcp"
+        ],
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true,
@@ -67,7 +72,7 @@
       [
         "expo-av",
         {
-          "microphonePermission": "Anai Translator needs microphone access to capture speech for real-time translation."
+          "microphonePermission": "Anai needs microphone access to capture speech for real-time translation."
         }
       ],
       "./plugins/withAndroidCleartext",

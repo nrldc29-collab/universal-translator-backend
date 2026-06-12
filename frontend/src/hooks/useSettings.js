@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 
 const STORAGE_KEY = 'ut_settings_v1';
-const SETTINGS_VERSION = 7;
+const SETTINGS_VERSION = 8;
+
+const NOISY_ENVIRONMENTS = ['restaurant', 'street', 'crowded', 'noisy'];
 
 const DEFAULTS = {
   // Language
@@ -11,10 +13,13 @@ const DEFAULTS = {
   ttsSpeed: 1.0,
   ttsVoice: 'backend',
   micDeviceId: 'default',
+  audioEnvironment: 'auto',
+  holdToTalkInNoise: true,
   // Translation
   translationMode: 'fast',
-  partialTts: true,
+  partialTts: false,
   translationProvider: 'hybrid',
+  barrierMode: true,
   // Display
   theme: 'dark',
   textSize: 'medium',
@@ -59,6 +64,11 @@ function load() {
         }
         if ((loaded.settingsVersion || 0) < 7) {
           loaded.partialTts = true;
+        }
+        if ((loaded.settingsVersion || 0) < 8) {
+          loaded.barrierMode = loaded.barrierMode !== false;
+          loaded.audioEnvironment = loaded.audioEnvironment || 'auto';
+          loaded.holdToTalkInNoise = loaded.holdToTalkInNoise !== false;
         }
         loaded.lowBandwidthMode = false;
         loaded.settingsVersion = SETTINGS_VERSION;
@@ -105,5 +115,5 @@ export function useSettings() {
     root.setAttribute('data-text-size', settings.textSize);
   }, [settings.textSize]);
 
-  return { settings, setSettings, updateSetting };
+  return { settings, setSettings, updateSetting, NOISY_ENVIRONMENTS };
 }

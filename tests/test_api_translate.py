@@ -97,7 +97,7 @@ class TestTts:
         payload = response.json()
         assert payload.get("audio_base64") or payload.get("audio_url")
 
-    def test_translate_ht_text_flips_direction(self, app_module, client, monkeypatch):
+    def test_translate_text_respects_explicit_direction(self, app_module, client, monkeypatch):
         from backend.pipeline import TranslationResult
 
         captured = []
@@ -121,7 +121,7 @@ class TestTts:
             },
         )
         assert response.status_code == 200
-        assert captured == [("ht", "en")]
+        assert captured == [("en", "ht")]
 
     def test_translate_text_survives_tts_failure(self, app_module, client, monkeypatch):
         def fail_cached(*args, **kwargs):

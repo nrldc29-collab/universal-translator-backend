@@ -1,9 +1,11 @@
 param(
     [switch]$Restart,
+    [switch]$QuickStart,
     [switch]$NoTunnel,
     [switch]$DevFrontend,
     [switch]$SkipBuild,
     [switch]$SkipProductTest,
+    [switch]$SkipMobile,
     [string]$TunnelName = $env:ANAI_TUNNEL_NAME,
     [string]$TunnelHostname = $env:ANAI_TUNNEL_HOSTNAME,
     [string]$TunnelToken = $env:ANAI_TUNNEL_TOKEN,
@@ -15,6 +17,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Logs = Join-Path $Root "logs"
+$BackendPidPath = Join-Path $Logs "backend.pid"
 $BackendPort = 8000
 $FrontendPort = 5173
 $MinFreeBytes = 512MB
@@ -41,6 +44,12 @@ function Import-KeyValueEnvFile {
 }
 
 Import-KeyValueEnvFile -Path (Join-Path $Logs "stable-tunnel.env")
+
+if ($QuickStart) {
+    Write-Host "QuickStart mode: local web interpreter only (skip tunnel + Expo auto-start)."
+    $NoTunnel = $true
+    $SkipMobile = $true
+}
 
 if (-not $TunnelName) { $TunnelName = $env:ANAI_TUNNEL_NAME }
 if (-not $TunnelHostname) { $TunnelHostname = $env:ANAI_TUNNEL_HOSTNAME }
@@ -76,10 +85,20 @@ function Test-PortListening {
 }
 
 function Stop-PortOwner {
-    param([int]$Port)
+    param(
+        [int]$Port,
+        [string]$CommandPattern = ""
+    )
     $listeners = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
     foreach ($listener in $listeners) {
-        Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+        $processId = $listener.OwningProcess
+        if ($CommandPattern) {
+            $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+            if (-not $proc -or $proc.CommandLine -notmatch $CommandPattern) {
+                continue
+            }
+        }
+        Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -277,6 +296,33 @@ function Invoke-FrontendBuild {
     }
 }
 
+function Get-PreferredLanIp {
+    $candidate = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -ne "127.0.0.1" -and
+            $_.IPAddress -notmatch "^169\.254\." -and
+            $_.InterfaceAlias -notmatch "vEthernet|Loopback|Docker|WSL"
+        } |
+        Sort-Object @{ Expression = { if ($_.InterfaceAlias -match "Wi-Fi|Wireless") { 0 } else { 1 } } } |
+        Select-Object -First 1
+    if ($candidate) { return $candidate.IPAddress }
+    return $null
+}
+
+function Test-BackendLanReachable {
+    param(
+        [string]$LanIp,
+        [int]$Port = 8000
+    )
+    if (-not $LanIp) { return $false }
+    try {
+        $response = Invoke-RestMethod -Uri "http://${LanIp}:$Port/health" -TimeoutSec 4
+        return $null -ne $response
+    } catch {
+        return $false
+    }
+}
+
 function Wait-HttpReady {
     param(
         [string]$Url,
@@ -286,6 +332,10 @@ function Wait-HttpReady {
         try {
             $response = Invoke-RestMethod -Uri $Url -TimeoutSec 3
             if ($null -ne $response) {
+                if ($response.ready -eq $false) {
+                    Start-Sleep -Milliseconds 750
+                    continue
+                }
                 return $response
             }
         } catch {
@@ -408,8 +458,24 @@ function Invoke-ProductSmokeTest {
 }
 
 if ($Restart) {
-    Stop-PortOwner -Port $BackendPort
-    Stop-PortOwner -Port $FrontendPort
+    if (Test-Path -LiteralPath $BackendPidPath) {
+        $savedBackendPid = (Get-Content -LiteralPath $BackendPidPath -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($savedBackendPid -and -not (Get-Process -Id $savedBackendPid -ErrorAction SilentlyContinue)) {
+            Remove-Item -LiteralPath $BackendPidPath -Force -ErrorAction SilentlyContinue
+            if (Test-PortListening -Port $BackendPort) {
+                Write-Output "Stale backend PID $savedBackendPid - cleaning port $BackendPort."
+            }
+            Stop-PortOwner -Port $BackendPort -CommandPattern "backend\.api:app"
+        }
+    }
+    Stop-PortOwner -Port $BackendPort -CommandPattern "backend\.api:app"
+    if ($Restart -and (Test-Path -LiteralPath $BackendPidPath)) {
+        $liveBackendPid = (Get-Content -LiteralPath $BackendPidPath -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($liveBackendPid -and -not (Get-Process -Id $liveBackendPid -ErrorAction SilentlyContinue)) {
+            Remove-Item -LiteralPath $BackendPidPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Stop-PortOwner -Port $FrontendPort -CommandPattern "vite"
     Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     if ($LocalTunnelSubdomain -or $TunnelProvider -eq "localtunnel") {
         Stop-LocalTunnelProcesses -Port $BackendPort -Subdomain $LocalTunnelSubdomain
@@ -446,19 +512,26 @@ if (-not $DevFrontend) {
 }
 
 if (Test-PortListening -Port $BackendPort) {
-    try {
-        $diagnostics = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/diagnostics" -TimeoutSec 3
-        $currentMode = $diagnostics.frontend.mode
-        if (-not $DevFrontend -and $currentMode -ne "embedded_dist") {
-            Stop-PortOwner -Port $BackendPort
-            Start-Sleep -Seconds 1
-        } elseif ($DevFrontend -and $currentMode -eq "embedded_dist") {
-            Stop-PortOwner -Port $BackendPort
+    $lanIpCheck = Get-PreferredLanIp
+    if ($lanIpCheck -and -not (Test-BackendLanReachable -LanIp $lanIpCheck -Port $BackendPort)) {
+        Write-Output "Backend on port $BackendPort is not reachable on LAN ($lanIpCheck) - restarting with 0.0.0.0 binding."
+        Stop-PortOwner -Port $BackendPort -CommandPattern "backend\.api:app"
+        Start-Sleep -Seconds 1
+    } else {
+        try {
+            $diagnostics = Invoke-RestMethod -Uri "http://127.0.0.1:$BackendPort/diagnostics" -TimeoutSec 3
+            $currentMode = $diagnostics.frontend.mode
+            if (-not $DevFrontend -and $currentMode -ne "embedded_dist") {
+                Stop-PortOwner -Port $BackendPort -CommandPattern "backend\.api:app"
+                Start-Sleep -Seconds 1
+            } elseif ($DevFrontend -and $currentMode -eq "embedded_dist") {
+                Stop-PortOwner -Port $BackendPort -CommandPattern "backend\.api:app"
+                Start-Sleep -Seconds 1
+            }
+        } catch {
+            Stop-PortOwner -Port $BackendPort -CommandPattern "backend\.api:app"
             Start-Sleep -Seconds 1
         }
-    } catch {
-        Stop-PortOwner -Port $BackendPort
-        Start-Sleep -Seconds 1
     }
 }
 
@@ -500,7 +573,7 @@ if (-not (Test-PortListening -Port $BackendPort)) {
     if ($TunnelProvider -eq "localhost-run") {
         $extraOriginRegex += "|https://.*\.lhr\.life"
     }
-    $env:ALLOWED_ORIGIN_REGEX = "https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?|https://.*\.trycloudflare\.com$extraOriginRegex"
+    $env:ALLOWED_ORIGIN_REGEX = "https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?|https://.*\.trycloudflare\.com|https?://[\w.-]+\.(loca\.lt|ngrok-free\.app|ngrok\.io)(:\d+)?$extraOriginRegex"
     $env:NEAR_ZERO_LATENCY_MODE = "true"
     $env:PARTIAL_TTS_MIN_WORDS = "1"
     $env:PARTIAL_TTS_MIN_INTERVAL = "0.35"
@@ -543,7 +616,10 @@ if (-not (Test-PortListening -Port $BackendPort)) {
     if (-not $env:AILANG_ENHANCEMENTS_ENABLED) {
         $env:AILANG_ENHANCEMENTS_ENABLED = "false"
     }
-    Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "$BackendPort") -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr | Out-Null
+    $backendProcess = Start-Process -FilePath $python -ArgumentList @("-m", "uvicorn", "backend.api:app", "--host", "0.0.0.0", "--port", "$BackendPort") -WorkingDirectory $Root -WindowStyle Hidden -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr -PassThru
+    if ($backendProcess) {
+        Set-Content -LiteralPath $BackendPidPath -Value $backendProcess.Id -Encoding ascii
+    }
 }
 
 if ($DevFrontend -and -not (Test-PortListening -Port $FrontendPort)) {
@@ -557,6 +633,14 @@ if ($DevFrontend -and -not (Test-PortListening -Port $FrontendPort)) {
 Start-Sleep -Seconds 3
 
 $health = Wait-HttpReady -Url "http://127.0.0.1:$BackendPort/health" -Attempts 40
+$httpsMicScript = Join-Path $Root "Ensure-MobileHttps.ps1"
+if (Test-Path -LiteralPath $httpsMicScript) {
+    try {
+        & $httpsMicScript -BackendPort $BackendPort -ExpoPort 8082 | Out-Null
+    } catch {
+        Write-Warning "HTTPS mobile mic server not started: $($_.Exception.Message)"
+    }
+}
 if (-not $SkipProductTest) {
     Invoke-ProductWarmup
     Wait-VoiceWarmupComplete | Out-Null
@@ -567,7 +651,7 @@ if (-not $SkipProductTest) {
 $tunnelUrl = $null
 if (-not $NoTunnel) {
     Remove-Item -LiteralPath $tunnelOut, $tunnelErr, $fixedTunnelOut, $fixedTunnelErr, $localhostRunOut, $localhostRunErr -Force -ErrorAction SilentlyContinue
-    $tunnelPort = if ($DevFrontend) { $FrontendPort } else { $BackendPort }
+    $tunnelPort = $BackendPort
     if ($TunnelProvider -eq "localhost-run") {
         $localhostRunScript = Join-Path $Root "Start-LocalhostRunTunnel.ps1"
         if (-not (Test-Path -LiteralPath $localhostRunScript)) {
@@ -664,39 +748,150 @@ if (-not $NoTunnel) {
     }
 }
 
+$LanIp = Get-PreferredLanIp
+$PhoneHost = if ($LanIp) { $LanIp } else { "127.0.0.1" }
+
 Write-Output ""
-Write-Output "Anai Translator is starting."
+Write-Output "Anai is starting."
 Write-Output "Mode:       $(if ($DevFrontend) { 'dev frontend proxy' } else { 'embedded production frontend' })"
 Write-Output "Local app:  http://127.0.0.1:$(if ($DevFrontend) { $FrontendPort } else { $BackendPort })/"
 Write-Output "Health:     http://127.0.0.1:$BackendPort/health"
+Write-Output "Safari app:  http://${PhoneHost}:$BackendPort/mobile/app  (open on iPhone Safari - works without Expo)"
+Write-Output "Phone setup: http://${PhoneHost}:$BackendPort/mobile"
+if ($LanIp) {
+    Write-Output "Safari mic:  https://${LanIp}:8443/mobile/app  (HTTPS - microphone on iPhone)"
+}
 Write-Output "Ready:      $($health.ready)"
 if ($tunnelUrl) {
     Write-Output "Phone app candidate:  $tunnelUrl"
     if (Wait-TunnelReady -Url $tunnelUrl -Attempts 30) {
         Write-Output "Phone test: tunnel DNS and health resolved"
+        try {
+            $productResult = Invoke-ProductSmokeTest -Url $tunnelUrl
+            Set-Content -LiteralPath $productSmokePath -Value $productResult
+            Set-Content -LiteralPath $currentPhoneUrlPath -Value $tunnelUrl -Encoding ascii
+            Write-Output "Phone app:  $tunnelUrl"
+            Write-Output "Audio test: $productResult"
+        } catch {
+            Write-Output "Audio test: failed"
+            throw
+        }
     } else {
-        Write-Output "Phone test: failed normal DNS/health check"
-        throw "Tunnel URL did not become reachable through normal DNS: $tunnelUrl"
-    }
-    try {
-        $productResult = Invoke-ProductSmokeTest -Url $tunnelUrl
-        Set-Content -LiteralPath $productSmokePath -Value $productResult
-        Set-Content -LiteralPath $currentPhoneUrlPath -Value $tunnelUrl -Encoding ascii
-        Write-Output "Phone app:  $tunnelUrl"
-        Write-Output "Audio test: $productResult"
-    } catch {
-        Write-Output "Audio test: failed"
-        throw
+        Write-Warning "Tunnel URL did not become reachable through normal DNS: $tunnelUrl"
+        Write-Warning "Continuing in LAN-only mode - Expo Go on same Wi-Fi still works."
+        $tunnelUrl = $null
+        if (Test-Path -LiteralPath $currentPhoneUrlPath) {
+            Remove-Item -LiteralPath $currentPhoneUrlPath -Force -ErrorAction SilentlyContinue
+        }
     }
 } elseif (-not $NoTunnel) {
-    Write-Output "Phone app:  cloudflared URL not ready yet; check $tunnelErr"
-    throw "cloudflared did not publish a tunnel URL."
+    Write-Warning "cloudflared did not publish a tunnel URL - continuing in LAN-only mode."
+    if (Test-Path -LiteralPath $currentPhoneUrlPath) {
+        Remove-Item -LiteralPath $currentPhoneUrlPath -Force -ErrorAction SilentlyContinue
+    }
+    Write-Output "Phone app:  use Expo Go on same Wi-Fi (see Start-MobilePhoneMode output below)"
+    $NoTunnel = $true
 }
-Write-Output ""
-Write-Output "Mobile (Expo Go on same Wi-Fi):"
-Write-Output "  .\Start-MobilePhoneMode.ps1"
+if (-not $SkipMobile) {
+    Write-Output ""
+    Write-Output "Mobile (Expo Go on same Wi-Fi):"
+    $mobileScript = Join-Path $Root "Start-MobilePhoneMode.ps1"
+    if (Test-Path -LiteralPath $mobileScript) {
+        try {
+            # LAN-only Expo by default; -UseTunnel is opt-in (AutoTunnel caused false tunnel switches while bundle warmed).
+            $mobileArgs = @{ FreshPort = $true; RestartExpo = $true }
+            if ($tunnelUrl) {
+                Write-Output "Propagating tunnel URL to mobile mode: $tunnelUrl"
+                Set-Content -LiteralPath $currentPhoneUrlPath -Value $tunnelUrl -Encoding ascii
+                $mobileConnectPath = Join-Path $Logs "mobile-connect.json"
+                $mobileBuildJs = Join-Path $Root "translator-mobile\constants\mobileBuild.js"
+                $mobileBuildId = ""
+                if (Test-Path -LiteralPath $mobileBuildJs) {
+                    $buildJsText = Get-Content -LiteralPath $mobileBuildJs -Raw
+                    $marker = "MOBILE_BUILD_ID"
+                    $quote = [char]34
+                    $markerIdx = $buildJsText.IndexOf($marker)
+                    if ($markerIdx -ge 0) {
+                        $openQuote = $buildJsText.IndexOf($quote, $markerIdx)
+                        if ($openQuote -ge 0) {
+                            $closeQuote = $buildJsText.IndexOf($quote, $openQuote + 1)
+                            if ($closeQuote -gt $openQuote) {
+                                $mobileBuildId = $buildJsText.Substring($openQuote + 1, $closeQuote - $openQuote - 1)
+                            }
+                        }
+                    }
+                }
+                if (Test-Path -LiteralPath $mobileConnectPath) {
+                    try {
+                        $connectJson = Get-Content -LiteralPath $mobileConnectPath -Raw | ConvertFrom-Json
+                        $connectJson | Add-Member -NotePropertyName tunnel_backend_url -NotePropertyValue $tunnelUrl -Force
+                        if ($mobileBuildId) {
+                            $connectJson | Add-Member -NotePropertyName build_id -NotePropertyValue $mobileBuildId -Force
+                        }
+                        $connectJson | ConvertTo-Json | Set-Content -LiteralPath $mobileConnectPath -Encoding utf8
+                    } catch {
+                        Write-Warning "Could not patch mobile-connect.json with tunnel URL: $($_.Exception.Message)"
+                    }
+                }
+            }
+            & $mobileScript @mobileArgs
+            $phoneTestScript = Join-Path $Root "Test-PhoneConnection.ps1"
+            if (Test-Path -LiteralPath $phoneTestScript) {
+                Write-Output ""
+                & $phoneTestScript
+            }
+        } catch {
+            Write-Warning "Start-MobilePhoneMode.ps1 failed: $($_.Exception.Message)"
+            Write-Output "  Run manually: .\Fix-ExpoPhone.ps1"
+        }
+    } else {
+        Write-Output "  .\Fix-ExpoPhone.ps1"
+    }
+    $mobileConnectPath = Join-Path $Logs "mobile-connect.json"
+    if (Test-Path -LiteralPath $mobileConnectPath) {
+        try {
+            $connect = Get-Content -LiteralPath $mobileConnectPath -Raw | ConvertFrom-Json
+            $expoUrl = [string]$connect.expo_url
+            $buildId = [string]$connect.build_id
+            if ($expoUrl) {
+                Write-Output ""
+                Write-Output ("EXPO GO ON YOUR PHONE: " + $expoUrl)
+                if ($buildId) {
+                    Write-Output ("Build badge should show: " + $buildId)
+                }
+                try {
+                    Set-Clipboard -Value $expoUrl
+                    Write-Output "Expo URL copied to Windows clipboard."
+                } catch {
+                    # Clipboard unavailable in some shells.
+                }
+            }
+        } catch {
+            # mobile-connect.json may be incomplete during startup.
+        }
+    }
+}
 Write-Output ""
 Write-Output "Logs:"
 Write-Output "  Backend:  $backendErr"
 Write-Output "  Frontend: $frontendErr"
 Write-Output "  Tunnel:   $tunnelErr"
+if ($QuickStart) {
+    Write-Output ""
+    Write-Output "QuickStart ready:"
+    Write-Output "  1. PC browser:  http://127.0.0.1:$BackendPort/"
+    if ($LanIp) {
+        Write-Output "  2. iPhone Safari: https://${LanIp}:8443/mobile/app  (mic on HTTPS)"
+    }
+    Write-Output "  3. Tap Start and speak - Pause ends the session."
+    Write-Output "  Full guide: QUICKSTART.md"
+    if ($health.ready -eq $true) {
+        Write-Output ""
+        Write-Output "Product readiness:"
+        try {
+            python (Join-Path $Root "scripts\product_readiness.py") --live "http://127.0.0.1:$BackendPort"
+        } catch {
+            Write-Warning "Product readiness check failed: $($_.Exception.Message)"
+        }
+    }
+}

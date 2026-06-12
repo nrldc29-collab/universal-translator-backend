@@ -28,9 +28,9 @@ export default function AdvancedFeatures({
   streamingStatus,
 }: AdvancedFeaturesProps) {
   const getNoiseLabel = () => {
-    if (noiseLevel < 30) return { label: "Quiet", color: "#16a34a" };
-    if (noiseLevel < 60) return { label: "Moderate", color: "#ca8a04" };
-    return { label: "Loud", color: "#dc2626" };
+    if (noiseLevel < 30) return { label: "Quiet", color: "#34d399" };
+    if (noiseLevel < 60) return { label: "Moderate", color: "#fbbf24" };
+    return { label: "Loud", color: "#f87171" };
   };
 
   const noise = getNoiseLabel();
@@ -39,14 +39,14 @@ export default function AdvancedFeatures({
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.container}>
       {/* Layer 1: Ultra-fast Speech */}
       <View style={[styles.card, styles.layer1]}>
-        <Text style={styles.layerTitle}>Ultra-Fast Speech</Text>
+        <Text style={styles.layerTitle}>Bridge pipeline</Text>
         <View style={styles.statusRow}>
-          <View style={[styles.dot, { backgroundColor: streamingStatus?.sttPartial ? "#16a34a" : "#6b7280" }]} />
-          <Text style={styles.statusText}>STT Streaming</Text>
+          <View style={[styles.dot, { backgroundColor: streamingStatus?.sttPartial ? "#2dd4bf" : "#475569" }]} />
+          <Text style={styles.statusText}>Hearing live</Text>
         </View>
         <View style={styles.statusRow}>
-          <View style={[styles.dot, { backgroundColor: streamingStatus?.translationPartial ? "#16a34a" : "#6b7280" }]} />
-          <Text style={styles.statusText}>Partial Translation</Text>
+          <View style={[styles.dot, { backgroundColor: streamingStatus?.translationPartial ? "#2dd4bf" : "#475569" }]} />
+          <Text style={styles.statusText}>Draft bridge</Text>
         </View>
       </View>
 
@@ -57,7 +57,7 @@ export default function AdvancedFeatures({
           <Text style={[styles.noiseLabel, { color: noise.color }]}>Noise: {noise.label}</Text>
         </View>
         <View style={styles.statusRow}>
-          <View style={[styles.dot, { backgroundColor: beamforming ? "#16a34a" : "#6b7280" }]} />
+          <View style={[styles.dot, { backgroundColor: beamforming ? "#2dd4bf" : "#475569" }]} />
           <Text style={styles.statusText}>Beamforming</Text>
         </View>
       </View>
@@ -66,17 +66,17 @@ export default function AdvancedFeatures({
       <View style={[styles.card, styles.layer3]}>
         <Text style={styles.layerTitle}>Overlapping Crowds</Text>
         <View style={styles.statusRow}>
-          <View style={[styles.dot, { backgroundColor: speakerDiarization ? "#16a34a" : "#6b7280" }]} />
+          <View style={[styles.dot, { backgroundColor: speakerDiarization ? "#2dd4bf" : "#475569" }]} />
           <Text style={styles.statusText}>Speaker Diarization</Text>
         </View>
-        <Text style={styles.hint}>Detects multiple speakers</Text>
+        <Text style={styles.hint}>Tracks who is on the bridge</Text>
       </View>
 
       {/* Layer 4: Technical Jargon */}
       <View style={[styles.card, styles.layer4]}>
         <Text style={styles.layerTitle}>Technical Jargon</Text>
         <View style={styles.statusRow}>
-          <View style={[styles.dot, { backgroundColor: contextMemory?.technicalTerms?.length ? "#16a34a" : "#6b7280" }]} />
+          <View style={[styles.dot, { backgroundColor: contextMemory?.technicalTerms?.length ? "#2dd4bf" : "#475569" }]} />
           <Text style={styles.statusText}>Context Memory</Text>
         </View>
         {contextMemory?.technicalTerms && (

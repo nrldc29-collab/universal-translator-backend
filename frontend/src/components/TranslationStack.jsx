@@ -11,6 +11,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { ArrowRight, Check, Copy, Keyboard, Languages, Loader2, Mic, Radio, Share2, Sparkles, X } from 'lucide-react';
 
 import { compactRepairLabel } from '../utils';
+import { targetPlaceholder, routeCaptions, conversationHistoryLabel, clarifyActions } from '../utils/productVoice';
 import TypingText from './TypingText';
 import LanguageFlag from './LanguageFlag';
 import ConversationActions from './ConversationActions';
@@ -50,6 +51,9 @@ export default function TranslationStack({
   confidenceWarningVisible,
   confidenceWarningMessage,
   setConfidenceWarningVisible,
+  humanCertificationStep = 'none',
+  onConfirmTranslation,
+  guardedSourceText = '',
   result,
   setClarifyVisible,
   setPipelineStage,
@@ -81,6 +85,8 @@ export default function TranslationStack({
   const MAX_CHARS = 400;
   const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
   const showEmptyTips = !hasSourceText && !hasTranslatedText && !textInputMode && !brainUi.visible;
+  const routeRoles = routeCaptions(true);
+  const bridgeFlowActive = streaming || processing || isTranslationActive || translationState === 'speaking';
 
   useEffect(() => {
     if (textInputMode) {
@@ -116,7 +122,7 @@ export default function TranslationStack({
       }
       return;
     }
-    copyToClipboard(trimmed, label === 'Translation' ? 'tr' : 'src');
+    copyToClipboard(trimmed, label === 'Bridge' ? 'tr' : 'src');
   }, [canShare, copyToClipboard, onNotify]);
   const aiRecoveryClass = [
     'ai-recovery',
@@ -131,31 +137,31 @@ export default function TranslationStack({
     .join(' ');
 
   return (
-    <section className="translation-stack">
+    <section className="translation-stack" aria-label="Conversation bridge">
 
       {showEmptyTips && (
         <div className="empty-state translation-empty-state" data-connection={connectionStatus} aria-live="polite">
           <div className="empty-state-icon">
             <Sparkles size={26} strokeWidth={1.8} />
           </div>
-          <h3 className="empty-state-title">Live speech translator</h3>
+          <h3 className="empty-state-title">Conversation bridge</h3>
           <p className="empty-state-description">
             {streaming
-              ? 'Listening now — speak in either language and we translate automatically.'
+              ? 'Bridge live — speak in your natural voice and meaning flows across languages.'
               : connectionStatus === 'online'
-              ? 'Tap Start once, then keep talking. Do not tap the mic between phrases — use Stop listening when done.'
+              ? 'Tap Start once, then talk naturally. Pause the bridge when you are done.'
               : connectionStatus === 'checking' || connectionStatus === 'warming'
-                ? 'Hang tight — we are getting the translator ready for you.'
-                : 'Connect to the server, then tap the mic once to start live recognition.'}
+                ? 'Opening the conversation bridge…'
+                : 'Link to your bridge server, then tap the mic to begin.'}
           </p>
           <div className="empty-state-tips">
             <span className="empty-state-tip">
               <Languages size={14} strokeWidth={2.2} />
-              Choose your two languages above
+              Pick the two languages you are bridging
             </span>
             <span className="empty-state-tip">
               <Radio size={14} strokeWidth={2.2} />
-              {streaming ? 'Always listening' : 'One tap starts continuous listening'}
+              {streaming ? 'Bridge listening' : 'One tap opens the bridge'}
             </span>
           </div>
           <div className="empty-state-actions">
@@ -168,7 +174,7 @@ export default function TranslationStack({
                   onClick={handleMicClick}
                 >
                   <Mic size={15} strokeWidth={2.4} />
-                  Start speaking
+                  Open bridge
                 </button>
                 )}
                 <button
@@ -177,7 +183,7 @@ export default function TranslationStack({
                   onClick={() => setTextInputMode(true)}
                 >
                   <Keyboard size={15} strokeWidth={2.4} />
-                  Type to translate
+                  Type to bridge
                 </button>
               </>
             ) : (
@@ -187,7 +193,7 @@ export default function TranslationStack({
                 </button>
                 {onOfflineRetry && (
                   <button type="button" className="empty-state-cta" onClick={onOfflineRetry}>
-                    Retry connection
+                    Relink bridge
                   </button>
                 )}
               </>
@@ -201,7 +207,7 @@ export default function TranslationStack({
           <div className="text-input-header">
             <span className="text-input-label">
               <Keyboard size={11} strokeWidth={2.5} />
-              Type to translate
+              Type to bridge
             </span>
             <button
               type="button"
@@ -218,7 +224,7 @@ export default function TranslationStack({
             value={textInputValue}
             onChange={e => setTextInputValue(e.target.value.slice(0, MAX_CHARS))}
             onKeyDown={handleTextKeyDown}
-            placeholder="Enter text to translate…"
+            placeholder="Enter words to bridge…"
             rows={3}
             disabled={isTextTranslating}
             aria-busy={isTextTranslating}
@@ -244,21 +250,21 @@ export default function TranslationStack({
               ) : (
                 <ArrowRight size={13} strokeWidth={2.5} />
               )}
-              {isTextTranslating ? 'Translating…' : 'Translate'}
+              {isTextTranslating ? 'Understanding…' : 'Bridge'}
             </button>
           </div>
         </div>
       )}
 
       {brainUi.visible && (
-        <section className={aiRecoveryClass} aria-label="AI recovery">
+        <section className={aiRecoveryClass} aria-label="Meaning check">
           <div className="ai-recovery-main">
             <span>{brainUi.message || brainModeLabel || 'Ready'}</span>
             {brainModeLabel && <strong>{brainModeLabel}</strong>}
           </div>
           {brainUi.speakerShift && brainUi.activeSpeakerLabel && (
             <div className="speaker-shift-line" role="status">
-              <span>Active speaker</span>
+              <span>Speaking on bridge</span>
               <strong>{brainUi.activeSpeakerLabel}</strong>
             </div>
           )}
@@ -298,7 +304,8 @@ export default function TranslationStack({
             isActive={transcriptState === 'live'}
             isSource={true}
           />
-          {sourceLanguageLabel}
+          <span className="card-role">{routeRoles.source}</span>
+          <span className="card-lang">{sourceLanguageLabel}</span>
         </span>
         <p className="transcript-text fade-in" key={sourceText}>
           {enableTypingAnimation && transcriptState === 'live' ? (
@@ -353,6 +360,16 @@ export default function TranslationStack({
       )}
 
       {!showEmptyTips && (
+      <div className={`stack-bridge-span${bridgeFlowActive ? ' active' : ''}`} aria-hidden="true">
+        <span className="stack-bridge-line" />
+        <span className="stack-bridge-hub">
+          <Languages size={11} strokeWidth={2.6} />
+        </span>
+        <span className="stack-bridge-line" />
+      </div>
+      )}
+
+      {!showEmptyTips && (
       <article
         className={`translation-card ${hasTranslatedText ? 'has-text' : ''} ${(processing || isTextTranslating) && !hasTranslatedText ? 'is-busy' : ''}`}
         data-state={translationState}
@@ -366,7 +383,8 @@ export default function TranslationStack({
             isActive={translationState === 'speaking' || isTranslationActive}
             isTarget={true}
           />
-          {targetLanguageLabel}
+          <span className="card-role target">{routeRoles.target}</span>
+          <span className="card-lang">{targetLanguageLabel}</span>
         </span>
         <p className="translation-text fade-in" key={translatedText}>
           {enableTypingAnimation && isTranslationActive && !typingComplete ? (
@@ -396,8 +414,8 @@ export default function TranslationStack({
             {canShare && (
               <button
                 type="button"
-                onClick={() => shareText(translatedText, 'Translation')}
-                aria-label="Share translation"
+                onClick={() => shareText(translatedText, 'Bridged meaning')}
+                aria-label="Share bridged meaning"
                 className="copy-action"
               >
                 <Share2 size={15} strokeWidth={2.4} />
@@ -406,7 +424,7 @@ export default function TranslationStack({
             <button
               type="button"
               onClick={() => copyToClipboard(translatedText, 'tr')}
-              aria-label="Copy translation"
+              aria-label="Copy bridged meaning"
               className={`copy-action ${copiedKey === 'tr' ? 'copied' : ''}`}
             >
               {copiedKey === 'tr' ? (
@@ -421,9 +439,28 @@ export default function TranslationStack({
       )}
 
       {confidenceWarningVisible && confidenceWarningMessage && (
-        <div className="confidence-warning-pill" role="status">
+        <div
+          className={`confidence-warning-pill${humanCertificationStep === 'required' ? ' cert-required' : ''}`}
+          role="status"
+        >
           <span className="confidence-warning-text">{confidenceWarningMessage}</span>
           <div className="clarify-pill-actions">
+            {humanCertificationStep !== 'none' && onConfirmTranslation && translatedText && (
+              <button
+                type="button"
+                className="clarify-yes"
+                onClick={() => {
+                  onConfirmTranslation({
+                    sourceText: guardedSourceText || sourceText,
+                    translatedText,
+                  });
+                  setConfidenceWarningVisible(false);
+                  haptic?.(20);
+                }}
+              >
+                Native confirmed
+              </button>
+            )}
             <button
               type="button"
               className="clarify-no"
@@ -444,13 +481,13 @@ export default function TranslationStack({
               className="clarify-yes"
               onClick={() => {
                 setClarifyVisible(false);
-                setPipelineStage?.('Listening');
-                setStatus?.('Ready to listen');
+                setPipelineStage?.('Bridge open');
+                setStatus?.(clarifyActions().ready);
                 handleMicClick?.();
                 haptic?.(20);
               }}
             >
-              Speak again
+              {clarifyActions().speakAgain}
             </button>
             <button
               type="button"
@@ -467,7 +504,8 @@ export default function TranslationStack({
         <div className="conversation-history">
           <div className="conversation-history-header">
             <span className="conversation-history-count">
-              {recentConversationTurns.length} exchange{recentConversationTurns.length !== 1 ? 's' : ''}
+              <Languages size={11} strokeWidth={2.4} aria-hidden="true" />
+              {conversationHistoryLabel(recentConversationTurns.length)}
             </span>
             <ConversationActions
               conversationTurns={recentConversationTurns}
@@ -489,7 +527,13 @@ export default function TranslationStack({
                   )}
                 </div>
                 {turn.source_text && <p className="turn-source">{turn.source_text}</p>}
-                {turn.translated_text && <p className="turn-translation">{turn.translated_text}</p>}
+                {turn.source_text && turn.translated_text && (
+                  <div className="turn-bridge-row" aria-hidden="true">
+                    <Languages size={10} strokeWidth={2.5} />
+                    <span className="turn-bridge-line" />
+                  </div>
+                )}
+                {turn.translated_text && <p className="turn-bridged">{turn.translated_text}</p>}
               </div>
             ))}
           </div>

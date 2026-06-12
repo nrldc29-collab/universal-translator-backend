@@ -19,7 +19,25 @@ from backend.streaming_helpers import (
     audio_suffix_for_mime,
     extract_client_voice_active,
     parse_provider_event,
+    run_pipeline_step,
 )
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_step_forwards_keyword_arguments():
+    def translate(text, source_language, target_language, *, strict_medical=False):
+        return text, source_language, target_language, strict_medical
+
+    result = await run_pipeline_step(
+        "translation",
+        translate,
+        "Take ibuprofen",
+        "en",
+        "es",
+        strict_medical=True,
+    )
+
+    assert result == ("Take ibuprofen", "en", "es", True)
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +122,15 @@ def test_should_translate_partial_long_enough_returns_true():
 def test_should_translate_partial_short_no_punct_returns_false():
     with patch("backend.streaming_helpers.get_partial_translation_min_words", return_value=5):
         assert should_translate_partial("hello there") is False
+
+
+def test_should_translate_partial_cjk_punctuation():
+    assert should_translate_partial("我需要帮助。") is True
+
+
+def test_should_translate_partial_cjk_length_units():
+    with patch("backend.streaming_helpers.get_partial_translation_min_words", return_value=3):
+        assert should_translate_partial("我需要帮助") is True
 
 
 # ---------------------------------------------------------------------------

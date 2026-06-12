@@ -77,7 +77,7 @@ export default function SystemBanners({
       {showMicBanner && (
         <div className="system-banner warning" role="alert">
           <BannerBody icon={Mic} iconClass="warning">
-            Microphone access is blocked. Allow the mic to use voice translation.
+            Microphone access is blocked. Allow the mic to open the conversation bridge.
           </BannerBody>
           <div className="banner-actions">
             <button
@@ -97,7 +97,7 @@ export default function SystemBanners({
       {showOfflineBanner && (
         <div className="system-banner warning" role="alert">
           <BannerBody icon={WifiOff} iconClass="warning">
-            Can&apos;t reach the translator server.
+            Can&apos;t reach the bridge server.
           </BannerBody>
           <div className="banner-actions">
             <button
@@ -122,7 +122,7 @@ export default function SystemBanners({
       {showInstallNudge && !installNudgeDismissed && (
         <div className="system-banner install" role="status">
           <BannerBody icon={Download} iconClass="install">
-            Install Anai for faster access and offline-ready shortcuts.
+            Install Anai for faster bridge access and offline-ready shortcuts.
           </BannerBody>
           <div className="banner-actions">
             <button
@@ -164,7 +164,7 @@ export default function SystemBanners({
       {reconnectToastVisible && (
         <div className="system-banner danger" role="alert">
           <BannerBody icon={AlertTriangle} iconClass="danger">
-            Connection lost. Retry?
+            Connection lost — tap to relink the bridge.
           </BannerBody>
           <div className="banner-actions">
             <button

@@ -1,7 +1,9 @@
 import logging
+import gc
 from threading import Lock
 
 from backend.config import get_nllb_model, get_translation_device, get_translation_num_beams
+from .lightweight_translator import LightweightTranslator
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +16,23 @@ class MarianTranslator:
         self._model_lock = Lock()
         self._cache = {}
         self._cache_lock = Lock()
+        self._memory_failed_pairs = set()
+        self._fallback = LightweightTranslator()
         self.nllb_model = get_nllb_model()
+
+    def _mark_memory_failure(self, source_language: str, target_language: str) -> None:
+        key = (source_language, target_language)
+        with self._model_lock:
+            self._models.pop(key, None)
+            self._memory_failed_pairs.add(key)
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except (ImportError, RuntimeError, OSError):
+            pass
 
     def _nllb_language(self, language: str) -> str:
         codes = {
@@ -187,13 +205,24 @@ class MarianTranslator:
 
         source = source_language or self.default_source_language
         target = target_language or self.default_target_language
+        if (source, target) in self._memory_failed_pairs:
+            return self._fallback.translate(text, source, target)
         cache_key = (source, target, "quality" if quality else "fast", " ".join(text.lower().split()))
         with self._cache_lock:
             cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
-        translator = self._load_model(source, target)
-        translated = self._generate_translation(text, translator, quality=quality)
+        try:
+            translator = self._load_model(source, target)
+            translated = self._generate_translation(text, translator, quality=quality)
+        except MemoryError:
+            logger.exception(
+                "Local translation exhausted memory for %s->%s; disabling that neural pair and using lightweight fallback",
+                source,
+                target,
+            )
+            self._mark_memory_failure(source, target)
+            translated = self._fallback.translate(text, source, target)
         with self._cache_lock:
             self._cache[cache_key] = translated
             if len(self._cache) > 500:

@@ -43,11 +43,17 @@ class TestSentenceCase:
 
 
 class TestApplyContextMemory:
-    def test_returns_text_unchanged(self):
+    def test_returns_text_unchanged_without_history(self):
         assert apply_context_memory("Hello", {}) == "Hello"
 
-    def test_does_not_mutate_with_speaker_context(self):
-        assert apply_context_memory("text", {}, speaker_context={"speaker": "A"}) == "text"
+    def test_restores_named_terms_from_conversation_history(self):
+        context = [{"source_text": "Meet Marie at CVS.", "translated_text": "..."}]
+        result = apply_context_memory("marie called", context)
+        assert "Marie" in result
+
+    def test_restores_quoted_names_from_source(self):
+        result = refine_translation('Call "Marie" now.', 'appelez marie maintenant.')
+        assert "Marie" in result
 
 
 class TestRefineTranslation:
@@ -77,3 +83,22 @@ class TestRefineTranslation:
         result = refine_translation("hello", "Hola, ¿cómo estás?")
         assert "Hola" in result
         assert "estás" in result
+
+    def test_does_not_inject_capitalized_greeting_as_a_name(self):
+        assert refine_translation("Hello", "Hola") == "Hola"
+
+    def test_does_not_inject_cjk_source_text_as_a_name(self):
+        assert refine_translation("\u3053\u3093\u306b\u3061\u306f", "Hello.") == "Hello."
+
+    def test_restores_proper_noun_casing_from_source(self):
+        result = refine_translation("Meet Marie at CVS.", "Rencontrez marie à cvs.")
+        assert "Marie" in result
+        assert "CVS" in result
+
+    def test_injects_missing_proper_nouns(self):
+        result = refine_translation("Call Marie tomorrow.", "Llámame mañana.")
+        assert "Marie" in result
+
+    def test_preserves_target_like_when_not_in_source(self):
+        result = refine_translation("I enjoy music.", "Me gusta la música.")
+        assert "gusta" in result.lower()

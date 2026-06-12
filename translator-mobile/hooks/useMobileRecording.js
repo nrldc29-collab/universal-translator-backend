@@ -3,30 +3,24 @@ import { Audio } from "expo-av";
 import { playTtsAudio } from "../services/audio-stream";
 import * as SecureStore from "expo-secure-store";
 
-const AUDIO_QUALITY_KEY = "audio_quality";
+import { AUDIO_QUALITIES, AUDIO_QUALITY_KEY, buildRecordingOptions } from "../constants/audioQuality";
+
 const MAX_RETRIES = 3;
 const UPLOAD_TIMEOUT = 30000;
 
-const AUDIO_QUALITIES = {
-  LOW: {
-    preset: Audio.RecordingOptionsPresets.LOW_QUALITY,
-    label: "Low Quality",
-    description: "Smaller files, faster upload",
-  },
-  MEDIUM: {
-    preset: Audio.RecordingOptionsPresets.MEDIUM_QUALITY,
-    label: "Medium Quality",
-    description: "Balanced quality and size",
-  },
-  HIGH: {
-    preset: Audio.RecordingOptionsPresets.HIGH_QUALITY,
-    label: "High Quality",
-    description: "Best quality, larger files",
-  },
-};
+const AUDIO_QUALITIES_WITH_PRESETS = Object.fromEntries(
+  Object.entries(AUDIO_QUALITIES).map(([key, quality]) => [
+    key,
+    {
+      ...quality,
+      preset: buildRecordingOptions(key),
+    },
+  ]),
+);
 
 export function useMobileRecording({
   isConnected,
+  isStreaming = false,
   sourceLanguage,
   targetLanguage,
   wsUrl,
@@ -38,21 +32,47 @@ export function useMobileRecording({
   setResult,
   isPlayingTtsRef,
   setIsPlayingTts,
+  audioQuality: parentAudioQuality,
+  shouldUpload,
 }) {
-  const [audioQuality, setAudioQuality] = useState("HIGH");
+  const [internalAudioQuality, setInternalAudioQuality] = useState("HIGH");
+  const audioQuality = parentAudioQuality || internalAudioQuality;
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const retryCountRef = useRef(0);
+  const uploadAbortRef = useRef(null);
+  const uploadRetryDelayRef = useRef(null);
+  const uploadEpochRef = useRef(0);
+
+  function clearUploadRetryDelay() {
+    if (uploadRetryDelayRef.current) {
+      clearTimeout(uploadRetryDelayRef.current);
+      uploadRetryDelayRef.current = null;
+    }
+  }
 
   useEffect(() => {
+    if (parentAudioQuality) return undefined;
     loadAudioQuality();
+    return () => {
+      clearUploadRetryDelay();
+      uploadAbortRef.current?.abort();
+      uploadAbortRef.current = null;
+    };
+  }, [parentAudioQuality]);
+
+  useEffect(() => () => {
+    uploadEpochRef.current += 1;
+    clearUploadRetryDelay();
+    uploadAbortRef.current?.abort();
+    uploadAbortRef.current = null;
   }, []);
 
   async function loadAudioQuality() {
     try {
       const storedQuality = await SecureStore.getItemAsync(AUDIO_QUALITY_KEY);
-      if (storedQuality && AUDIO_QUALITIES[storedQuality]) {
-        setAudioQuality(storedQuality);
+      if (storedQuality && AUDIO_QUALITIES_WITH_PRESETS[storedQuality]) {
+        setInternalAudioQuality(storedQuality);
       }
     } catch (error) {
       console.error("Error loading audio quality setting:", error);
@@ -68,20 +88,26 @@ export function useMobileRecording({
   }
 
   async function updateAudioQuality(quality) {
-    if (AUDIO_QUALITIES[quality]) {
-      setAudioQuality(quality);
+    if (!AUDIO_QUALITIES_WITH_PRESETS[quality]) return;
+    if (!parentAudioQuality) {
+      setInternalAudioQuality(quality);
       await saveAudioQuality(quality);
     }
   }
 
   async function startRecording() {
     if (!isConnected) {
-      setStatus("Connect to backend first");
+      setStatus("Link the bridge first");
       setStatusType("error");
       return;
     }
+    if (isStreaming) {
+      setStatus("Pause the live bridge first");
+      setStatusType("warning");
+      return;
+    }
     if (isUploading) {
-      setStatus("Upload in progress, please wait");
+      setStatus("Bridge upload in progress…");
       setStatusType("warning");
       return;
     }
@@ -97,7 +123,7 @@ export function useMobileRecording({
         playsInSilentModeIOS: true,
         staysActiveInBackground: false,
       });
-      const recordingOptions = AUDIO_QUALITIES[audioQuality].preset;
+      const recordingOptions = AUDIO_QUALITIES_WITH_PRESETS[audioQuality].preset;
       const { recording: newRecording } = await Audio.Recording.createAsync(recordingOptions);
       setRecording(newRecording);
       setStatus("Recording...");
@@ -129,16 +155,30 @@ export function useMobileRecording({
   }
 
   async function uploadAudio(uri) {
+    if (typeof shouldUpload === "function" && !shouldUpload()) {
+      setIsUploading(false);
+      setUploadProgress(0);
+      return;
+    }
+    uploadEpochRef.current += 1;
+    const epoch = uploadEpochRef.current;
     setIsUploading(true);
     setUploadProgress(0);
     retryCountRef.current = 0;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      if (epoch !== uploadEpochRef.current) return;
+      if (typeof shouldUpload === "function" && !shouldUpload()) {
+        setIsUploading(false);
+        setUploadProgress(0);
+        return;
+      }
       try {
         setStatus(`Uploading audio... (${attempt + 1}/${MAX_RETRIES})`);
         setStatusType("connecting");
 
         const controller = new AbortController();
+        uploadAbortRef.current = controller;
         const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT);
 
         const form = new FormData();
@@ -147,16 +187,25 @@ export function useMobileRecording({
         form.append("target_language", targetLanguage);
         form.append("synthesize_audio", "true");
 
-        const response = await fetch(`${wsUrl}/translate/audio`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-          body: form,
-          signal: controller.signal,
-        });
+        const apiBase = String(wsUrl || "").trim().replace(/\/+$/, "");
+        let response;
+        try {
+          response = await fetch(`${apiBase}/translate/audio`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            body: form,
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+          if (uploadAbortRef.current === controller) {
+            uploadAbortRef.current = null;
+          }
+        }
 
-        clearTimeout(timeoutId);
+        if (epoch !== uploadEpochRef.current) return;
 
         const data = await response.json();
         
@@ -172,7 +221,7 @@ export function useMobileRecording({
         if (data.audio_base64) {
           try {
             isPlayingTtsRef.current = true;
-            setIsPlayingTts(true);
+            setIsPlayingTts?.(true);
             const ok = await playTtsAudio(data.audio_base64, data.mime_type || "audio/wav");
             if (!ok) {
               setStatus("TTS playback failed");
@@ -180,13 +229,19 @@ export function useMobileRecording({
             }
           } finally {
             isPlayingTtsRef.current = false;
-            setIsPlayingTts(false);
+            setIsPlayingTts?.(false);
           }
         }
         
         setIsUploading(false);
         return;
       } catch (error) {
+        if (epoch !== uploadEpochRef.current) return;
+        if (error?.name === "AbortError") {
+          setIsUploading(false);
+          setUploadProgress(0);
+          return;
+        }
         console.error(`Upload attempt ${attempt + 1} failed:`, error);
         
         if (attempt === MAX_RETRIES - 1) {
@@ -197,13 +252,32 @@ export function useMobileRecording({
         } else {
           const delay = Math.pow(2, attempt) * 1000;
           setStatus(`Retrying in ${delay / 1000}s...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise((resolve) => {
+            clearUploadRetryDelay();
+            uploadRetryDelayRef.current = setTimeout(() => {
+              uploadRetryDelayRef.current = null;
+              resolve();
+            }, delay);
+          });
+          if (epoch !== uploadEpochRef.current) {
+            setIsUploading(false);
+            return;
+          }
+          if (typeof shouldUpload === "function" && !shouldUpload()) {
+            setIsUploading(false);
+            setUploadProgress(0);
+            return;
+          }
         }
       }
     }
   }
 
   function cancelUpload() {
+    uploadEpochRef.current += 1;
+    clearUploadRetryDelay();
+    uploadAbortRef.current?.abort();
+    uploadAbortRef.current = null;
     setIsUploading(false);
     setUploadProgress(0);
     setStatus("Upload cancelled");
@@ -219,6 +293,6 @@ export function useMobileRecording({
     setAudioQuality: updateAudioQuality,
     isUploading,
     uploadProgress,
-    AUDIO_QUALITIES,
+    AUDIO_QUALITIES: AUDIO_QUALITIES_WITH_PRESETS,
   };
 }

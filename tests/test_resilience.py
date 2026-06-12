@@ -118,7 +118,7 @@ class TestOllamaTranslator:
     def test_cache_hit(self):
         from translation.hybrid_translator import OllamaTranslator
         t = OllamaTranslator()
-        t._cache[("en", "es", "hello")] = "hola"
+        t._cache[("en", "es", "hello", "")] = "hola"
         assert t.translate("hello", "en", "es") == "hola"
 
     def test_same_language(self):

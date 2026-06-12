@@ -7,16 +7,16 @@ import { X, Keyboard } from 'lucide-react';
 
 const SHORTCUT_GROUPS = [
   {
-    title: 'Voice',
+    title: 'Bridge',
     items: [
-      { key: 'Space', label: 'Toggle microphone' },
+      { key: 'Space', label: 'Open or pause the bridge' },
       { key: 'M', label: 'Mute / unmute' },
     ],
   },
   {
-    title: 'Conversation',
+    title: 'Bridge history',
     items: [
-      { key: 'C', label: 'Clear conversation' },
+      { key: 'C', label: 'Clear bridge exchanges' },
     ],
   },
   {

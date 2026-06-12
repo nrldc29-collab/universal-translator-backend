@@ -17,14 +17,14 @@ import logging
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, field_validator
 from starlette.websockets import WebSocketDisconnect
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-from backend.conversation import ConversationBrain
+from backend.conversation import ConversationBrain, ConversationBrainRegistry
 from backend.memory import ConversationMemory
 from backend.refine import refine_translation
 from backend.speakers import SpeakerMemory, detect_language_heuristic, resolve_barrier_route
@@ -65,7 +65,15 @@ from backend.sessions import session_registry
 from backend.streaming import websocket_audio_translation, websocket_text_translation
 from backend.streaming_helpers import audio_suffix_for_bytes, is_internal_translation_artifact
 from speech import SileroVoiceActivityDetector
-from backend.confidence import ConfidenceEngine, estimate_stt_confidence, estimate_translation_confidence, detect_ambiguities, clarification_for
+from backend.confidence import (
+    ConfidenceEngine,
+    assess_translation_confidence,
+    estimate_stt_confidence,
+    estimate_translation_confidence,
+    detect_ambiguities,
+    clarification_for,
+)
+from backend.communication_brain import analyze_communication
 from backend.cip_client import call_cip_brain, cip_health_snapshot, cip_settings
 from backend.cip_bridge import apply_cip_decision, choose_translation, get_cip_confidence, should_block_translation_for_cip
 from backend import assistant as naia_assistant
@@ -81,6 +89,7 @@ except (ImportError, ModuleNotFoundError):
 # `backend.api` keeps the route table and lifespan; everything else
 # is split out so this file stays readable.
 from backend.api_models import (
+    AssistantChatRequest,
     ImageTranslationResponse,
     LoginRequest,
     TextToSpeechRequest,
@@ -111,6 +120,7 @@ from backend.api_health import (
 )
 from backend.tts_cache import (
     cached_tts_payload as _cached_tts_payload_impl,
+    is_valid_tts_wav as _is_valid_tts_wav,
     is_tts_cache_key as _is_shared_tts_cache_key,
     tts_cache_path as _shared_tts_cache_path,
 )
@@ -326,7 +336,7 @@ async def lifespan(app_instance: FastAPI):
         runtime_state["ready"] = False
 
 
-app = FastAPI(title="Anai Translator", lifespan=lifespan)
+app = FastAPI(title="Anai", lifespan=lifespan)
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -353,9 +363,11 @@ try:
 except ImportError:
     logger.info("AILang integration not available (optional dependency)")
 
-pipeline = AnaiTranslatorPipeline()
+from backend.config import get_ailang_enabled
+
+pipeline = AnaiTranslatorPipeline(enable_ailang=get_ailang_enabled())
 vad = SileroVoiceActivityDetector()
-conversation_brain = ConversationBrain()
+conversation_brain = ConversationBrainRegistry()
 memory = ConversationMemory()
 speaker_memory = SpeakerMemory()
 
@@ -378,6 +390,217 @@ def root(request: Request):
 @app.get("/health")
 async def health():
     return _runtime_payload()
+
+
+def _mobile_connect_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "logs" / "mobile-connect.json"
+
+
+def _load_mobile_connect() -> dict:
+    path = _mobile_connect_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+
+
+@app.get("/mobile/info")
+def mobile_connect_info():
+    """JSON used by the phone app and setup page."""
+    info = _load_mobile_connect()
+    backend_url = str(info.get("backend_url") or "").strip().rstrip("/")
+    backend_https_url = str(info.get("backend_https_url") or "").strip().rstrip("/")
+    https_port = int(info.get("https_port") or 8443)
+    web_app_url = str(info.get("web_app_url") or "").strip()
+    web_app_https_url = str(info.get("web_app_https_url") or "").strip()
+    if not web_app_url and backend_url:
+        web_app_url = f"{backend_url}/mobile/app"
+    if not web_app_https_url and backend_https_url:
+        web_app_https_url = f"{backend_https_url}/mobile/app"
+    elif not web_app_https_url and backend_url:
+        try:
+            from urllib.parse import urlparse, urlunparse
+
+            parsed = urlparse(backend_url)
+            web_app_https_url = urlunparse(parsed._replace(scheme="https", netloc=f"{parsed.hostname}:{https_port}", path="/mobile/app"))
+        except Exception:
+            web_app_https_url = ""
+    payload = {
+        "build_id": info.get("build_id") or "",
+        "expo_url": info.get("expo_url") or "",
+        "backend_url": backend_url,
+        "backend_https_url": backend_https_url,
+        "web_app_url": web_app_url,
+        "web_app_https_url": web_app_https_url,
+        "phone_setup_url": info.get("phone_setup_url") or (f"{backend_url}/mobile" if backend_url else ""),
+        "lan_ip": info.get("lan_ip") or "",
+        "expo_port": info.get("expo_port") or 8082,
+        "https_port": https_port,
+        "server_ok": bool(
+            (backend_url or backend_https_url)
+            and runtime_state.get("ready", False)
+        ),
+        "ready": bool(runtime_state.get("ready", False)),
+        "tunnel_backend_url": str(info.get("tunnel_backend_url") or "").strip().rstrip("/"),
+        "release": RELEASE_ID,
+    }
+    return JSONResponse(payload, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+
+
+def _mobile_interpreter_html() -> str:
+    path = Path(__file__).resolve().parent / "mobile_interpreter.html"
+    return path.read_text(encoding="utf-8")
+
+
+@app.get("/mobile/app", response_class=HTMLResponse)
+def mobile_web_interpreter(request: Request):
+    """Mobile-first web interpreter — works in iPhone Safari without Expo Go cache issues."""
+    info = _load_mobile_connect()
+    https_url = str(info.get("web_app_https_url") or "").strip()
+    if https_url and str(request.url.scheme).lower() == "http":
+        return RedirectResponse(https_url, status_code=307)
+    return HTMLResponse(_mobile_interpreter_html(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/mobile", response_class=HTMLResponse)
+def mobile_connect_page():
+    """Safari-friendly setup page when Expo Go is stuck on a stale cached bundle."""
+    info = _load_mobile_connect()
+    build_id = escape(str(info.get("build_id") or "unknown"))
+    expo_url = str(info.get("expo_url") or "").strip()
+    backend_url = str(info.get("backend_url") or "").strip().rstrip("/")
+    web_url = (backend_url + "/mobile/app") if backend_url else "/mobile/app"
+    backend_https_url = str(info.get("backend_https_url") or "").strip().rstrip("/")
+    web_https_url = str(info.get("web_app_https_url") or "").strip()
+    if not web_https_url and backend_https_url:
+        web_https_url = f"{backend_https_url}/mobile/app"
+    safe_expo = escape(expo_url)
+    safe_web = escape(web_url)
+    safe_web_https = escape(web_https_url) if web_https_url else ""
+    expo_href = quote(expo_url, safe=":/?#[]@!$&'()*+,;=") if expo_url else ""
+    web_btn = (
+        f'<a class="btn btn-primary" href="{safe_web_https}">Open voice interpreter with microphone (HTTPS)</a>'
+        if safe_web_https
+        else f'<a class="btn btn-primary" href="{safe_web}">Open voice interpreter (Safari)</a>'
+    )
+    web_http_btn = (
+        f'<a class="btn btn-secondary" href="{safe_web}">HTTP link (no mic on iPhone)</a>'
+        if safe_web_https
+        else ""
+    )
+    expo_btn = (
+        f'<a class="btn btn-secondary" href="{expo_href}">Open native app in Expo Go</a>'
+        if expo_href
+        else ""
+    )
+    copy_line = f'<p class="mono" id="expoUrl">{safe_expo}</p>' if safe_expo else "<p>Run Start-MobilePhoneMode.ps1 on your PC first.</p>"
+    stale_expo = ""
+    lan_ip = str(info.get("lan_ip") or "").strip()
+    expo_port = int(info.get("expo_port") or 8082)
+    if lan_ip and expo_port != 8081:
+        stale_expo = f"exp://{lan_ip}:8081"
+    stale_line = (
+        f'<p class="meta">Stale Expo cache URL (also works): <span class="mono" style="display:inline;padding:4px 8px;">{escape(stale_expo)}</span></p>'
+        if stale_expo
+        else ""
+    )
+    metro_host = lan_ip or (backend_url.split("//")[-1].split(":")[0] if "://" in backend_url else "")
+    metro_probe = (
+        f"""
+      <p id="metroProbe" class="meta">Checking Metro from this phone…</p>
+      <script>
+      (function () {{
+        var host = {json.dumps(metro_host)};
+        var port = {expo_port};
+        var buildId = {json.dumps(str(info.get("build_id") or ""))};
+        var el = document.getElementById("metroProbe");
+        if (!host) {{
+          el.textContent = "Metro check skipped (no LAN IP).";
+          return;
+        }}
+        fetch("http://" + host + ":" + port + "/.anai/bundle-ready", {{ cache: "no-store" }})
+          .then(function (r) {{ return r.text(); }})
+          .then(function (t) {{
+            var ok = /^1:\\d+/.test(String(t || "").trim());
+            el.innerHTML = ok
+              ? '<span style="color:#86efac;font-weight:700">Metro reachable from this phone — bundle ready.</span> Build ' + buildId
+              : '<span style="color:#fbbf24;font-weight:700">Metro reachable but bundle still warming.</span> Wait 30–60s on PC, then retry Expo Go.';
+          }})
+          .catch(function () {{
+            el.innerHTML = '<span style="color:#f87171;font-weight:700">Cannot reach Metro from this phone.</span> '
+              + 'Turn on Settings → Expo Go → Local Network, use same Wi‑Fi as PC (not guest), or open HTTPS Safari app above.';
+          }});
+      }})();
+      </script>"""
+        if metro_host
+        else ""
+    )
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Anai Phone Setup</title>
+  <style>
+    body {{
+      margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #050711; color: #e2e8f0; padding: 20px; line-height: 1.5;
+    }}
+    .card {{
+      max-width: 520px; margin: 0 auto; padding: 22px; border-radius: 18px;
+      border: 1px solid rgba(103, 232, 249, 0.35); background: #0a0f1d;
+    }}
+    h1 {{ margin: 0 0 8px; font-size: 1.45rem; }}
+    .accent {{ color: #67e8f9; }}
+    .warn {{ color: #fbbf24; font-weight: 700; margin: 12px 0; }}
+    .ok {{ color: #86efac; font-weight: 700; margin: 12px 0; }}
+    .mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
+      background: #03050a; padding: 12px; border-radius: 10px; border: 1px solid #1e293b; font-size: 0.85rem; }}
+    ol {{ padding-left: 1.2rem; margin: 12px 0; }}
+    li {{ margin: 8px 0; }}
+    .btn {{
+      display: block; margin-top: 12px; padding: 15px 18px; border-radius: 14px;
+      font-weight: 800; text-decoration: none; text-align: center; font-size: 1rem;
+    }}
+    .btn-primary {{ background: #22d3ee; color: #07131f; }}
+    .btn-secondary {{ background: #1e293b; color: #e2e8f0; border: 1px solid #334155; }}
+    .meta {{ color: #94a3b8; font-size: 0.88rem; margin-top: 14px; }}
+    .section {{ margin-top: 18px; padding-top: 14px; border-top: 1px solid #1e293b; }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Anai <span class="accent">Phone Setup</span></h1>
+    <p class="warn">Stuck on Offline + &quot;Network restored&quot;? Expo Go is using OLD cached code — not the fixed app.</p>
+    <p class="ok">iPhone microphone requires the <strong>HTTPS</strong> link below (accept the certificate warning once).</p>
+    <p>Server build: <strong>{build_id}</strong></p>
+    {web_btn}
+    {web_http_btn}
+    <div class="section">
+      <p><strong>Native app (Expo Go)</strong></p>
+      <ol>
+        <li>Delete this project from Expo Go home (long-press → Delete).</li>
+        <li>Force-close Expo Go completely.</li>
+        <li>Settings → Expo Go → <strong>Local Network ON</strong>.</li>
+        <li>Same Wi‑Fi as your PC, then tap below.</li>
+      </ol>
+      {copy_line}
+      {stale_line}
+      {metro_probe}
+      {expo_btn}
+      <p class="meta">Native app badge should show <strong>{build_id}</strong> when offline. Tap <strong>Connect</strong> if you see &quot;Not connected&quot;.</p>
+    </div>
+    <p class="meta">Server: {escape(backend_url)}</p>
+  </div>
+</body>
+</html>""",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/debug/version")
@@ -708,10 +931,7 @@ def _normalize_audio_response_format(response_format: str | None) -> str:
 
 
 def _tts_file_ready(path: Path) -> bool:
-    try:
-        return path.is_file() and path.stat().st_size >= 100
-    except OSError:
-        return False
+    return _is_valid_tts_wav(path)
 
 
 def _synthesize_tts_resilient(
@@ -1097,11 +1317,13 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
     usage_limiter.track(identity, "text_translations")
     request.source_language = _normalize_language(request.source_language, "en")
     request.target_language = _normalize_language(request.target_language, "ht")
+    # Text API callers set source/target explicitly; do not auto-flip via barrier
+    # detection (short Creole phrases like "mèsi" can be misread as French).
     route = resolve_barrier_route(
         request.text,
         request.source_language,
         request.target_language,
-        enabled=True,
+        enabled=False,
     )
     request.source_language = route["source_language"]
     request.target_language = route["target_language"]
@@ -1167,6 +1389,32 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         memory_context = memory.get_context()
         speaker_context = speaker_memory.get_context(speaker_id)
         refined_text = refine_translation(request.text, interim.translated_text, memory_context, speaker_context)
+        from backend.glossary import (
+            check_translation_safety,
+            get_session_glossary,
+            glossary_coverage_score,
+            try_direct_glossary_translation,
+        )
+
+        glossary = get_session_glossary(pipeline.session_id)
+        glossary_trusted = False
+        direct_glossary = try_direct_glossary_translation(
+            request.text,
+            glossary,
+            request.source_language,
+            request.target_language,
+        )
+        if direct_glossary:
+            safety = check_translation_safety(
+                request.text,
+                direct_glossary,
+                source_lang=request.source_language,
+                target_lang=request.target_language,
+                strict_medical=True,
+            )
+            if safety.get("safe"):
+                refined_text = direct_glossary
+                glossary_trusted = True
         stt_conf = 0.9
         tr_conf = estimate_translation_confidence(request.text, refined_text)
         semantic_context = {
@@ -1186,18 +1434,50 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
             speaker_context=speaker_context,
             semantic_context=semantic_context,
         )
-        cip_clarify = should_block_translation_for_cip(cip, refined_text, tr_conf)
+        cip_clarify = should_block_translation_for_cip(cip, refined_text, tr_conf) and not glossary_trusted
         final_text = "" if cip_clarify else choose_translation(cip, refined_text)
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
             semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"
-        # Confidence/clarify for text path
-        tr_conf = estimate_translation_confidence(request.text, final_text)
+        text_analysis = analyze_communication(
+            request.text,
+            context=memory_context,
+            speaker_context=speaker_context,
+            semantic_context=semantic_context,
+            source_language=request.source_language,
+        )
+        text_glossary_cov = glossary_coverage_score(
+            request.text,
+            final_text,
+            get_session_glossary(pipeline.session_id),
+            request.source_language,
+            request.target_language,
+        )
+        lang_info = (text_analysis or {}).get("language") or {}
+        assessed = assess_translation_confidence(
+            request.text,
+            final_text,
+            stt_confidence=stt_conf,
+            context_match=text_analysis.get("context_match"),
+            domains=text_analysis.get("domains") if isinstance(text_analysis.get("domains"), dict) else None,
+            glossary_coverage=text_glossary_cov,
+            source_language=request.source_language,
+            register=text_analysis.get("register"),
+            tone=text_analysis.get("tone"),
+            emotion=text_analysis.get("emotion"),
+            intent=text_analysis.get("intent"),
+            code_switching=bool(lang_info.get("code_switching")),
+            glossary_trusted=glossary_trusted,
+        )
+        tr_conf = assessed.get("translation_confidence", estimate_translation_confidence(request.text, final_text))
         cip_conf = get_cip_confidence(cip)
-        conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
+        conf_score = cip_conf if cip_conf is not None else assessed.get("confidence", confidence_engine.evaluate(stt_conf, tr_conf))
+        low_confidence_block = bool(
+            assessed.get("low_confidence") or assessed.get("needs_native_certification")
+        ) and not cip_clarify and not glossary_trusted
         audio_path = None
         audio_payload = None
-        if request.synthesize_audio and final_text and not cip_clarify:
+        if request.synthesize_audio and final_text and not cip_clarify and not low_confidence_block:
             try:
                 audio_payload = _cached_tts_payload(final_text, request.target_language, audio_response_format, google_api_key=_google_key)
                 audio_path = audio_payload["audio_output_path"]
@@ -1226,9 +1506,21 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
         if interim.ailang_metadata:
             response_dict["ailang_metadata"] = interim.ailang_metadata
         
-        if conf_score < 0.4 and not response_dict.get("clarify"):
+        if (low_confidence_block or conf_score < 0.4) and not response_dict.get("clarify"):
             response_dict["clarify"] = True
-            response_dict["clarify_message"] = clarification_for(request.text, detect_ambiguities(request.text))
+            response_dict["clarify_message"] = (
+                assessed.get("confidence_message")
+                or clarification_for(request.text, detect_ambiguities(request.text))
+            )
+        response_dict["confidence"] = conf_score
+        response_dict["low_confidence"] = bool(low_confidence_block or assessed.get("low_confidence"))
+        response_dict["confidence_message"] = assessed.get("confidence_message") or ""
+        response_dict["needs_confirmation"] = bool(assessed.get("needs_confirmation"))
+        response_dict["native_speaker_listen_recommended"] = bool(assessed.get("native_speaker_listen_recommended"))
+        response_dict["needs_native_certification"] = bool(assessed.get("needs_native_certification"))
+        response_dict["certification_message"] = assessed.get("certification_message") or ""
+        if assessed.get("native_speaker_listen_recommended") and not response_dict.get("confidence_message"):
+            response_dict["confidence_message"] = assessed.get("certification_message") or ""
         if audio_payload and not response_dict.get("clarify"):
             response_dict.update(audio_payload)
             response_dict["translated_text"] = final_text
@@ -1287,7 +1579,7 @@ def translate_text(request: TextTranslationRequest, identity: str = Depends(auth
                 "session": session_payload,
             })
         return response_dict
-    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError, MemoryError):
         usage_limiter.track(identity, "errors")
         observability.increment("translation_failures_total")
         observability.record_event("translation_failure", identity=identity, mode="text")
@@ -1371,13 +1663,46 @@ async def translate_audio(
         if isinstance(cip, dict) and isinstance(cip.get("analysis"), dict):
             semantic_context["last_intent"] = cip["analysis"].get("intent") or "statement"
             semantic_context["conversation_mood"] = cip["analysis"].get("tone") or "neutral"
-        # Confidence/clarify for audio path
-        tr_conf = estimate_translation_confidence(source_text, final_text)
+        audio_analysis = analyze_communication(
+            source_text,
+            context=memory_context,
+            speaker_context=speaker_context,
+            semantic_context=semantic_context,
+            source_language=source_language,
+        )
+        from backend.glossary import get_session_glossary, glossary_coverage_score
+
+        audio_glossary_cov = glossary_coverage_score(
+            source_text,
+            final_text,
+            get_session_glossary(pipeline.session_id),
+            source_language,
+            target_language,
+        )
+        audio_lang_info = (audio_analysis or {}).get("language") or {}
+        audio_assessed = assess_translation_confidence(
+            source_text,
+            final_text,
+            stt_confidence=stt_conf,
+            context_match=audio_analysis.get("context_match"),
+            domains=audio_analysis.get("domains") if isinstance(audio_analysis.get("domains"), dict) else None,
+            glossary_coverage=audio_glossary_cov,
+            source_language=source_language,
+            register=audio_analysis.get("register"),
+            tone=audio_analysis.get("tone"),
+            emotion=audio_analysis.get("emotion"),
+            intent=audio_analysis.get("intent"),
+            code_switching=bool(audio_lang_info.get("code_switching")),
+        )
+        tr_conf = audio_assessed.get("translation_confidence", estimate_translation_confidence(source_text, final_text))
         cip_conf = get_cip_confidence(cip)
-        conf_score = cip_conf if cip_conf is not None else confidence_engine.evaluate(stt_conf, tr_conf)
+        conf_score = cip_conf if cip_conf is not None else audio_assessed.get("confidence", confidence_engine.evaluate(stt_conf, tr_conf))
+        low_confidence_block = bool(
+            audio_assessed.get("low_confidence") or audio_assessed.get("needs_native_certification")
+        ) and not cip_clarify
         audio_path = None
         audio_unavailable = False
-        if synthesize_audio and final_text and conf_score >= 0.4 and not cip_clarify:
+        if synthesize_audio and final_text and not low_confidence_block and not cip_clarify:
             try:
                 audio_path = await run_in_threadpool(
                     _synthesize_tts_resilient,
@@ -1396,6 +1721,21 @@ async def translate_audio(
         usage_limiter.track_audio(identity, estimated_seconds, "audio_translations")
         response_dict = dict(result.__dict__)
         apply_cip_decision(response_dict, cip, blocking=cip_clarify)
+        if (low_confidence_block or conf_score < 0.4) and not response_dict.get("clarify"):
+            response_dict["clarify"] = True
+            response_dict["clarify_message"] = (
+                audio_assessed.get("confidence_message")
+                or clarification_for(source_text, detect_ambiguities(source_text))
+            )
+        response_dict["confidence"] = conf_score
+        response_dict["low_confidence"] = bool(low_confidence_block or audio_assessed.get("low_confidence"))
+        response_dict["confidence_message"] = audio_assessed.get("confidence_message") or ""
+        response_dict["needs_confirmation"] = bool(audio_assessed.get("needs_confirmation"))
+        response_dict["native_speaker_listen_recommended"] = bool(audio_assessed.get("native_speaker_listen_recommended"))
+        response_dict["needs_native_certification"] = bool(audio_assessed.get("needs_native_certification"))
+        response_dict["certification_message"] = audio_assessed.get("certification_message") or ""
+        if audio_assessed.get("native_speaker_listen_recommended") and not response_dict.get("confidence_message"):
+            response_dict["confidence_message"] = audio_assessed.get("certification_message") or ""
         if audio_unavailable and not response_dict.get("clarify"):
             response_dict["audio_unavailable"] = True
             response_dict["audio_fallback"] = "browser_tts"
@@ -1429,6 +1769,46 @@ async def detect_voice_activity(audio: UploadFile = File(...), identity: str = D
     filename_suffix = _safe_upload_suffix(audio.filename, "audio.webm", {".webm", ".wav", ".m4a", ".mp3", ".ogg", ".aac"})
     suffix = audio_suffix_for_bytes(audio_bytes, audio.content_type) or filename_suffix
     return await run_in_threadpool(vad.detect_bytes, audio_bytes, suffix)
+
+
+@app.get("/api/assistant/health")
+def assistant_health(identity: str = Depends(authenticate_http)):
+    metrics["http_requests"] += 1
+    if not naia_assistant.is_available():
+        err = naia_assistant.import_error()
+        return {"available": False, "error": err or "Assistant unavailable"}
+    return {"available": True}
+
+
+@app.post("/api/assistant/chat")
+async def assistant_chat(request: AssistantChatRequest, identity: str = Depends(authenticate_http)):
+    metrics["http_requests"] += 1
+    if not naia_assistant.is_available():
+        err = naia_assistant.import_error()
+        detail = "Assistant unavailable"
+        if err:
+            detail = f"{detail}: {err}"
+        raise HTTPException(status_code=503, detail=detail)
+    message = str(request.message or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+    metadata = dict(request.metadata or {})
+    if request.session_id:
+        metadata["session_id"] = request.session_id
+    metadata["identity"] = identity
+    try:
+        return await naia_assistant.chat(
+            message,
+            source="http",
+            translation_context=request.translation_context,
+            metadata=metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
 
 
 @app.websocket("/ws/assistant")
@@ -1483,6 +1863,13 @@ async def websocket_translate(websocket: WebSocket):
         metrics["websocket_errors"] += 1
         with suppress(Exception):
             await websocket.close(code=1011, reason="Internal WebSocket error")
+    except Exception:
+        metrics["websocket_errors"] += 1
+        logger.exception("WebSocket /ws/translate handler error")
+        with suppress(Exception):
+            await websocket.close(code=1011, reason="Internal WebSocket error")
+    finally:
+        metrics["websocket_connections"] = max(0, metrics["websocket_connections"] - 1)
 
 
 @app.websocket("/ws/audio")
@@ -1501,7 +1888,15 @@ async def websocket_audio(websocket: WebSocket):
         pass
     except (RuntimeError, ValueError, ConnectionError, TimeoutError):
         metrics["websocket_errors"] += 1
-        await websocket.close(code=1011, reason="Internal WebSocket error")
+        with suppress(Exception):
+            await websocket.close(code=1011, reason="Internal WebSocket error")
+    except Exception:
+        metrics["websocket_errors"] += 1
+        logger.exception("WebSocket /ws/audio handler error")
+        with suppress(Exception):
+            await websocket.close(code=1011, reason="Internal WebSocket error")
+    finally:
+        metrics["websocket_connections"] = max(0, metrics["websocket_connections"] - 1)
 
 
 @app.websocket("/ws/audio/streaming")
@@ -1518,6 +1913,17 @@ async def websocket_audio_streaming(websocket: WebSocket):
         await websocket_streaming_stt_translation(websocket, pipeline, conversation_brain, memory, speaker_memory, identity)
     except WebSocketDisconnect:
         pass
+    except (RuntimeError, ValueError, ConnectionError, TimeoutError):
+        metrics["websocket_errors"] += 1
+        with suppress(Exception):
+            await websocket.close(code=1011, reason="Internal WebSocket error")
+    except Exception:
+        metrics["websocket_errors"] += 1
+        logger.exception("WebSocket /ws/audio/streaming handler error")
+        with suppress(Exception):
+            await websocket.close(code=1011, reason="Internal WebSocket error")
+    finally:
+        metrics["websocket_connections"] = max(0, metrics["websocket_connections"] - 1)
 
 
 @app.websocket("/ws/ping")

@@ -70,3 +70,14 @@ def test_apply_ailang_enhancements_ignores_placeholder_api_key(monkeypatch):
     )
 
     assert result == "Bonjour."
+
+
+def test_llm_agent_off_switch_overrides_available_api_key(monkeypatch):
+    from backend import streaming
+
+    monkeypatch.delenv("AILANG_ENHANCEMENTS_ENABLED", raising=False)
+    monkeypatch.setenv("USE_LLM_AGENTS", "false")
+    monkeypatch.setenv("OPENAI_API_KEY", "configured-real-key")
+    monkeypatch.setenv("OLLAMA_ENABLED", "true")
+
+    assert streaming._ailang_enhancement_provider_enabled() is False

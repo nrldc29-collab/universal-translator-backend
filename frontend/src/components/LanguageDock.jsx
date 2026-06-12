@@ -5,6 +5,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowLeftRight, ChevronDown, Check, Search, X } from 'lucide-react';
 import { TARGET_LANGUAGE_OPTIONS } from '../utils';
+import { languagePickerTitle, routeCaptions } from '../utils/productVoice';
 
 function LangPickerSheet({ value, onChange, onClose, variant }) {
   const [query, setQuery] = useState('');
@@ -43,12 +44,12 @@ function LangPickerSheet({ value, onChange, onClose, variant }) {
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={isTarget ? 'Choose target language' : 'Choose source language'}
+        aria-label={isTarget ? 'Choose who hears' : 'Choose you speak language'}
       >
         <div className="lang-picker-grab" aria-hidden="true" />
         <div className="lang-picker-header">
           <span className="lang-picker-title">
-            {isTarget ? 'Translate to' : 'Speak in'}
+            {languagePickerTitle(isTarget ? 'target' : 'source')}
           </span>
           <button type="button" className="lang-picker-close" onClick={onClose} aria-label="Close">
             <X size={16} strokeWidth={2.2} />
@@ -139,28 +140,32 @@ export default function LanguageDock({
   const disabled = recording;
   const [flipped, setFlipped] = useState(false);
   const [picker, setPicker] = useState(null);
+  const captions = routeCaptions(true);
 
   return (
-    <section className="language-dock" data-tour-target="languages" aria-label="Language settings">
+    <section className="language-dock" data-tour-target="languages" aria-label="Conversation bridge languages">
       <div className="lang-dock-row">
-        {setSourceLanguage ? (
-          <LangChip
-            value={sourceLanguage}
-            onOpen={() => setPicker('source')}
-            disabled={disabled}
-            variant="source"
-          />
-        ) : (
-          <div className="lang-static-chip">
-            <span className="lang-static-label">{sourceLanguageLabel}</span>
-          </div>
-        )}
+        <div className="lang-dock-slot">
+          <span className="lang-dock-role">{captions.source}</span>
+          {setSourceLanguage ? (
+            <LangChip
+              value={sourceLanguage}
+              onOpen={() => setPicker('source')}
+              disabled={disabled}
+              variant="source"
+            />
+          ) : (
+            <div className="lang-static-chip">
+              <span className="lang-static-label">{sourceLanguageLabel}</span>
+            </div>
+          )}
+        </div>
 
         <button
           type="button"
           disabled={disabled}
-          aria-label="Swap languages"
-          className="lang-swap-btn"
+          aria-label="Swap bridge direction"
+          className={`lang-swap-btn${streaming ? ' is-bridging' : ''}`}
           onClick={() => {
             if (disabled) return;
             setFlipped((f) => !f);
@@ -175,12 +180,15 @@ export default function LanguageDock({
           />
         </button>
 
-        <LangChip
-          value={targetLanguage}
-          onOpen={() => setPicker('target')}
-          disabled={disabled}
-          variant="target"
-        />
+        <div className="lang-dock-slot">
+          <span className="lang-dock-role">{captions.target}</span>
+          <LangChip
+            value={targetLanguage}
+            onOpen={() => setPicker('target')}
+            disabled={disabled}
+            variant="target"
+          />
+        </div>
       </div>
 
       {picker === 'source' && setSourceLanguage && (

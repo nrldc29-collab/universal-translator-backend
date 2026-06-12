@@ -33,7 +33,7 @@ class ErrorBoundary extends React.Component {
             </div>
             <h1 className="eb-title">Something went wrong</h1>
             <p className="eb-body">
-              The translator encountered an unexpected error. You can try refreshing the page or resetting the app state.
+              The conversation bridge hit an unexpected error. Try refreshing the page or resetting the app state.
             </p>
             <div className="eb-actions">
               <button type="button" className="eb-btn primary" onClick={this.handleReset}>

@@ -5,6 +5,7 @@
 
 import React, { useState, useCallback } from 'react';
 import { Trash2, Copy, Download, Check, X, Share2, AlertTriangle } from 'lucide-react';
+import { bridgeStatusMessages } from '../utils/productVoice';
 
 export default function ConversationActions({
   conversationTurns = [],
@@ -67,7 +68,7 @@ export default function ConversationActions({
     if (navigator.share) {
       try {
         await navigator.share({
-          title: 'Conversation Translation',
+          title: bridgeStatusMessages().shareTitle,
           text: text,
         });
       } catch (err) {
@@ -97,7 +98,7 @@ export default function ConversationActions({
       {showConfirm ? (
         <div className="conv-confirm" role="alertdialog" aria-label="Confirm clear">
           <AlertTriangle size={13} strokeWidth={2.5} className="conv-confirm-icon" aria-hidden="true" />
-          <span className="conv-confirm-text">Clear all history?</span>
+          <span className="conv-confirm-text">{bridgeStatusMessages().clearBridgeHistory}</span>
           <button
             className="conv-confirm-yes"
             onClick={handleClear}

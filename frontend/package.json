@@ -2,7 +2,7 @@
   "name": "anai-translator-frontend",
   "version": "1.0.0",
   "private": true,
-  "description": "Anai Translator futuristic web/PWA client.",
+  "description": "Anai futuristic web/PWA client.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

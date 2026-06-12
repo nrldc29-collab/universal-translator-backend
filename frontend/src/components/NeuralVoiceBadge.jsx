@@ -15,7 +15,7 @@ export default function NeuralVoiceBadge({ diagnostics, connectionStatus }) {
         className="ailang-status-badge degraded"
         role="status"
         aria-label="Voice: offline"
-        title="Backend offline — start the translator to hear neural voice"
+        title="Bridge offline — start the server to hear neural voice"
       >
         <span className="ailang-status-icon"><AlertTriangle size={12} /></span>
         <span className="ailang-status-text">Voice: Offline</span>
@@ -38,7 +38,7 @@ export default function NeuralVoiceBadge({ diagnostics, connectionStatus }) {
         className="ailang-status-badge active"
         role="status"
         aria-label="Neural voice ready"
-        title="Microsoft Edge neural TTS — lifelike translated speech"
+        title="Microsoft Edge neural TTS — lifelike bridged speech"
       >
         <span className="ailang-status-icon"><Volume2 size={12} /></span>
         <span className="ailang-status-text">Neural Voice</span>

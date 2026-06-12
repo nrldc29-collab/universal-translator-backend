@@ -1,5 +1,5 @@
 /**
- * Shared utilities for the Anai Translator web client.
+ * Shared utilities for the Anai web client.
  *
  * Extracted from `main.jsx` so that file can focus on the App component.
  * Everything here is pure (no React) -- constants, browser feature probes,
@@ -425,8 +425,8 @@ export const VOICE_WARMUP_PHRASES = {
 };
 
 export const HEALTH_POLL_MS = 3000;
-export const STREAM_HEARTBEAT_MS = 2500;
-export const STREAM_HEARTBEAT_MAX_MISSES = 2;
+export const STREAM_HEARTBEAT_MS = 4000;
+export const STREAM_HEARTBEAT_MAX_MISSES = 3;
 export const STREAM_RECONNECT_MS = 1000;
 export const STREAM_RECONNECT_MAX_ATTEMPTS = 5;
 export const STREAM_RECONNECT_MAX_DELAY_MS = 30000;
@@ -924,8 +924,8 @@ export async function shareRoomUrl({ sessionId, copyToClipboard }) {
   shareUrl.searchParams.set('session', sessionId);
   const url = shareUrl.toString();
   const payload = {
-    title: 'Anai Translator',
-    text: 'Join my live translator room.',
+    title: 'Anai',
+    text: 'Join my Anai conversation bridge.',
     url,
   };
   try {

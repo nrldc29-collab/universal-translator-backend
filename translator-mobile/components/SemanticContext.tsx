@@ -1,4 +1,6 @@
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Animated } from "react-native";
+import { useAnimatedPresence } from "../hooks/useAnimatedPresence";
+import { conversationContextTitle } from "../constants/productVoice";
 
 interface SemanticContextProps {
   context: {
@@ -9,14 +11,16 @@ interface SemanticContextProps {
 }
 
 export default function SemanticContext({ context }: SemanticContextProps) {
-  if (!context) return null;
+  const { mounted, style } = useAnimatedPresence(Boolean(context), { initialOffset: 8, duration: 220, exitDuration: 160 });
+
+  if (!mounted || !context) return null;
 
   const { last_intent, conversation_mood, topics } = context;
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Conversation Brain</Text>
-      
+    <Animated.View style={[styles.container, style]}>
+      <Text style={styles.title}>{conversationContextTitle()}</Text>
+
       <View style={styles.row}>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>Intent: {last_intent || "statement"}</Text>
@@ -25,8 +29,8 @@ export default function SemanticContext({ context }: SemanticContextProps) {
           <Text style={styles.badgeText}>Mood: {conversation_mood || "neutral"}</Text>
         </View>
       </View>
-      
-      {topics && topics.length > 0 && (
+
+      {topics && topics.length > 0 ? (
         <View style={styles.topicsContainer}>
           <Text style={styles.topicsLabel}>Topics:</Text>
           <View style={styles.topicsRow}>
@@ -37,73 +41,74 @@ export default function SemanticContext({ context }: SemanticContextProps) {
             ))}
           </View>
         </View>
-      )}
-    </View>
+      ) : null}
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     padding: 15,
-    backgroundColor: 'rgba(7, 17, 31, 0.95)',
+    backgroundColor: "rgba(7, 17, 31, 0.95)",
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(103, 232, 249, 0.22)',
-    marginBottom: 15,
-    shadowColor: '#22d3ee',
+    borderColor: "rgba(103, 232, 249, 0.22)",
+    marginBottom: 8,
+    marginTop: 2,
+    shadowColor: "#22d3ee",
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.1,
     shadowRadius: 14,
     elevation: 3,
   },
   title: {
-    color: '#67e8f9',
+    color: "#67e8f9",
     fontSize: 14,
-    fontWeight: '900',
+    fontWeight: "900",
     marginBottom: 10,
-    textTransform: 'uppercase',
+    textTransform: "uppercase",
   },
   row: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 10,
     marginBottom: 10,
   },
   badge: {
     flex: 1,
     padding: 8,
-    backgroundColor: 'rgba(8, 145, 178, 0.28)',
+    backgroundColor: "rgba(8, 145, 178, 0.28)",
     borderRadius: 8,
-    alignItems: 'center',
+    alignItems: "center",
   },
   moodBadge: {
-    backgroundColor: 'rgba(20, 184, 166, 0.24)',
+    backgroundColor: "rgba(20, 184, 166, 0.24)",
   },
   badgeText: {
-    color: '#e5ecff',
+    color: "#e5ecff",
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: "900",
   },
   topicsContainer: {
     marginTop: 5,
   },
   topicsLabel: {
-    color: '#93a4bd',
+    color: "#93a4bd",
     fontSize: 12,
     marginBottom: 6,
   },
   topicsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: 6,
   },
   topicChip: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    backgroundColor: "rgba(15, 23, 42, 0.78)",
     borderRadius: 12,
   },
   topicText: {
-    color: '#93a4bd',
+    color: "#93a4bd",
     fontSize: 11,
   },
 });

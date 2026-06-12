@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { authHeaders } from '../utils';
 
 export function useVoiceWarmup({
@@ -39,7 +39,7 @@ export function useVoiceWarmup({
     }
   }
 
-  async function warmVoiceCache(reason = 'idle') {
+  const warmVoiceCache = useCallback(async function warmVoiceCache(reason = 'idle') {
     const current = voiceWarmupRef.current;
     const now = Date.now();
     const language = targetLanguage || 'ht';
@@ -82,7 +82,7 @@ export function useVoiceWarmup({
     } finally {
       current.inFlight = false;
     }
-  }
+  }, [apiUrl, authToken, targetLanguage, warmupPhrases, cooldownMs, prefetchTimeoutMs]);
 
   return { voiceWarmupRef, resolveAudioUrl, prefetchAudioUrl, warmVoiceCache };
 }

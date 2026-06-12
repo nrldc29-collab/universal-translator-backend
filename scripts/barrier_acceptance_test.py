@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import base64
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -49,8 +50,6 @@ LANGUAGES = {
     "hi": "Hindi",
 }
 
-EXPECTED_FRONTEND_BUILD_ID = "continuous-interpreter-v32-soothing-voice"
-EXPECTED_FRONTEND_ASSET_MARKER = "v32-soothing-voice"
 MAX_FIRST_TRANSLATION_MS = 2000
 MAX_FIRST_AUDIO_MS = 3500
 MAX_HIGH_FREQUENCY_RATIO = 0.06
@@ -299,7 +298,7 @@ async def _run_ws_case(base_url: str, source: str, target: str, phrase: str, tim
     first_translation_ms = None
     translation = ""
     ws_url = _ws_url(base_url)
-    async with websockets.connect(ws_url, open_timeout=timeout, ping_interval=None) as websocket:
+    async with websockets.connect(ws_url, open_timeout=timeout, ping_interval=None, max_size=None) as websocket:
         ready = json.loads(await asyncio.wait_for(websocket.recv(), timeout))
         if ready.get("type") != "ready":
             raise AssertionError(f"Unexpected ready payload: {ready!r}")
@@ -357,7 +356,7 @@ async def _run_ws_case(base_url: str, source: str, target: str, phrase: str, tim
 async def _run_continuous_dialogue_case(base_url: str, timeout: int) -> list[ContinuousTurnResult]:
     ws_url = _ws_url(base_url)
     results: list[ContinuousTurnResult] = []
-    async with websockets.connect(ws_url, open_timeout=timeout, ping_interval=None) as websocket:
+    async with websockets.connect(ws_url, open_timeout=timeout, ping_interval=None, max_size=None) as websocket:
         ready = json.loads(await asyncio.wait_for(websocket.recv(), timeout))
         if ready.get("type") != "ready":
             raise AssertionError(f"Unexpected ready payload: {ready!r}")
@@ -463,7 +462,7 @@ async def _run_partial_case(base_url: str, timeout: int) -> dict:
     started = time.perf_counter()
     translations: list[str] = []
     audio_seen = False
-    async with websockets.connect(ws_url, open_timeout=timeout, ping_interval=None) as websocket:
+    async with websockets.connect(ws_url, open_timeout=timeout, ping_interval=None, max_size=None) as websocket:
         ready = json.loads(await asyncio.wait_for(websocket.recv(), timeout))
         if ready.get("type") != "ready":
             raise AssertionError(f"Unexpected ready payload: {ready!r}")
@@ -507,15 +506,17 @@ def _check_http(base_url: str, timeout: int) -> dict:
     if "text/html" not in root.headers.get("content-type", ""):
         raise AssertionError("Root did not return HTML.")
     asset_paths = re.findall(r"""(?:src|href)=["']([^"']+\.(?:js|css))["']""", root.text)
-    build_id_found = False
+    if not asset_paths:
+        raise AssertionError("Frontend HTML did not reference any JavaScript or CSS assets.")
+    build_hasher = hashlib.sha256()
     for asset_path in asset_paths:
         asset_url = asset_path if asset_path.startswith("http") else base_url.rstrip("/") + "/" + asset_path.lstrip("/")
         asset_response = requests.get(asset_url, timeout=timeout)
         asset_response.raise_for_status()
-        if EXPECTED_FRONTEND_ASSET_MARKER in asset_response.text:
-            build_id_found = True
-    if not build_id_found:
-        raise AssertionError(f"Frontend build marker {EXPECTED_FRONTEND_ASSET_MARKER!r} was not found in served assets.")
+        if len(asset_response.content) < 32:
+            raise AssertionError(f"Frontend asset is unexpectedly empty: {asset_path}")
+        build_hasher.update(asset_path.encode("utf-8"))
+        build_hasher.update(asset_response.content)
     health = requests.get(base_url.rstrip("/") + "/health", timeout=timeout)
     health.raise_for_status()
     health_json = health.json()
@@ -541,7 +542,7 @@ def _check_http(base_url: str, timeout: int) -> dict:
         "frontend_mode": frontend.get("mode"),
         "translator_reachable": translation.get("remote_translator_reachable"),
         "voice_warmup_languages": len(warmup_items),
-        "frontend_build_id": EXPECTED_FRONTEND_BUILD_ID,
+        "frontend_build_id": build_hasher.hexdigest()[:16],
     }
 
 

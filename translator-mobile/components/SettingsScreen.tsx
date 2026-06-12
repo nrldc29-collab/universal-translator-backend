@@ -1,6 +1,51 @@
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput } from "react-native";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState, ReactNode } from "react";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
+import NeoBrandMark from "./NeoBrandMark";
+import VolumeControl from "./VolumeControl";
+import SpeedControl from "./SpeedControl";
+import { MOBILE_BUILD_ID } from "../constants/mobileBuild";
+import { bridgeServerStatusMessages } from "../constants/productVoice";
+import { AUDIO_QUALITIES } from "../constants/audioQuality";
+import PerformanceDashboard from "./PerformanceDashboard";
+
+function SectionIcon({ name, danger = false }: { name: React.ComponentProps<typeof Ionicons>["name"]; danger?: boolean }) {
+  return (
+    <View style={[styles.sectionIconRing, danger && styles.sectionIconRingDanger]}>
+      <Ionicons name={name} size={14} color={danger ? "#fca5a5" : "#67e8f9"} />
+    </View>
+  );
+}
+
+function SettingsSection({
+  title,
+  icon,
+  danger = false,
+  children,
+}: {
+  title: string;
+  icon: React.ComponentProps<typeof Ionicons>["name"];
+  danger?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <View style={[styles.section, danger && styles.dangerZone]}>
+      <LinearGradient
+        colors={danger ? ["rgba(248, 113, 113, 0.28)", "transparent"] : ["rgba(103, 232, 249, 0.28)", "transparent"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.sectionShine}
+        pointerEvents="none"
+      />
+      <View style={styles.sectionHead}>
+        <SectionIcon name={icon} danger={danger} />
+        <Text style={danger ? styles.dangerTitle : styles.sectionTitle}>{title}</Text>
+      </View>
+      {children}
+    </View>
+  );
+}
 
 interface SettingsScreenProps {
   wsUrl: string;
@@ -27,11 +72,35 @@ interface SettingsScreenProps {
   setVolume?: (vol: number) => void;
   playbackSpeed?: number;
   setPlaybackSpeed?: (speed: number) => void;
-  audioQuality?: string;
-  setAudioQuality?: (quality: string) => void;
-  AUDIO_QUALITIES?: Record<string, { preset: any; label: string; description: string }>;
+  audioQuality?: keyof typeof AUDIO_QUALITIES;
+  setAudioQuality?: (quality: keyof typeof AUDIO_QUALITIES) => void;
+  audioEnvironment?: string;
+  setAudioEnvironment?: (environment: string) => void;
   debugMode?: boolean;
   setDebugMode?: (enabled: boolean) => void;
+  barrierMode?: boolean;
+  setBarrierMode?: (enabled: boolean) => void;
+  showRecentUrls?: boolean;
+  setShowRecentUrls?: (visible: boolean) => void;
+  batchRecording?: boolean;
+  isBatchUploading?: boolean;
+  batchUploadProgress?: number;
+  batchRecordDisabled?: boolean;
+  onStartBatchRecord?: () => void | Promise<void>;
+  onStopBatchRecord?: () => void | Promise<void>;
+  onCancelBatchUpload?: () => void;
+  lowBandwidthMode?: boolean;
+  setLowBandwidthMode?: (enabled: boolean) => void;
+  diagnostics?: Record<string, any> | null;
+  diagnosticsStatus?: string;
+  onRefreshDiagnostics?: () => void | Promise<void>;
+  latencyMetrics?: {
+    sttLatency?: number;
+    translationLatency?: number;
+    ttsLatency?: number;
+    endToEndLatency?: number;
+    first_audio?: number;
+  };
 }
 
 const LANGUAGES = [
@@ -65,9 +134,12 @@ export default function SettingsScreen({
   setPlaybackSpeed,
   audioQuality = "HIGH",
   setAudioQuality,
-  AUDIO_QUALITIES,
+  audioEnvironment = "auto",
+  setAudioEnvironment,
   debugMode = false,
   setDebugMode,
+  barrierMode = true,
+  setBarrierMode,
   onSaveUrl,
   onClose,
   onTestConnection,
@@ -79,18 +151,42 @@ export default function SettingsScreen({
   setPassword,
   isLoggedIn = false,
   recentUrls = [],
+  showRecentUrls = false,
+  setShowRecentUrls,
   backendReachable = null,
   isCheckingBackend = false,
+  batchRecording = false,
+  isBatchUploading = false,
+  batchUploadProgress = 0,
+  batchRecordDisabled = false,
+  onStartBatchRecord,
+  onStopBatchRecord,
+  onCancelBatchUpload,
+  lowBandwidthMode = false,
+  setLowBandwidthMode,
+  diagnostics = null,
+  diagnosticsStatus = "checking",
+  onRefreshDiagnostics,
+  latencyMetrics = {},
 }: SettingsScreenProps) {
   const [localVolume, setLocalVolume] = useState(volume);
   const [localSpeed, setLocalSpeed] = useState(playbackSpeed);
   const [localUrl, setLocalUrl] = useState(wsUrl);
   const [confirmClear, setConfirmClear] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
+  const bridgeSrv = bridgeServerStatusMessages();
 
   useEffect(() => {
     setLocalUrl(wsUrl);
   }, [wsUrl]);
+
+  useEffect(() => {
+    setLocalVolume(volume);
+  }, [volume]);
+
+  useEffect(() => {
+    setLocalSpeed(playbackSpeed);
+  }, [playbackSpeed]);
 
   const handleVolumeChange = (value: number) => {
     setLocalVolume(value);
@@ -102,23 +198,19 @@ export default function SettingsScreen({
     setPlaybackSpeed?.(value);
   };
 
-  const adjustVolume = (delta: number) => {
-    const newValue = Math.max(0, Math.min(1, localVolume + delta));
-    handleVolumeChange(newValue);
-  };
-
-  const adjustSpeed = (delta: number) => {
-    const newValue = Math.max(0.5, Math.min(2.0, localSpeed + delta));
-    handleSpeedChange(newValue);
-  };
-
   return (
     <ScrollView style={styles.container}>
+      <LinearGradient
+        colors={["rgba(103, 232, 249, 0.35)", "transparent"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={styles.headerShine}
+        pointerEvents="none"
+      />
       <View style={styles.headerRow}>
         <View style={styles.headerTitleWrap}>
-          <Text style={styles.title}>
-            Sett<Text style={styles.titleAccent}>ings</Text>
-          </Text>
+          <NeoBrandMark subline="SETTINGS" compact />
+          <Text style={styles.title}>Preferences</Text>
           <Text style={styles.subtitle}>Languages, audio, and server connection.</Text>
         </View>
         {onClose ? (
@@ -133,9 +225,8 @@ export default function SettingsScreen({
         ) : null}
       </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Server</Text>
-        <Text style={styles.settingDescription}>Railway HTTPS URL or local IP (port 8000).</Text>
+      <SettingsSection title="Bridge server" icon="server-outline">
+        <Text style={styles.settingDescription}>Railway HTTPS URL or local IP — where Anai links your conversation.</Text>
         <TextInput
           value={localUrl}
           onChangeText={(value) => {
@@ -150,40 +241,56 @@ export default function SettingsScreen({
           style={[styles.urlInput, focusedField === "url" && styles.urlInputFocused]}
           onFocus={() => setFocusedField("url")}
           onBlur={() => setFocusedField((f) => (f === "url" ? null : f))}
-          accessibilityLabel="Backend server URL"
+          accessibilityLabel="Bridge server URL"
         />
         {recentUrls.length > 0 ? (
-          <View style={styles.chipRow}>
-            {recentUrls.map((url) => (
-              <Pressable
-                key={url}
-                style={[styles.chip, localUrl === url && styles.chipActive]}
-                onPress={() => {
-                  setLocalUrl(url);
-                  setWsUrl(url);
-                }}
-              >
-                <Text numberOfLines={1} style={[styles.chipText, localUrl === url && styles.chipTextActive]}>
-                  {url.replace(/^https?:\/\//, "").slice(0, 28)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          <>
+            <Pressable
+              style={({ pressed }) => [styles.recentToggle, pressed && styles.recentTogglePressed]}
+              onPress={() => setShowRecentUrls?.(!showRecentUrls)}
+              accessibilityRole="button"
+              accessibilityLabel={showRecentUrls ? "Hide recent bridge servers" : "Show recent bridge servers"}
+            >
+              <Ionicons name={showRecentUrls ? "chevron-up" : "time-outline"} size={14} color="#94a3b8" />
+              <Text style={styles.recentToggleText}>
+                {showRecentUrls ? "Hide recent servers" : `Recent bridge servers (${recentUrls.length})`}
+              </Text>
+            </Pressable>
+            {showRecentUrls ? (
+              <View style={styles.chipRow}>
+                {recentUrls.map((url) => (
+                  <Pressable
+                    key={url}
+                    style={[styles.chip, localUrl === url && styles.chipActive]}
+                    onPress={() => {
+                      setLocalUrl(url);
+                      setWsUrl(url);
+                      onSaveUrl?.(url);
+                    }}
+                  >
+                    <Text numberOfLines={1} style={[styles.chipText, localUrl === url && styles.chipTextActive]}>
+                      {url.replace(/^https?:\/\//, "").slice(0, 28)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </>
         ) : null}
         {isCheckingBackend ? (
           <View style={styles.connectionRow}>
             <Ionicons name="sync-outline" size={14} color="#94a3b8" />
-            <Text style={styles.connectionStatus}>Checking server…</Text>
+            <Text style={styles.connectionStatus}>{bridgeSrv.checking}</Text>
           </View>
         ) : backendReachable === true ? (
           <View style={styles.connectionRow}>
             <Ionicons name="checkmark-circle" size={14} color="#34d399" />
-            <Text style={[styles.connectionStatus, styles.connectionOk]}>Server reachable</Text>
+            <Text style={[styles.connectionStatus, styles.connectionOk]}>{bridgeSrv.reachable}</Text>
           </View>
         ) : backendReachable === false ? (
           <View style={styles.connectionRow}>
             <Ionicons name="close-circle" size={14} color="#f87171" />
-            <Text style={[styles.connectionStatus, styles.connectionBad]}>Could not reach server</Text>
+            <Text style={[styles.connectionStatus, styles.connectionBad]}>{bridgeSrv.unreachable}</Text>
           </View>
         ) : null}
         <View style={styles.buttonRow}>
@@ -191,19 +298,18 @@ export default function SettingsScreen({
             style={({ pressed }) => [styles.actionChip, pressed && styles.actionChipPressed]}
             onPress={() => onTestConnection?.()}
           >
-            <Text style={styles.actionChipText}>{isCheckingBackend ? "Testing…" : "Test connection"}</Text>
+            <Text style={styles.actionChipText}>{isCheckingBackend ? bridgeSrv.testing : bridgeSrv.testLink}</Text>
           </Pressable>
           <Pressable
             style={({ pressed }) => [styles.actionChip, styles.actionChipPrimary, pressed && styles.actionChipPrimaryPressed]}
             onPress={() => onSaveUrl?.(localUrl)}
           >
-            <Text style={[styles.actionChipText, styles.actionChipTextPrimary]}>Save & reconnect</Text>
+            <Text style={[styles.actionChipText, styles.actionChipTextPrimary]}>{bridgeSrv.saveRelink}</Text>
           </Pressable>
         </View>
-      </View>
+      </SettingsSection>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account</Text>
+      <SettingsSection title="Account" icon="person-circle-outline">
         {isLoggedIn ? (
           <>
             <Text style={styles.settingDescription}>Signed in. Tap below to sign out.</Text>
@@ -240,50 +346,45 @@ export default function SettingsScreen({
             </Pressable>
           </>
         )}
-      </View>
+      </SettingsSection>
+
+      {setBarrierMode ? (
+        <SettingsSection title="Conversation bridge" icon="people-outline">
+          <View style={styles.settingRow}>
+            <Text style={styles.label}>Together mode</Text>
+            <Pressable
+              style={[styles.toggle, barrierMode && styles.toggleActive]}
+              onPress={() => setBarrierMode(!barrierMode)}
+            >
+              <Text style={[styles.toggleText, barrierMode && styles.toggleTextActive]}>
+                {barrierMode ? "ON" : "OFF"}
+              </Text>
+            </Pressable>
+          </View>
+          <Text style={styles.settingDescription}>
+            When on, each person stays in their language — Anai bridges meaning to the other side.
+          </Text>
+        </SettingsSection>
+      ) : null}
       
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Audio Settings</Text>
-        
+      <SettingsSection title="Audio Settings" icon="volume-high-outline">
         <View style={styles.settingRow}>
           <Text style={styles.label}>Volume</Text>
           <Text style={styles.value}>{Math.round(localVolume * 100)}%</Text>
         </View>
-        <View style={styles.buttonRow}>
-          <Pressable
-            style={({ pressed }) => [styles.adjustButton, pressed && styles.adjustButtonPressed]}
-            onPress={() => adjustVolume(-0.1)}
-          >
-            <Text style={styles.adjustButtonText}>-</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.adjustButton, pressed && styles.adjustButtonPressed]}
-            onPress={() => adjustVolume(0.1)}
-          >
-            <Text style={styles.adjustButtonText}>+</Text>
-          </Pressable>
+        <View style={styles.settingsVolumeWrap}>
+          <VolumeControl volume={localVolume} onVolumeChange={handleVolumeChange} wide />
         </View>
 
         <View style={styles.settingRow}>
           <Text style={styles.label}>TTS Speed</Text>
           <Text style={styles.value}>{localSpeed.toFixed(1)}x</Text>
         </View>
-        <View style={styles.buttonRow}>
-          <Pressable
-            style={({ pressed }) => [styles.adjustButton, pressed && styles.adjustButtonPressed]}
-            onPress={() => adjustSpeed(-0.1)}
-          >
-            <Text style={styles.adjustButtonText}>-</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [styles.adjustButton, pressed && styles.adjustButtonPressed]}
-            onPress={() => adjustSpeed(0.1)}
-          >
-            <Text style={styles.adjustButtonText}>+</Text>
-          </Pressable>
+        <View style={styles.settingsVolumeWrap}>
+          <SpeedControl speed={localSpeed} onSpeedChange={handleSpeedChange} wide />
         </View>
 
-        {AUDIO_QUALITIES && (
+        {(
           <>
             <View style={styles.settingRow}>
               <Text style={styles.label}>Audio Quality</Text>
@@ -294,7 +395,7 @@ export default function SettingsScreen({
                 <Pressable
                   key={key}
                   style={[styles.chip, audioQuality === key && styles.chipActive]}
-                  onPress={() => setAudioQuality?.(key)}
+                  onPress={() => setAudioQuality?.(key as keyof typeof AUDIO_QUALITIES)}
                 >
                   <Text style={[styles.chipText, audioQuality === key && styles.chipTextActive]}>
                     {quality.label}
@@ -303,14 +404,64 @@ export default function SettingsScreen({
               ))}
             </View>
             <Text style={styles.settingDescription}>{AUDIO_QUALITIES[audioQuality]?.description}</Text>
+            <View style={styles.settingRow}>
+              <Text style={styles.label}>Room noise</Text>
+              <Text style={styles.value}>{audioEnvironment}</Text>
+            </View>
+            <View style={styles.chipRow}>
+              {["auto", "quiet", "office", "restaurant", "street", "crowded"].map((env) => (
+                <Pressable
+                  key={env}
+                  style={[styles.chip, audioEnvironment === env && styles.chipActive]}
+                  onPress={() => setAudioEnvironment?.(env)}
+                >
+                  <Text style={[styles.chipText, audioEnvironment === env && styles.chipTextActive]}>
+                    {env}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
           </>
         )}
-      </View>
+      </SettingsSection>
+
+      {onStartBatchRecord ? (
+        <SettingsSection title="Clip bridge" icon="mic-outline">
+          <Text style={styles.settingDescription}>
+            Record a short clip and bridge it in one shot. Pause the live bridge first.
+          </Text>
+          {isBatchUploading ? (
+            <>
+              <View style={styles.settingRow}>
+                <Text style={styles.label}>Uploading clip</Text>
+                <Text style={styles.value}>{Math.round(batchUploadProgress)}%</Text>
+              </View>
+              <Pressable style={styles.actionChip} onPress={() => onCancelBatchUpload?.()}>
+                <Text style={styles.actionChipText}>Cancel upload</Text>
+              </Pressable>
+            </>
+          ) : (
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionChip,
+                batchRecording ? styles.actionChipDanger : styles.actionChipPrimary,
+                pressed && (batchRecording ? styles.actionChipDangerPressed : styles.actionChipPrimaryPressed),
+                batchRecordDisabled && styles.actionChipDisabled,
+              ]}
+              disabled={batchRecordDisabled && !batchRecording}
+              onPress={() => (batchRecording ? onStopBatchRecord?.() : onStartBatchRecord?.())}
+            >
+              <Text style={[styles.actionChipText, !batchRecording && styles.actionChipTextPrimary]}>
+                {batchRecording ? "Stop & bridge clip" : batchRecordDisabled ? "Bridge live" : "Record clip"}
+              </Text>
+            </Pressable>
+          )}
+        </SettingsSection>
+      ) : null}
       
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Language Preferences</Text>
+      <SettingsSection title="Bridge languages" icon="language-outline">
         <View style={styles.settingRow}>
-          <Text style={styles.label}>Source Language</Text>
+          <Text style={styles.label}>You speak</Text>
           <Text style={styles.value}>{LANGUAGES.find(l => l.code === sourceLanguage)?.name || sourceLanguage}</Text>
         </View>
         <View style={styles.chipRow}>
@@ -327,7 +478,7 @@ export default function SettingsScreen({
           ))}
         </View>
         <View style={styles.settingRow}>
-          <Text style={styles.label}>Target Language</Text>
+          <Text style={styles.label}>{barrierMode ? "They hear" : "Bridged out"}</Text>
           <Text style={styles.value}>{LANGUAGES.find(l => l.code === targetLanguage)?.name || targetLanguage}</Text>
         </View>
         <View style={styles.chipRow}>
@@ -343,11 +494,57 @@ export default function SettingsScreen({
             </Pressable>
           ))}
         </View>
-      </View>
+      </SettingsSection>
+
+      <SettingsSection title="Bridge link quality" icon="cellular-outline">
+        <View style={styles.settingRow}>
+          <Text style={styles.label}>Low bandwidth mode</Text>
+          <Pressable
+            style={[styles.toggle, lowBandwidthMode && styles.toggleActive]}
+            onPress={() => setLowBandwidthMode?.(!lowBandwidthMode)}
+          >
+            <Text style={[styles.toggleText, lowBandwidthMode && styles.toggleTextActive]}>
+              {lowBandwidthMode ? "ON" : "OFF"}
+            </Text>
+          </Pressable>
+        </View>
+        <Text style={styles.settingDescription}>
+          Skips partial live voice on slow Wi‑Fi. Final bridged meaning still speaks when confident.
+        </Text>
+      </SettingsSection>
+
+      <SettingsSection title="Backend health" icon="pulse-outline">
+        <View style={styles.settingRow}>
+          <Text style={styles.label}>Diagnostics</Text>
+          <Text style={styles.value}>
+            {diagnosticsStatus === "online" ? "Online" : diagnosticsStatus === "checking" ? "Checking…" : "Offline"}
+          </Text>
+        </View>
+        {diagnostics?.cip?.mode ? (
+          <View style={styles.settingRow}>
+            <Text style={styles.label}>CIP mode</Text>
+            <Text style={styles.value}>{String(diagnostics.cip.mode)}</Text>
+          </View>
+        ) : null}
+        {diagnostics?.stt_provider ? (
+          <View style={styles.settingRow}>
+            <Text style={styles.label}>STT provider</Text>
+            <Text style={styles.value}>{String(diagnostics.stt_provider)}</Text>
+          </View>
+        ) : null}
+        {diagnostics?.tts_neural ? (
+          <View style={styles.settingRow}>
+            <Text style={styles.label}>Neural voice</Text>
+            <Text style={styles.value}>{diagnostics.tts_neural.ready ? "Ready" : "Warming up"}</Text>
+          </View>
+        ) : null}
+        <Pressable style={styles.actionChip} onPress={() => onRefreshDiagnostics?.()}>
+          <Text style={styles.actionChipText}>Refresh diagnostics</Text>
+        </Pressable>
+      </SettingsSection>
 
       {setDebugMode && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Developer Options</Text>
+        <SettingsSection title="Developer Options" icon="code-slash-outline">
           <View style={styles.settingRow}>
             <Text style={styles.label}>Debug Mode</Text>
             <Pressable
@@ -362,23 +559,32 @@ export default function SettingsScreen({
           <Text style={styles.settingDescription}>
             Enable detailed logging and debug information
           </Text>
-        </View>
+          {debugMode ? (
+            <PerformanceDashboard
+              diagnostics={diagnostics}
+              diagnosticsStatus={diagnosticsStatus}
+              latencyMetrics={latencyMetrics}
+              onRefresh={onRefreshDiagnostics}
+            />
+          ) : null}
+        </SettingsSection>
       )}
       
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>About</Text>
+      <SettingsSection title="About" icon="information-circle-outline">
         <View style={styles.settingRow}>
-          <Text style={styles.label}>Version</Text>
-          <Text style={styles.value}>1.0.0</Text>
+          <Text style={styles.label}>Build</Text>
+          <Text style={styles.value}>{MOBILE_BUILD_ID}</Text>
         </View>
         <View style={styles.settingRow}>
           <Text style={styles.label}>App</Text>
-          <Text style={styles.value}>Anai Translator Mobile</Text>
+          <Text style={styles.value}>Anai</Text>
         </View>
-      </View>
+        <Text style={styles.settingDescription}>
+          Session glossary terms from your PC settings are applied automatically while bridging.
+        </Text>
+      </SettingsSection>
       
-      <View style={styles.dangerZone}>
-        <Text style={styles.dangerTitle}>Danger Zone</Text>
+      <SettingsSection title="Danger Zone" icon="warning-outline" danger>
         <Pressable
           style={({ pressed }) => [styles.button, pressed && styles.buttonPressed, confirmClear && styles.buttonDanger]}
           onPress={() => {
@@ -392,13 +598,21 @@ export default function SettingsScreen({
         >
           <Text style={styles.buttonText}>{confirmClear ? "Tap again to confirm wipe" : "Clear All Stored Data"}</Text>
         </Pressable>
-      </View>
+      </SettingsSection>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: "#050711" },
+  container: { flex: 1, padding: 20, backgroundColor: "#03050a" },
+  headerShine: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    zIndex: 1,
+  },
   headerRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, marginBottom: 8 },
   headerTitleWrap: { flex: 1, minWidth: 0 },
   closeBtn: {
@@ -489,13 +703,39 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 16,
     elevation: 5,
+    overflow: 'hidden',
+    position: 'relative',
   },
-  sectionTitle: { color: '#67e8f9', fontSize: 13, fontWeight: '900', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.7 },
+  sectionShine: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    zIndex: 1,
+  },
+  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  sectionIconRing: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(34, 211, 238, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(103, 232, 249, 0.28)',
+  },
+  sectionIconRingDanger: {
+    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+    borderColor: 'rgba(248, 113, 113, 0.28)',
+  },
+  sectionTitle: { color: '#67e8f9', fontSize: 13, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.7 },
   settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(148, 163, 184, 0.12)' },
   label: { color: '#93a4bd', fontSize: 14 },
   value: { color: '#e5ecff', fontSize: 14, fontWeight: '900', flexShrink: 1, textAlign: 'right' },
   settingDescription: { color: '#64748b', fontSize: 12, marginTop: 8, marginBottom: 4 },
   buttonRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  settingsVolumeWrap: { marginTop: 4, marginBottom: 8, width: '100%' },
   adjustButton: {
     width: 44,
     height: 44,
@@ -535,10 +775,6 @@ const styles = StyleSheet.create({
   toggleTextActive: { color: '#ccfbf1' },
   dangerZone: {
     backgroundColor: '#160b13',
-    padding: 15,
-    borderRadius: 22,
-    marginBottom: 15,
-    borderWidth: 1,
     borderColor: 'rgba(248, 113, 113, 0.45)',
     shadowColor: '#f87171',
     shadowOffset: { width: 0, height: 4 },
@@ -546,7 +782,7 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 3,
   },
-  dangerTitle: { color: '#f87171', fontSize: 13, fontWeight: '900', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.7 },
+  dangerTitle: { color: '#f87171', fontSize: 13, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.7 },
   button: { backgroundColor: '#dc2626', padding: 13, borderRadius: 999, alignItems: 'center', marginTop: 10 },
   buttonDanger: { backgroundColor: '#991b1b' },
   buttonPressed: { transform: [{ scale: 0.98 }] },
@@ -554,4 +790,19 @@ const styles = StyleSheet.create({
   connectionStatus: { fontSize: 13, fontWeight: '800', color: '#94a3b8' },
   connectionOk: { color: '#6ee7b7' },
   connectionBad: { color: '#fca5a5' },
+  recentToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingVertical: 6,
+  },
+  recentTogglePressed: { opacity: 0.8 },
+  recentToggleText: { color: '#94a3b8', fontSize: 12, fontWeight: '800' },
+  actionChipDanger: {
+    backgroundColor: 'rgba(248, 113, 113, 0.18)',
+    borderColor: 'rgba(248, 113, 113, 0.42)',
+  },
+  actionChipDangerPressed: { opacity: 0.88, transform: [{ scale: 0.98 }] },
+  actionChipDisabled: { opacity: 0.45 },
 });

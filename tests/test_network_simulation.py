@@ -181,7 +181,7 @@ class TestPacketLoss:
     @pytest.mark.asyncio
     async def test_extreme_packet_loss(self):
         """Test with extreme packet loss (50%)."""
-        simulator = NetworkSimulator()
+        simulator = NetworkSimulator(seed=5)
         simulator.apply_packet_loss(0.50)  # 50% loss
         
         chunks_sent = 0

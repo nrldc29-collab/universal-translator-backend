@@ -20,5 +20,5 @@ export default function useWakeLock() {
     }
   }
 
-  return { requestWakeLock, releaseWakeLock };
+  return { wakeLockRef, requestWakeLock, releaseWakeLock };
 }

@@ -28,6 +28,7 @@ _PHRASE_ALIASES = {
     "gutenabend": "guten abend",
     "wiegehtesihnen": "wie geht es ihnen",
     "vielendank": "vielen dank",
+    "dankje": "dank je",
     "mesianpil": "mesi anpil",
     "kijanouye": "kijan ou ye",
     "mwenbezened": "mwen bezwen ed",
@@ -164,6 +165,7 @@ class LightweightTranslator:
             },
             ("en", "ht"): {
                 "hello": "bonjou",
+                "where is the nearest hospital": "Kote lopital ki pi pre a ye?",
                 "thank you": "mèsi",
                 "thank you very much": "mèsi anpil",
                 "i need help": "mwen bezwen èd",
@@ -184,6 +186,8 @@ class LightweightTranslator:
                 "mesi anpil": "Thank you very much.",
                 "mwen bezwen ed": "I need help.",
                 "mwen bezwen ede": "I need help.",
+                "mwen bezwen yon dokte": "I need a doctor.",
+                "mesi anpil pou ed ou": "Thank you very much for your help.",
                 "kijan ou ye": "How are you?",
                 "wi": "Yes.",
                 "non": "No.",
@@ -2619,6 +2623,7 @@ class LightweightTranslator:
                 "au revoir": "Goodbye.",
                 "je ne comprends pas": "I don't understand.",
                 "merci beaucoup": "Thank you very much.",
+                "aide": "Help!",
                 "j ai besoin d aide": "I need help.",
                 "ou sont les toilettes": "Where is the bathroom?",
             },
@@ -2661,11 +2666,13 @@ class LightweightTranslator:
                 "adeus": "Goodbye.",
                 "nao entendo": "I don't understand.",
                 "muito obrigado": "Thank you very much.",
+                "ajuda": "Help!",
                 "preciso de ajuda": "I need help.",
                 "onde fica o banheiro": "Where is the bathroom?",
             },
             "nl": {
                 "hallo": "Hello.",
+                "dank je": "Thank you.",
                 "dank u": "Thank you.",
                 "hoe gaat het met u": "How are you?",
                 "ja": "Yes.",
@@ -2708,6 +2715,7 @@ class LightweightTranslator:
             },
             "ja": {
                 "\u3053\u3093\u306b\u3061\u306f": "Hello.",
+                "\u3042\u308a\u304c\u3068\u3046": "Thank you.",
                 "\u3042\u308a\u304c\u3068\u3046\u3054\u3056\u3044\u307e\u3059": "Thank you.",
                 "\u304a\u5143\u6c17\u3067\u3059\u304b": "How are you?",
                 "\u306f\u3044": "Yes.",
@@ -2805,6 +2813,51 @@ class LightweightTranslator:
                 if pivoted:
                     return pivoted
         return None
+
+    def lookup_phrase_prefix(self, text: str, source: str, target: str) -> str | None:
+        """Best-effort partial phrase match for streaming partial translation."""
+        normalized = self._canonical_phrase_key(text)
+        if not normalized:
+            return None
+        table = self._phrases.get((source, target), {})
+        best_key = ""
+        best_value = None
+        for key, value in table.items():
+            if normalized.startswith(key) and len(key) > len(best_key):
+                best_key = key
+                best_value = value
+        if best_value and len(best_key) >= max(4, len(normalized) // 2):
+            return best_value
+        if source != "en":
+            english_table = self._phrases.get((source, "en"), {})
+            for key, english in english_table.items():
+                if normalized.startswith(key) and len(key) > len(best_key):
+                    pivoted = self._phrases.get(("en", target), {}).get(_normalize_text(english))
+                    if pivoted:
+                        best_key = key
+                        best_value = pivoted
+        return best_value
+
+    def translate_with_meta(
+        self,
+        text: str,
+        source_language: str | None = None,
+        target_language: str | None = None,
+        *,
+        quality: bool = False,
+    ) -> dict[str, str | bool]:
+        phrase = self._lookup_phrase(text, source_language or "en", target_language or "ht")
+        if phrase:
+            return {"text": phrase, "phrase_hit": True, "partial_hit": False}
+        prefix = self.lookup_phrase_prefix(text, source_language or "en", target_language or "ht")
+        if prefix:
+            return {"text": prefix, "phrase_hit": True, "partial_hit": True}
+        translated = self.translate(text, source_language, target_language, quality=quality)
+        return {
+            "text": translated,
+            "phrase_hit": not translated.startswith("["),
+            "partial_hit": False,
+        }
 
     def translate(
         self,

@@ -1,5 +1,4 @@
-/* eslint-disable import/namespace */
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system/legacy";
 import * as SecureStore from "expo-secure-store";
@@ -9,7 +8,8 @@ const SPEED_KEY = "tts_speed";
 const MAX_QUEUE_SIZE = 50;
 const MAX_RETRIES = 3;
 
-export function useMobileTts() {
+export function useMobileTts(appStateRef) {
+  const isPlaybackAllowed = () => !appStateRef || appStateRef.current === "active";
   const [ttsQueue, setTtsQueue] = useState([]);
   const [isPlayingTts, setIsPlayingTts] = useState(false);
   const [volume, setVolume] = useState(0.8);
@@ -24,10 +24,13 @@ export function useMobileTts() {
   const replayCaptureRef = useRef([]);
   const lastTtsMessagesRef = useRef([]);
   const onPlaybackIdleRef = useRef(null);
+  const retryTimerRef = useRef(null);
+  const playbackEpochRef = useRef(0);
+  const serverTtsStyleRef = useRef(null);
 
-  function setOnPlaybackIdle(callback) {
+  const setOnPlaybackIdle = useCallback((callback) => {
     onPlaybackIdleRef.current = callback;
-  }
+  }, []);
 
   function notifyPlaybackIdle() {
     onPlaybackIdleRef.current?.();
@@ -35,6 +38,19 @@ export function useMobileTts() {
 
   useEffect(() => {
     loadSettings();
+    return () => {
+      playbackEpochRef.current += 1;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      if (soundRef.current) {
+        Promise.resolve(soundRef.current.unloadAsync?.()).catch(() => {});
+        soundRef.current = null;
+      }
+      activePlaybackRef.current = null;
+      isPlayingTtsRef.current = false;
+    };
   }, []);
 
   async function loadSettings() {
@@ -76,8 +92,14 @@ export function useMobileTts() {
   }
 
   async function playNextTtsChunk() {
+    const epoch = playbackEpochRef.current;
+    if (!isPlaybackAllowed()) {
+      isPlayingTtsRef.current = false;
+      setIsPlayingTts(false);
+      return;
+    }
     if (ttsQueueRef.current.length === 0 || isPlayingTtsRef.current) {
-      if (ttsQueueRef.current.length === 0) {
+      if (ttsQueueRef.current.length === 0 && playbackEpochRef.current === epoch) {
         setIsPlayingTts(false);
         isPlayingTtsRef.current = false;
         retryCountRef.current = 0;
@@ -95,12 +117,14 @@ export function useMobileTts() {
 
     try {
       const success = await playTtsAudioWithSettings(message.audio_base64, message.mime_type);
+      if (playbackEpochRef.current !== epoch) return;
       if (success) {
         retryCountRef.current = 0;
       } else {
         throw new Error("TTS playback failed");
       }
     } catch (error) {
+      if (playbackEpochRef.current !== epoch) return;
       console.error("TTS playback error:", error);
       retryCountRef.current++;
       
@@ -108,13 +132,20 @@ export function useMobileTts() {
         console.log(`Retrying TTS playback (${retryCountRef.current}/${MAX_RETRIES})`);
         ttsQueueRef.current.unshift(message);
         setTtsQueue([...ttsQueueRef.current]);
-        setTimeout(() => playNextTtsChunk(), 500);
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = setTimeout(() => {
+          retryTimerRef.current = null;
+          if (playbackEpochRef.current !== epoch || !isPlaybackAllowed()) return;
+          playNextTtsChunk();
+        }, 500);
         return;
       } else {
         console.error("Max retries reached for TTS playback");
         retryCountRef.current = 0;
       }
     }
+
+    if (playbackEpochRef.current !== epoch) return;
 
     isPlayingTtsRef.current = false;
     setIsPlayingTts(false);
@@ -127,8 +158,24 @@ export function useMobileTts() {
     }
   }
 
+  function applyTtsStyle(message) {
+    const style = message?.style || message?.tts_style;
+    if (style && typeof style === "object") {
+      serverTtsStyleRef.current = style;
+    }
+  }
+
+  function resolvePlaybackRate() {
+    const serverSpeed = serverTtsStyleRef.current?.speed;
+    if (typeof serverSpeed === "number" && Number.isFinite(serverSpeed)) {
+      return Math.max(0.5, Math.min(2.0, serverSpeed));
+    }
+    return playbackSpeed;
+  }
+
   async function playTtsAudioWithSettings(audioBase64, mimeType) {
     const extension = mimeType?.includes("mpeg") || mimeType?.includes("mp3") ? "mp3" : "wav";
+    const effectiveRate = resolvePlaybackRate();
     const cacheDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory || "";
     const encodingType = FileSystem.EncodingType?.Base64 || "base64";
     const uri = `${cacheDirectory}tts-${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`;
@@ -156,7 +203,7 @@ export function useMobileTts() {
             {
               shouldPlay: false,
               volume,
-              rate: playbackSpeed,
+              rate: effectiveRate,
               shouldCorrectPitch: true,
             }
           );
@@ -222,6 +269,10 @@ export function useMobileTts() {
 
   function handleTtsChunk(message) {
     if (!message.audio_base64) return;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     rememberReplayChunk(message);
     
     if (ttsQueueRef.current.length >= MAX_QUEUE_SIZE) {
@@ -232,7 +283,7 @@ export function useMobileTts() {
     ttsQueueRef.current = [...ttsQueueRef.current, message];
     setTtsQueue(ttsQueueRef.current);
     
-    if (!isPlayingTtsRef.current) {
+    if (!isPlayingTtsRef.current && isPlaybackAllowed()) {
       playNextTtsChunk();
     }
   }
@@ -286,7 +337,14 @@ export function useMobileTts() {
   }
 
   async function stopTtsPlayback() {
+    playbackEpochRef.current += 1;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     retryCountRef.current = MAX_RETRIES;
+    ttsQueueRef.current = [];
+    setTtsQueue([]);
     if (soundRef.current) {
       try {
         await soundRef.current.stopAsync();
@@ -301,12 +359,24 @@ export function useMobileTts() {
   }
 
   function clearTtsQueue() {
+    playbackEpochRef.current += 1;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    retryCountRef.current = MAX_RETRIES;
     ttsQueueRef.current = [];
     setTtsQueue([]);
     isPlayingTtsRef.current = false;
     setIsPlayingTts(false);
-    retryCountRef.current = MAX_RETRIES;
-    stopTtsPlayback();
+    setCurrentAudio(null);
+    if (soundRef.current) {
+      Promise.resolve(soundRef.current.stopAsync?.())
+        .then(() => soundRef.current?.unloadAsync?.())
+        .catch(() => {});
+      soundRef.current = null;
+    }
+    activePlaybackRef.current = null;
   }
 
   function clearReplayAudio() {
@@ -327,6 +397,7 @@ export function useMobileTts() {
     clearTtsQueue,
     clearReplayAudio,
     stopTtsPlayback,
+    applyTtsStyle,
     setOnPlaybackIdle,
     hasReplayAudio,
     volume,

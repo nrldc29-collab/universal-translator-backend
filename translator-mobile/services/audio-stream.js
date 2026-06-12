@@ -1,10 +1,12 @@
-/* eslint-disable import/namespace */
 import { Platform } from "react-native";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system/legacy";
+import { buildRecordingOptions } from "../constants/audioQuality";
 
 let activeRecording = null;
 let onChunkCallback = null;
+let onStreamErrorCallback = null;
+let onVoiceActivityCallback = null;
 let streamingActive = false;
 let uploadPaused = false;
 let streamGeneration = 0;
@@ -12,37 +14,23 @@ let utteranceTimer = null;
 let meteringInterval = null;
 
 const METERING_POLL_MS = 100;
-const VOICE_DB_THRESHOLD = -48;
+const VOICE_DB_THRESHOLD = Platform.OS === "ios" ? -62 : -52;
 const METERING_UNAVAILABLE_PEAK = -160;
-const SILENCE_MS_TO_FINALIZE = Platform.OS === "ios" ? 900 : 1200;
+const SILENCE_MS_TO_FINALIZE = Platform.OS === "ios" ? 700 : 900;
 const MAX_UTTERANCE_MS = Platform.OS === "android" ? 8000 : 15000;
-const MIN_UTTERANCE_MS = 700;
+const MIN_UTTERANCE_MS = Platform.OS === "ios" ? 900 : 700;
+const OPEN_MIC_FALLBACK_MS = Platform.OS === "ios" ? 2200 : 3000;
 
-const RECORDING_OPTIONS = {
-  android: {
-    extension: ".m4a",
-    outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-    audioEncoder: Audio.AndroidAudioEncoder.AAC,
-    sampleRate: 44100,
-    numberOfChannels: 1,
-    bitRate: 128000,
-  },
-  ios: {
-    extension: ".m4a",
-    outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-    audioQuality: Audio.IOSAudioQuality.HIGH,
-    sampleRate: 44100,
-    numberOfChannels: 1,
-    bitRate: 128000,
-    linearPCMBitDepth: 16,
-    linearPCMIsBigEndian: false,
-    linearPCMIsFloat: false,
-  },
-  isMeteringEnabled: true,
+let activeQualityKey = "HIGH";
+
+export const setAudioStreamQuality = (qualityKey = "HIGH") => {
+  activeQualityKey = qualityKey;
 };
 
+const getRecordingOptions = () => buildRecordingOptions(activeQualityKey);
+
 const sleep = (ms) => new Promise((resolve) => {
-  utteranceTimer = setTimeout(resolve, ms);
+  setTimeout(resolve, ms);
 });
 
 const clearUtteranceTimer = () => {
@@ -79,15 +67,20 @@ export const restoreRecordingAudioMode = async () => {
 
 export const isAudioUploadPaused = () => uploadPaused;
 
-export const startAudioStream = async (onChunk, onError) => {
+export const startAudioStream = async (onChunk, onError, onVoiceActivity) => {
   try {
     if (streamingActive) {
       await stopAudioStream();
     }
 
-    const permission = await Audio.requestPermissionsAsync();
+    const existing = await Audio.getPermissionsAsync();
+    const permission = existing.granted
+      ? existing
+      : await Audio.requestPermissionsAsync();
     if (!permission.granted) {
-      onError?.("Microphone permission denied");
+      onError?.(permission.canAskAgain === false
+        ? "Microphone blocked — enable in Settings"
+        : "Microphone permission denied");
       return false;
     }
 
@@ -100,6 +93,8 @@ export const startAudioStream = async (onChunk, onError) => {
     });
 
     onChunkCallback = onChunk;
+    onStreamErrorCallback = onError;
+    onVoiceActivityCallback = onVoiceActivity || null;
     streamingActive = true;
     uploadPaused = false;
     streamGeneration += 1;
@@ -121,12 +116,18 @@ const captureUtteranceLoop = async (generation) => {
     }
 
     const captured = await captureSingleUtterance(generation);
+    if (captured?.fatal) {
+      streamingActive = false;
+      onStreamErrorCallback?.(captured.fatal);
+      break;
+    }
     if (!captured || !streamingActive || generation !== streamGeneration || uploadPaused) {
       continue;
     }
 
     try {
-      onChunkCallback?.(captured.buffer, {
+      if (!onChunkCallback) continue;
+      onChunkCallback(captured.buffer, {
         audioLevel: captured.audioLevel,
         voiceActive: captured.voiceActive,
         meteringAvailable: captured.meteringAvailable,
@@ -144,20 +145,22 @@ const captureSingleUtterance = async (generation) => {
   const peakMetering = { value: METERING_UNAVAILABLE_PEAK };
   let hadSpeech = false;
   let silenceMs = 0;
+  let lastVoiceActivitySent = 0;
   const startedAt = Date.now();
 
   try {
+    const recordingOptions = getRecordingOptions();
     const created = await Audio.Recording.createAsync(
-      RECORDING_OPTIONS,
+      recordingOptions,
       undefined,
-      RECORDING_OPTIONS.isMeteringEnabled ? METERING_POLL_MS : undefined,
+      recordingOptions.isMeteringEnabled ? METERING_POLL_MS : undefined,
     );
     recording = created.recording;
     activeRecording = recording;
 
-    if (RECORDING_OPTIONS.isMeteringEnabled) {
+    if (recordingOptions.isMeteringEnabled) {
       meteringInterval = setInterval(async () => {
-        if (!recording || !streamingActive || generation !== streamGeneration) return;
+        if (!recording || !streamingActive || uploadPaused || generation !== streamGeneration) return;
         try {
           const status = await recording.getStatusAsync();
           const metering = Number(status.metering);
@@ -189,18 +192,58 @@ const captureSingleUtterance = async (generation) => {
         hadSpeech = true;
       }
 
-      const silenceReached = hadSpeech && meteringAvailable && silenceMs >= SILENCE_MS_TO_FINALIZE;
-      const maxDurationReached = elapsed >= MAX_UTTERANCE_MS;
-      if (silenceReached || (hadSpeech && maxDurationReached)) {
-        break;
+      if (onVoiceActivityCallback && Date.now() - lastVoiceActivitySent >= 250) {
+        lastVoiceActivitySent = Date.now();
+        const liveLevel = meteringAvailable
+          ? Math.max(0, Math.min(1, (peakMetering.value + 60) / 60))
+          : 0;
+        try {
+          onVoiceActivityCallback({
+            audioLevel: liveLevel,
+            voiceActive: voiceNow,
+            heartbeat: true,
+          });
+        } catch {
+          // Voice-activity hook must not break capture.
+        }
       }
-      if (!meteringAvailable && maxDurationReached) {
+
+      const strongVoice = meteringAvailable && peakMetering.value >= VOICE_DB_THRESHOLD + 10;
+      const adaptiveSilenceMs = strongVoice
+        ? Math.max(MIN_UTTERANCE_MS, SILENCE_MS_TO_FINALIZE - 320)
+        : (meteringAvailable && peakMetering.value >= VOICE_DB_THRESHOLD + 5
+          ? Math.max(MIN_UTTERANCE_MS, SILENCE_MS_TO_FINALIZE - 200)
+          : SILENCE_MS_TO_FINALIZE);
+      const silenceReached = hadSpeech && meteringAvailable && silenceMs >= adaptiveSilenceMs;
+      const maxDurationReached = elapsed >= MAX_UTTERANCE_MS;
+      if (meteringAvailable && !hadSpeech && elapsed >= OPEN_MIC_FALLBACK_MS) {
         hadSpeech = true;
+      }
+      if (silenceReached || (hadSpeech && maxDurationReached) || maxDurationReached) {
+        if (elapsed >= MIN_UTTERANCE_MS) {
+          hadSpeech = true;
+        }
         break;
       }
     }
 
-    if (!recording || !streamingActive || generation !== streamGeneration || uploadPaused || !hadSpeech) {
+    if (!recording || !streamingActive || generation !== streamGeneration || uploadPaused) {
+      await unloadRecording(recording);
+      return null;
+    }
+
+    if (!hadSpeech) {
+      try {
+        const status = await recording.getStatusAsync();
+        if (Number(status?.durationMillis || 0) >= MIN_UTTERANCE_MS) {
+          hadSpeech = true;
+        }
+      } catch {
+        // Fall through to unload when no usable audio was captured.
+      }
+    }
+
+    if (!hadSpeech) {
       await unloadRecording(recording);
       return null;
     }
@@ -214,7 +257,7 @@ const captureSingleUtterance = async (generation) => {
     const meteringAvailable = peakMetering.value > METERING_UNAVAILABLE_PEAK + 1;
     const audioLevel = meteringAvailable
       ? Math.max(0, Math.min(1, (peakMetering.value + 60) / 60))
-      : 0.42;
+      : 0.28;
 
     const base64 = await FileSystem.readAsStringAsync(uri, {
       encoding: FileSystem.EncodingType.Base64,
@@ -226,13 +269,17 @@ const captureSingleUtterance = async (generation) => {
       buffer: audioBuffer,
       byteLength: audioBuffer.byteLength,
       audioLevel,
-      voiceActive: true,
+      voiceActive: hadSpeech,
       meteringAvailable,
       durationMs: Date.now() - startedAt,
     };
   } catch (error) {
     console.error("Utterance capture error:", error);
     await unloadRecording(recording);
+    const message = String(error?.message || error || "Microphone error");
+    if (/permission|denied|record|audio/i.test(message)) {
+      return { fatal: message };
+    }
     return null;
   } finally {
     clearMeteringPoll();
@@ -265,6 +312,9 @@ const base64ToArrayBuffer = (base64) => {
 export const stopAudioStream = async () => {
   streamingActive = false;
   uploadPaused = false;
+  onChunkCallback = null;
+  onStreamErrorCallback = null;
+  onVoiceActivityCallback = null;
   streamGeneration += 1;
   clearUtteranceTimer();
   clearMeteringPoll();

@@ -3,7 +3,12 @@ from dataclasses import dataclass, field
 from threading import Lock
 from time import monotonic
 
-from backend.config import get_semantic_history_limit, get_topic_limit
+from backend.config import (
+    get_conversation_interruption_grace_seconds,
+    get_conversation_soft_overlap_seconds,
+    get_semantic_history_limit,
+    get_topic_limit,
+)
 
 
 @dataclass
@@ -22,6 +27,7 @@ class SemanticTurn:
     intent: str
     tone: str
     topics: list[str] = field(default_factory=list)
+    emotion: str = "neutral"
 
 
 class ConversationBrain:
@@ -32,8 +38,8 @@ class ConversationBrain:
         self.turn_counter = 0
         self.active_since = 0.0
         self.playback_since = 0.0
-        self.soft_overlap_seconds = 0.35
-        self.interruption_grace_seconds = 0.15
+        self.soft_overlap_seconds = get_conversation_soft_overlap_seconds()
+        self.interruption_grace_seconds = get_conversation_interruption_grace_seconds()
         self.semantic_history: list[SemanticTurn] = []
         self.topic_counts: dict[str, int] = {}
         self.last_intent: str = "statement"
@@ -68,10 +74,15 @@ class ConversationBrain:
 
     def analyze_semantics(self, speaker: str, text: str) -> dict:
         with self._lock:
+            from backend.communication_brain import detect_emotion
+
             intent = self._detect_intent(text)
             tone = self._detect_tone(text)
+            emotion = detect_emotion(text, tone)
             topics = self._extract_topics(text)
-            semantic_turn = SemanticTurn(speaker=speaker, text=text, intent=intent, tone=tone, topics=topics)
+            semantic_turn = SemanticTurn(
+                speaker=speaker, text=text, intent=intent, tone=tone, topics=topics, emotion=emotion,
+            )
             self.semantic_history.append(semantic_turn)
             self.semantic_history = self.semantic_history[-get_semantic_history_limit():]
 
@@ -85,9 +96,14 @@ class ConversationBrain:
 
     def semantic_snapshot(self) -> dict:
         recent_topics = sorted(self.topic_counts, key=self.topic_counts.get, reverse=True)[:5]
+        recent_tone = self.semantic_history[-1].tone if self.semantic_history else "neutral"
+        recent_emotion = self.semantic_history[-1].emotion if self.semantic_history else "neutral"
         return {
             "last_intent": self.last_intent,
             "conversation_mood": self.conversation_mood,
+            "tone": recent_tone,
+            "emotion": recent_emotion,
+            "mood": self.conversation_mood,
             "topics": recent_topics,
             "recent_turns": [
                 {
@@ -165,3 +181,34 @@ class ConversationBrain:
             if self.playback_owner == speaker:
                 self.playback_owner = None
             return ArbitrationDecision(True, "Turn cancelled", self.active_speaker, self.playback_owner)
+
+    def cancel_playback(self, speaker: str | None = None) -> ArbitrationDecision:
+        with self._lock:
+            if speaker is None or self.playback_owner == speaker:
+                self.playback_owner = None
+            return ArbitrationDecision(True, "Playback cancelled", self.active_speaker, self.playback_owner)
+
+
+class ConversationBrainRegistry:
+    """Isolate duplex arbitration per session instead of one global brain."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self._brains: dict[str, ConversationBrain] = {}
+        self._fallback = ConversationBrain()
+
+    def get(self, session_id: str | None) -> ConversationBrain:
+        if not session_id:
+            return self._fallback
+        with self._lock:
+            brain = self._brains.get(session_id)
+            if brain is None:
+                brain = ConversationBrain()
+                self._brains[session_id] = brain
+            return brain
+
+    def release(self, session_id: str | None) -> None:
+        if not session_id:
+            return
+        with self._lock:
+            self._brains.pop(session_id, None)

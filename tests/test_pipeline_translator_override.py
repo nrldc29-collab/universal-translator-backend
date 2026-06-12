@@ -55,7 +55,7 @@ def test_translate_text_with_uses_supplied_translator():
 
     result = pipeline.translate_text_with(override, text="hello", source_language="en", target_language="es")
 
-    assert result.translated_text == "override output"
+    assert result.translated_text == "Override output"
     assert override.calls == [("hello", "en", "es")]
 
 
@@ -88,7 +88,7 @@ def test_translate_text_with_returns_translation_result():
 
     assert isinstance(result, TranslationResult)
     assert result.source_text == "hello"
-    assert result.translated_text == "hola"
+    assert result.translated_text == "Hola"
     assert result.audio_output_path is None
 
 

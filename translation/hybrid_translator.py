@@ -58,7 +58,7 @@ class OllamaTranslator:
             self._last_check = time.monotonic()
             return self._available
 
-    def translate(self, text, source_language=None, target_language=None):
+    def translate(self, text, source_language=None, target_language=None, *, hints=None):
         if not text.strip():
             return ""
         source = source_language or "en"
@@ -66,7 +66,8 @@ class OllamaTranslator:
         if source == target:
             return text
 
-        cache_key = (source, target, " ".join(text.lower().split()))
+        hint_key = "|".join(str(item) for item in (hints or []) if item)
+        cache_key = (source, target, " ".join(text.lower().split()), hint_key)
         with self._cache_lock:
             cached = self._cache.get(cache_key)
         if cached is not None:
@@ -81,9 +82,15 @@ class OllamaTranslator:
         source_name = lang_names.get(source, source)
         target_name = lang_names.get(target, target)
 
+        hint_lines = [str(item).strip() for item in (hints or []) if str(item).strip()]
+        hint_block = ""
+        if hint_lines:
+            hint_block = "Follow these constraints:\n- " + "\n- ".join(hint_lines) + "\n\n"
         prompt = (
             f"Translate the following text from {source_name} to {target_name}. "
-            f"Return ONLY the translated text, nothing else.\n\n{text}"
+            f"Preserve personal names, numbers, and proper nouns. Match the speaker's tone and register. "
+            f"Return ONLY the translated text, nothing else.\n\n"
+            f"{hint_block}{text}"
         )
 
         payload = json.dumps({
@@ -166,30 +173,38 @@ class HybridTranslator:
             if key in self._metrics:
                 self._metrics[key] += 1
 
-    def translate(self, text, source_language=None, target_language=None, *, quality=False):
+    def translate(self, text, source_language=None, target_language=None, *, quality=False, hints=None):
         if not text.strip():
             return ""
         source = source_language or "en"
         target = target_language or "ht"
         if source == target:
             return text
-
         lightweight_result = self.lightweight.translate(text, source, target)
-        if not self.is_placeholder_translation(lightweight_result, source, target):
+        skip_lightweight_shortcut = quality or len(text.split()) > 6
+        if (
+            not skip_lightweight_shortcut
+            and not self.is_placeholder_translation(lightweight_result, source, target)
+        ):
             self._record("lightweight", True)
             return lightweight_result
 
         if self._forced_tier == "ollama":
-            return self._try_ollama(text, source, target) or lightweight_result
+            return self._try_ollama(text, source, target, hints=hints) or lightweight_result
         if self._forced_tier == "local":
             return self._try_marian(text, source, target, quality=quality) or lightweight_result
         if self._forced_tier == "remote":
             return self._try_remote(text, source, target) or lightweight_result
 
         if self._ollama_enabled:
-            ollama_result = self._try_ollama(text, source, target)
+            ollama_result = self._try_ollama(text, source, target, hints=hints)
             if ollama_result:
                 return ollama_result
+
+        if quality and hints and self._marian_enabled:
+            marian_result = self._try_marian(text, source, target, quality=True)
+            if marian_result:
+                return marian_result
 
         if not quality and self._remote_enabled:
             remote_result = self._try_remote(text, source, target)
@@ -208,12 +223,12 @@ class HybridTranslator:
 
         return lightweight_result
 
-    def _try_ollama(self, text, source, target):
+    def _try_ollama(self, text, source, target, *, hints=None):
         try:
             if not self.ollama.is_available():
                 self._record("ollama", False)
                 return None
-            result = self.ollama.translate(text, source, target)
+            result = self.ollama.translate(text, source, target, hints=hints)
             self._record("ollama", True)
             return result
         except (RuntimeError, ConnectionError, TimeoutError, ValueError):
@@ -228,7 +243,7 @@ class HybridTranslator:
                 return result
             self._record("marian", False)
             return None
-        except (RuntimeError, ImportError, OSError):
+        except (RuntimeError, ImportError, OSError, MemoryError):
             self._record("marian", False)
             return None
 

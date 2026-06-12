@@ -30,6 +30,25 @@ describe('useMobileTts', () => {
     expect(result.current.isPlayingTts || result.current.ttsQueue.length >= 0).toBe(true);
   });
 
+  test('stopTtsPlayback clears queued chunks', async () => {
+    const { result } = renderHook(() => useMobileTts());
+    const mockMessage = {
+      audio_base64: 'base64audiodata',
+      mime_type: 'audio/wav',
+    };
+
+    act(() => {
+      result.current.handleTtsChunk(mockMessage);
+    });
+
+    await act(async () => {
+      await result.current.stopTtsPlayback();
+    });
+
+    expect(result.current.ttsQueue).toEqual([]);
+    expect(result.current.isPlayingTts).toBe(false);
+  });
+
   test('clears TTS queue', () => {
     const { result } = renderHook(() => useMobileTts());
     const mockMessage = {

@@ -12,6 +12,7 @@ export function useStreamRefs() {
   const streamRecordingStartedAtRef = useRef(0);
   const firstAudioSeenRef = useRef(false);
   const streamReconnectRef = useRef({ enabled: false, options: null, attempts: 0 });
+  const streamReconnectTimerRef = useRef(null);
   const streamSafetyTimeoutRef = useRef(null);
   const resumeAfterTtsRef = useRef(false);
 
@@ -27,6 +28,7 @@ export function useStreamRefs() {
     streamRecordingStartedAtRef,
     firstAudioSeenRef,
     streamReconnectRef,
+    streamReconnectTimerRef,
     streamSafetyTimeoutRef,
     resumeAfterTtsRef,
   };

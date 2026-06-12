@@ -4,6 +4,7 @@ from backend.latency import StageMetrics
 from backend.memory import ConversationMemory
 from backend.smart_buffer import Priority, SmartBuffer
 from backend.streaming import _sanitize_language_code, _sanitize_session_id
+from backend.streaming_helpers import sanitize_text_for_tts
 
 
 def test_conversation_memory_clamps_limit():
@@ -39,6 +40,14 @@ def test_streaming_sanitize_language_rejects_unknown():
     assert _sanitize_language_code("ht", "en") == "ht"
     assert _sanitize_language_code("xx", "en") == "en"
     assert _sanitize_language_code("HT-fr", "en") == "ht"
+
+
+def test_sanitize_text_for_tts_strips_placeholders_and_urls():
+    cleaned = sanitize_text_for_tts("[en->es] hello https://example.com test")
+    assert "[en->" not in cleaned
+    assert "https://" not in cleaned
+    assert "hello" in cleaned
+    assert "test" in cleaned
 
 
 def test_streaming_sanitize_session_id():

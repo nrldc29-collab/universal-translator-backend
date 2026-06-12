@@ -10,6 +10,8 @@ venv/
 # Node / frontend / Expo
 node_modules/
 dist/
+dist-verify/
+translator-mobile/dist-verify/
 web-build/
 .expo/
 .vercel/

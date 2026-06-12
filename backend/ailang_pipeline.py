@@ -1,6 +1,7 @@
 """AILang Pipeline Manager - orchestrates AILang agents for advanced translation features."""
 
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
@@ -325,6 +326,9 @@ class AILangPipelineManager:
         # Timeout configuration for agent calls (configurable)
         self._agent_timeout = get_ailang_agent_timeout()
         self._max_retries = get_ailang_max_retries()
+        self._llm_agents_enabled = os.getenv("USE_LLM_AGENTS", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
         
         # Agent enable/disable configuration from environment
         enabled_agents_str = get_ailang_enabled_agents()
@@ -569,6 +573,24 @@ class AILangPipelineManager:
     @log_agent_call("ContextMemoryAgent")
     def process_context_memory(self, text: str, source_lang: str, context: AILangContext) -> Dict[str, Any]:
         """Run ContextMemoryAgent for pronoun resolution and entity tracking."""
+        if not self._llm_agents_enabled:
+            from ailang_integration.runtime.rule_engine import (
+                detect_topic_shift,
+                extract_entities,
+                resolve_pronouns,
+            )
+
+            entities = extract_entities(text, context.conversation_history)
+            resolved = resolve_pronouns(text, entities, context.conversation_history)
+            return {
+                "resolved_text": resolved,
+                "original_text": text,
+                "resolution_applied": resolved != text,
+                "entities": entities,
+                "topic_shift": detect_topic_shift(text, context.conversation_history),
+                "speaker_registry": context.speaker_registry,
+                "method": "offline_rules",
+            }
         if not self._enabled or not self.is_agent_enabled("ContextMemoryAgent"):
             return {"resolved_text": text, "original_text": text, "resolution_applied": False}
         
@@ -596,6 +618,29 @@ class AILangPipelineManager:
     @log_agent_call("SpeakerProfilerAgent")
     def process_speaker_profile(self, text: str, source_lang: str, target_lang: str, context: AILangContext) -> Dict[str, Any]:
         """Run SpeakerProfilerAgent for voice profiling and style adaptation."""
+        if not self._llm_agents_enabled:
+            from ailang_integration.runtime.rule_engine import (
+                analyze_register,
+                analyze_vocabulary_level,
+                get_style_instructions,
+            )
+
+            speaker_texts = [
+                str(turn.get("text") or "")
+                for turn in context.conversation_history[-8:]
+                if not context.current_speaker or turn.get("speaker") == context.current_speaker
+            ]
+            speaker_texts.append(text)
+            profile = {
+                "vocabulary_level": analyze_vocabulary_level(speaker_texts),
+                "register": analyze_register(speaker_texts),
+            }
+            return {
+                "style_guide": get_style_instructions(profile, target_lang),
+                "profile": profile,
+                "updated_registry": context.speaker_registry,
+                "method": "offline_rules",
+            }
         if not self._enabled or not self.is_agent_enabled("SpeakerProfilerAgent") or not context.current_speaker:
             return {"style_guide": [], "profile": {}}
         
@@ -677,6 +722,17 @@ class AILangPipelineManager:
     @log_agent_call("AmbiguityResolverAgent")
     def process_ambiguity_resolution(self, text: str, source_lang: str, target_lang: str, context: AILangContext) -> Dict[str, Any]:
         """Run AmbiguityResolverAgent for phrase ambiguity detection."""
+        if not self._llm_agents_enabled:
+            from ailang_integration.runtime.rule_engine import detect_ambiguities
+
+            ambiguities = detect_ambiguities(text, source_lang)
+            return {
+                "has_ambiguities": bool(ambiguities),
+                "ambiguities": ambiguities,
+                "resolved_text": text,
+                "needs_human_review": bool(ambiguities),
+                "method": "offline_rules",
+            }
         if not self._enabled or not self.is_agent_enabled("AmbiguityResolverAgent"):
             return {"has_ambiguities": False, "resolved_text": text, "needs_human_review": False}
 
@@ -700,6 +756,12 @@ class AILangPipelineManager:
     @log_agent_call("ConfidenceFallbackAgent")
     def process_confidence_fallback(self, text: str, base_translation: str, confidence: float, source_lang: str, target_lang: str, context: AILangContext, instructions: List[str]) -> Dict[str, Any]:
         """Run ConfidenceFallbackAgent for low-confidence translation escalation."""
+        if not self._llm_agents_enabled:
+            from ailang_integration.runtime.rule_engine import confidence_result
+
+            result = confidence_result(text, base_translation, confidence, context.domain)
+            result["method"] = "offline_rules"
+            return result
         if not self._enabled or not self.is_agent_enabled("ConfidenceFallbackAgent") or confidence >= 0.65:
             return {"final_translation": base_translation, "escalated": False, "tier": "high"}
         
@@ -721,6 +783,17 @@ class AILangPipelineManager:
     @log_agent_call("BackTranslatorAgent")
     def process_back_translation(self, original: str, translated: str, source_lang: str, target_lang: str, context: AILangContext) -> Dict[str, Any]:
         """Run BackTranslatorAgent for translation verification."""
+        if not self._llm_agents_enabled:
+            from ailang_integration.runtime.rule_engine import quality_score
+
+            quality = quality_score(original, translated, source_lang, target_lang, context.domain)
+            return {
+                "verified": bool(quality.get("pass")),
+                "final_translation": translated,
+                "improved": False,
+                "quality": quality,
+                "method": "offline_rules",
+            }
         if not self._enabled or not self.is_agent_enabled("BackTranslatorAgent"):
             return {"verified": True, "final_translation": translated, "improved": False}
         
@@ -742,6 +815,18 @@ class AILangPipelineManager:
     @log_agent_call("EmotionTTS")
     def process_emotion_tts(self, text: str, target_lang: str, context: AILangContext) -> Dict[str, Any]:
         """Run EmotionTTS agent for emotional tone preservation in TTS."""
+        if not self._llm_agents_enabled:
+            from ailang_integration.runtime.rule_engine import detect_emotion, get_tts_config
+
+            analysis = detect_emotion(text, {"domain": context.domain})
+            emotion = str(analysis.get("emotion") or "neutral")
+            return {
+                "emotion": emotion,
+                "confidence": analysis.get("confidence", 0.5),
+                "tts_config": get_tts_config(text, emotion, target_lang),
+                "analysis": analysis,
+                "method": "offline_rules",
+            }
         if not self._enabled or not self.is_agent_enabled("EmotionTTS"):
             return {"emotion": "neutral", "confidence": 0.5, "tts_config": {"speed": 1.0, "pitch_shift": 0, "volume": 1.0, "pause_between_sentences_ms": 200, "voice_style": "default"}}
         

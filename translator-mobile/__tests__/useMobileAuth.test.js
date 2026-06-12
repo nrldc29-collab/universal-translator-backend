@@ -1,6 +1,19 @@
 import { renderHook, act } from '@testing-library/react-native';
 import * as SecureStore from 'expo-secure-store';
-import { useMobileAuth } from '../hooks/useMobileAuth';
+import { useMobileAuth, isJwtExpired } from '../hooks/useMobileAuth';
+
+jest.mock('../utils/discoverServer', () => ({
+  deriveApiUrlFromExpo: jest.fn(() => ''),
+  checkBackendHealthUrl: jest.fn(async () => true),
+  isOffLanBackendHost: (host) => !/^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.|localhost|127\.)/i.test(String(host || "")),
+  tunnelFetchHeaders: () => ({ Accept: "application/json" }),
+  resolveServerUrl: jest.fn(async (fallback = '') => ({
+    apiUrl: fallback,
+    healthy: true,
+    mobileInfo: null,
+    hostname: '',
+  })),
+}));
 
 describe('useMobileAuth', () => {
   beforeEach(() => {
@@ -26,12 +39,14 @@ describe('useMobileAuth', () => {
     });
 
     expect(result.current.wsUrl).toBe('http://192.168.12.243:8000');
-    expect(result.current.setupComplete).toBe(false);
+    expect(result.current.setupComplete).toBe(true);
     expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
       'translator_ws_url',
       'http://192.168.12.243:8000',
     );
-    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('translator_setup_complete');
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('translator_token');
+    expect(result.current.token).toBe('');
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalledWith('translator_setup_complete');
   });
 
   test('rejects localhost health checks for phone use', async () => {
@@ -78,6 +93,70 @@ describe('useMobileAuth', () => {
     expect(result.current.token).toBe('test-token');
   });
 
+  test('login returns false when credentials are rejected', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: true, status: 200 })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: 'Invalid credentials' }),
+      });
+
+    const { result } = renderHook(() => useMobileAuth({ defaultUrl: '' }));
+
+    await act(async () => {
+      result.current.setWsUrl('http://192.168.12.243:8000');
+    });
+
+    let ok = true;
+    await act(async () => {
+      ok = await result.current.login({ skipHealthCheck: true });
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.token).toBe('');
+  });
+
+  test('quiet health reports warming server as reachable but not ready', async () => {
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ready: false }),
+    }));
+    const { result } = renderHook(() => useMobileAuth({ defaultUrl: '' }));
+
+    let ok = false;
+    await act(async () => {
+      ok = await result.current.checkBackendHealth('http://192.168.12.243:8000', { quiet: true });
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.backendReachable).toBe(true);
+  });
+
+  test('non-quiet health waits for ready before reporting success', async () => {
+    const onStatus = jest.fn();
+    global.fetch = jest.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ready: false }),
+    }));
+    const { result } = renderHook(() => useMobileAuth({ defaultUrl: '', onStatus }));
+
+    let ok = false;
+    await act(async () => {
+      ok = await result.current.checkBackendHealth('http://192.168.12.243:8000');
+    });
+
+    expect(ok).toBe(false);
+    expect(result.current.backendReachable).toBe(true);
+    expect(onStatus).toHaveBeenCalledWith(
+      'Opening bridge server — retry in a few seconds',
+      'connecting',
+    );
+  });
+
   test('quiet health check updates reachability without status messages', async () => {
     const onStatus = jest.fn();
     global.fetch = jest.fn(async () => ({ ok: true, status: 200 }));
@@ -104,7 +183,7 @@ describe('useMobileAuth', () => {
 
     expect(ok).toBe(true);
     expect(result.current.backendReachable).toBe(true);
-    expect(onStatus).toHaveBeenCalledWith('Server reachable', 'success');
+    expect(onStatus).toHaveBeenCalledWith('Bridge server reachable', 'success');
   });
 
   test('editWsUrl clears stale backend reachability when URL changes', async () => {
@@ -220,5 +299,30 @@ describe('useMobileAuth', () => {
     expect(result.current.wsUrl).toBe('http://192.168.12.243:8000');
     expect(result.current.setupComplete).toBe(true);
     expect(SecureStore.deleteItemAsync).not.toHaveBeenCalledWith('translator_setup_complete');
+  });
+
+  test('clears expired stored token on load', async () => {
+    const expiredPayload = Buffer.from(JSON.stringify({ exp: 1 })).toString('base64url');
+    const expiredToken = `header.${expiredPayload}.sig`;
+    SecureStore.getItemAsync.mockImplementation(async (key) => {
+      if (key === 'translator_token') return expiredToken;
+      if (key === 'translator_ws_url') return 'http://192.168.12.243:8000';
+      if (key === 'translator_setup_complete') return '1';
+      return null;
+    });
+
+    const onStatus = jest.fn();
+    const { result } = renderHook(() =>
+      useMobileAuth({ defaultUrl: 'http://192.168.12.243:8000', onStatus }),
+    );
+
+    await act(async () => {
+      await result.current.loadStoredData();
+    });
+
+    expect(isJwtExpired(expiredToken)).toBe(true);
+    expect(result.current.token).toBe('');
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('translator_token');
+    expect(onStatus).toHaveBeenCalledWith('Session expired — sign in again', 'warning');
   });
 });

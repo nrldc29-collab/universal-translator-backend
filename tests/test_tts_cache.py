@@ -1,15 +1,16 @@
 import contextlib
 import wave
+from pathlib import Path
 
 import numpy as np
 
-from backend.tts_cache import cached_tts_payload, tts_cache_key, tts_cache_path
+from backend.tts_cache import cached_tts_payload, legacy_tts_cache_key, tts_cache_key, tts_cache_path
 from backend.streaming import _synthesize_live_tts_chunk, _unlink_temp_tts_file
 
 
-def _write_wav(path, sample_rate=22050, amplitude=1.0):
+def _write_wav(path, sample_rate=22050, amplitude=1.0, duration_seconds=0.25):
     path.parent.mkdir(parents=True, exist_ok=True)
-    t = np.arange(int(sample_rate * 0.25), dtype=np.float32) / sample_rate
+    t = np.arange(int(sample_rate * duration_seconds), dtype=np.float32) / sample_rate
     audio = amplitude * np.sin(2 * np.pi * 440 * t)
     pcm = np.clip(audio * 32767.0, -32768, 32767).astype(np.int16)
     with contextlib.closing(wave.open(str(path), "wb")) as wav_file:
@@ -31,7 +32,7 @@ def test_cached_tts_payload_reuses_existing_audio(monkeypatch, tmp_path):
 
     def render(temp_path):
         calls.append(temp_path)
-        temp_path.write_bytes(b"0" * 256)
+        _write_wav(temp_path)
         return temp_path
 
     first = cached_tts_payload("Bonjour.", "fr", "url", render)
@@ -63,6 +64,49 @@ def test_cached_tts_payload_repairs_clipped_cache_hit(monkeypatch, tmp_path):
     assert _peak(cache_path) <= 0.83
 
 
+def test_cached_tts_payload_regenerates_invalid_riff_stub(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    text = "Bonjou"
+    language = "ht"
+    cache_path = tts_cache_path(tts_cache_key(text, language))
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(b"RIFF" + (b"\0" * 96))
+    calls = []
+
+    def render(temp_path):
+        calls.append(temp_path)
+        _write_wav(temp_path)
+        return temp_path
+
+    payload = cached_tts_payload(text, language, "url", render)
+
+    assert payload["cache_hit"] is False
+    assert len(calls) == 1
+    with contextlib.closing(wave.open(payload["audio_output_path"], "rb")) as wav_file:
+        assert wav_file.getnframes() > 0
+
+
+def test_cached_tts_payload_regenerates_implausibly_long_legacy_audio(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    text = "Hola"
+    language = "es"
+    legacy_path = tts_cache_path(legacy_tts_cache_key(text, language))
+    _write_wav(legacy_path, duration_seconds=12.0)
+    calls = []
+
+    def render(temp_path):
+        calls.append(temp_path)
+        _write_wav(temp_path, duration_seconds=0.5)
+        return temp_path
+
+    payload = cached_tts_payload(text, language, "url", render)
+
+    assert payload["cache_hit"] is False
+    assert len(calls) == 1
+    with contextlib.closing(wave.open(payload["audio_output_path"], "rb")) as wav_file:
+        assert wav_file.getnframes() / wav_file.getframerate() == 0.5
+
+
 def test_live_neutral_tts_chunk_uses_shared_cache(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
@@ -72,8 +116,7 @@ def test_live_neutral_tts_chunk_uses_shared_cache(monkeypatch, tmp_path):
 
         def synthesize(self, text, output_path, language=None, google_api_key=None, emotion_config=None):
             self.calls += 1
-            with open(output_path, "wb") as output_file:
-                output_file.write(b"1" * 256)
+            _write_wav(Path(output_path))
             return output_path
 
     engine = FakeTts()
@@ -93,8 +136,7 @@ def test_live_cache_cleanup_preserves_shared_cache(monkeypatch, tmp_path):
 
         def synthesize(self, text, output_path, language=None, google_api_key=None, emotion_config=None):
             self.calls += 1
-            with open(output_path, "wb") as output_file:
-                output_file.write(b"3" * 256)
+            _write_wav(Path(output_path))
             return output_path
 
     engine = FakeTts()
@@ -113,7 +155,7 @@ def test_live_cache_cleanup_preserves_shared_cache(monkeypatch, tmp_path):
     assert engine.calls == 1
 
 
-def test_live_emotional_tts_chunk_bypasses_neutral_cache(monkeypatch, tmp_path):
+def test_live_emotional_tts_chunk_uses_separate_cache(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
 
     class FakeTts:
@@ -122,12 +164,11 @@ def test_live_emotional_tts_chunk_bypasses_neutral_cache(monkeypatch, tmp_path):
 
         def synthesize(self, text, output_path, language=None, google_api_key=None, emotion_config=None):
             self.calls += 1
-            with open(output_path, "wb") as output_file:
-                output_file.write(b"2" * 256)
+            _write_wav(Path(output_path))
             return output_path
 
     engine = FakeTts()
-    _synthesize_live_tts_chunk(engine, "Bonjour.", tmp_path / "neutral.wav", "fr")
+    neutral = _synthesize_live_tts_chunk(engine, "Bonjour.", tmp_path / "neutral.wav", "fr")
     emotional = _synthesize_live_tts_chunk(
         engine,
         "Bonjour.",
@@ -136,5 +177,7 @@ def test_live_emotional_tts_chunk_bypasses_neutral_cache(monkeypatch, tmp_path):
         emotion_config={"speed": 0.85},
     )
 
-    assert emotional.endswith("emotional.wav")
+    assert "cache" in neutral.replace("\\", "/")
+    assert "cache" in emotional.replace("\\", "/")
+    assert neutral != emotional
     assert engine.calls == 2

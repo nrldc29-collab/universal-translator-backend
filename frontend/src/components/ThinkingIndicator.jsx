@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Brain, Sparkles, Zap } from 'lucide-react';
+import { Heart, Languages } from 'lucide-react';
 
 export default function ThinkingIndicator({
   stage = 'thinking',
@@ -14,18 +14,18 @@ export default function ThinkingIndicator({
 }) {
   const stageConfig = {
     thinking: {
-      icon: Brain,
-      label: 'Thinking',
+      icon: Heart,
+      label: 'Understanding',
       animation: 'pulse',
     },
     translating: {
-      icon: Sparkles,
-      label: 'Translating',
+      icon: Heart,
+      label: 'Understanding',
       animation: 'shimmer',
     },
     processing: {
-      icon: Zap,
-      label: 'Processing',
+      icon: Languages,
+      label: 'Bridging',
       animation: 'pulse',
     },
   };

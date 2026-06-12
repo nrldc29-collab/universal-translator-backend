@@ -306,8 +306,16 @@ async def authenticate_websocket(websocket):
     identity = str(identity or "anonymous")[:128]
     if identity == "anonymous":
         return True, identity
-    allowed, remaining = usage_limiter.check(identity)
+    allowed, remaining = usage_limiter.check_connection(identity)
     if not allowed:
+        try:
+            await websocket.accept()
+            await websocket.send_json({
+                "type": "error",
+                "message": "Quota exceeded. Wait a moment and try again.",
+            })
+        except Exception:
+            pass
         await websocket.close(code=1008, reason="Quota exceeded.")
         return False, identity
     return True, identity

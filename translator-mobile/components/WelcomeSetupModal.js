@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { Modal, View, Text, TextInput, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, SafeAreaView } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import setupStyles from "./WelcomeSetupModal.styles";
+import NeoBrandMark from "./NeoBrandMark";
+import SetupHeroIcon from "./SetupHeroIcon";
+import SetupStepCard from "./SetupStepCard";
 
 export default function WelcomeSetupModal({
   visible,
@@ -14,6 +18,7 @@ export default function WelcomeSetupModal({
   onTestConnection,
   onLogin,
   onContinue,
+  onDismiss,
   backendReachable,
   isChecking,
 }) {
@@ -32,19 +37,32 @@ export default function WelcomeSetupModal({
   const setupProgress = backendReachable ? (step >= 1 ? 2 : 1) : 0;
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => {}}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={() => {
+        if (backendReachable === true) (onDismiss || onContinue)?.();
+      }}
+    >
       <SafeAreaView style={setupStyles.container}>
+        <LinearGradient
+          colors={["rgba(103, 232, 249, 0.35)", "transparent"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={setupStyles.headerShine}
+          pointerEvents="none"
+        />
         <KeyboardAvoidingView style={setupStyles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
           <ScrollView contentContainerStyle={setupStyles.scroll} keyboardShouldPersistTaps="handled">
             <View style={setupStyles.hero}>
-              <View style={setupStyles.heroIconRing}>
-                <Ionicons name="language" size={42} color="#22d3ee" />
-              </View>
+              <SetupHeroIcon />
+              <NeoBrandMark compact />
               <Text style={setupStyles.title}>
                 Welcome to <Text style={setupStyles.titleAccent}>Anai</Text>
               </Text>
               <Text style={setupStyles.subtitle}>
-                Real-time voice translation for conversations. Connect to your translator server, then tap Start and speak.
+                Bridge languages in real conversation. Link to your bridge server, then tap Start — each person can stay in their own language.
               </Text>
               <View style={setupStyles.stepRow} accessibilityLabel={`Setup step ${setupProgress + 1} of 3`}>
                 {[0, 1, 2].map((i) => (
@@ -60,8 +78,13 @@ export default function WelcomeSetupModal({
               </View>
             </View>
 
-            <View style={[setupStyles.card, setupProgress === 0 && setupStyles.cardActive]}>
-              <Text style={setupStyles.cardTitle}>1. Server address</Text>
+            <SetupStepCard active={setupProgress === 0}>
+              <View style={setupStyles.cardHead}>
+                <View style={setupStyles.cardIconWrap}>
+                  <Ionicons name="server-outline" size={15} color="#67e8f9" />
+                </View>
+                <Text style={setupStyles.cardTitle}>1. Bridge server</Text>
+              </View>
               <Text style={setupStyles.hint}>
                 Use your Railway URL or local network IP (same Wi‑Fi as this phone).
               </Text>
@@ -76,37 +99,42 @@ export default function WelcomeSetupModal({
                 style={[setupStyles.input, focusedField === "url" && setupStyles.inputFocused]}
                 onFocus={() => setFocusedField("url")}
                 onBlur={() => setFocusedField((f) => (f === "url" ? null : f))}
-                accessibilityLabel="Backend server URL"
+                accessibilityLabel="Bridge server URL"
               />
               <Pressable
                 onPress={handleTest}
                 disabled={isChecking}
                 style={({ pressed }) => [setupStyles.primaryBtn, pressed && setupStyles.btnPressed, isChecking && setupStyles.btnDisabled]}
                 accessibilityRole="button"
-                accessibilityLabel="Test server connection"
+                accessibilityLabel="Test bridge server link"
               >
                 {isChecking ? (
                   <ActivityIndicator color="#07131f" />
                 ) : (
                   <Text style={setupStyles.primaryBtnText}>
-                    {backendReachable === true ? "Connected — continue" : "Test connection"}
+                    {backendReachable === true ? "Bridge reachable — continue" : "Test bridge link"}
                   </Text>
                 )}
               </Pressable>
               {backendReachable === true && (
                 <View style={setupStyles.successRow}>
                   <Ionicons name="checkmark-circle" size={16} color="#34d399" />
-                  <Text style={setupStyles.successText}>Server reachable</Text>
+                  <Text style={setupStyles.successText}>Bridge server reachable</Text>
                 </View>
               )}
               {backendReachable === false && (
-                <Text style={setupStyles.errorText}>Could not reach the server. Check the URL and try again.</Text>
+                <Text style={setupStyles.errorText}>Could not reach the bridge server. Check the URL and try again.</Text>
               )}
-            </View>
+            </SetupStepCard>
 
             {(step >= 1 || backendReachable) && (
-              <View style={[setupStyles.card, setupProgress === 1 && setupStyles.cardActive]}>
-                <Text style={setupStyles.cardTitle}>2. Sign in (if required)</Text>
+              <SetupStepCard active={setupProgress === 1}>
+                <View style={setupStyles.cardHead}>
+                  <View style={setupStyles.cardIconWrap}>
+                    <Ionicons name="person-circle-outline" size={15} color="#67e8f9" />
+                  </View>
+                  <Text style={setupStyles.cardTitle}>2. Sign in (if required)</Text>
+                </View>
                 <Text style={setupStyles.hint}>Leave as demo/demo if your server allows anonymous access.</Text>
                 <TextInput
                   value={username}
@@ -134,20 +162,35 @@ export default function WelcomeSetupModal({
                   onPress={onLogin}
                   style={({ pressed }) => [setupStyles.secondaryBtn, pressed && setupStyles.btnPressed]}
                   accessibilityRole="button"
-                  accessibilityLabel="Sign in to translator"
+                  accessibilityLabel="Sign in to bridge server"
                 >
                   <Text style={setupStyles.secondaryBtnText}>Sign in</Text>
                 </Pressable>
-              </View>
+              </SetupStepCard>
             )}
 
-            <View style={[setupStyles.card, setupProgress === 2 && setupStyles.cardActive]}>
-              <Text style={setupStyles.cardTitle}>3. Microphone</Text>
+            <SetupStepCard active={setupProgress === 2}>
+              <View style={setupStyles.cardHead}>
+                <View style={setupStyles.cardIconWrap}>
+                  <Ionicons name="mic-outline" size={15} color="#67e8f9" />
+                </View>
+                <Text style={setupStyles.cardTitle}>3. Your side of the bridge</Text>
+              </View>
               <Text style={setupStyles.hint}>
-                When you tap Start, allow microphone access. You can change this later in phone Settings.
+                When you tap Start, allow microphone access so Anai can hear your side of the conversation. You can change this later in phone Settings.
               </Text>
-            </View>
+            </SetupStepCard>
 
+            {backendReachable === true ? (
+              <Pressable
+                onPress={() => (onDismiss || onContinue)?.()}
+                style={({ pressed }) => [setupStyles.secondaryBtn, pressed && setupStyles.btnPressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Skip setup for now"
+              >
+                <Text style={setupStyles.secondaryBtnText}>Skip for now</Text>
+              </Pressable>
+            ) : null}
             <Pressable
               onPress={onContinue}
               disabled={backendReachable !== true}
@@ -158,11 +201,11 @@ export default function WelcomeSetupModal({
                 backendReachable !== true && setupStyles.btnDisabled,
               ]}
               accessibilityRole="button"
-              accessibilityLabel="Continue to interpreter"
+              accessibilityLabel="Open the conversation bridge"
               accessibilityState={{ disabled: backendReachable !== true }}
             >
               <Text style={[setupStyles.primaryBtnText, backendReachable !== true && setupStyles.primaryBtnTextDisabled]}>
-                {backendReachable === true ? "Get started" : "Test connection first"}
+                {backendReachable === true ? "Open the bridge" : "Test bridge link first"}
               </Text>
             </Pressable>
           </ScrollView>

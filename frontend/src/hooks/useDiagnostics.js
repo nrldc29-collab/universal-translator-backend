@@ -21,6 +21,8 @@ export default function useDiagnostics(apiUrl) {
 
   const loadDiagnostics = useCallback(async () => {
     if (!apiUrl) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
     setDiagnosticsStatus('checking');
     try {
       const response = await fetch(`${apiUrl}/diagnostics`);

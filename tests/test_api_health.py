@@ -7,7 +7,12 @@ from urllib.error import URLError
 
 import pytest
 
-from backend.api_health import stt_provider_health_snapshot, runtime_payload, runtime_state
+from backend.api_health import (
+    stt_provider_health_snapshot,
+    runtime_payload,
+    runtime_state,
+    voice_warmup_blocks_ready,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -168,12 +173,28 @@ def test_runtime_payload_degraded_when_streaming_unreachable():
     assert payload["status"] in ("degraded", "warming")
 
 
+def test_voice_warmup_blocks_ready():
+    original = runtime_state.get("voice_warmup")
+    try:
+        runtime_state["voice_warmup"] = {"status": "running"}
+        assert voice_warmup_blocks_ready() is True
+        runtime_state["voice_warmup"] = {"status": "complete"}
+        assert voice_warmup_blocks_ready() is False
+    finally:
+        if original is not None:
+            runtime_state["voice_warmup"] = original
+        else:
+            runtime_state.pop("voice_warmup", None)
+
+
 def test_runtime_payload_ready_reflects_runtime_state():
     original = runtime_state.get("ready")
     original_readiness = runtime_state.get("readiness")
+    original_voice_warmup = runtime_state.get("voice_warmup")
     try:
         runtime_state["ready"] = True
         runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": []}
+        runtime_state["voice_warmup"] = {"status": "complete"}
         payload = runtime_payload()
         assert payload.get("ready") is True
 
@@ -192,3 +213,31 @@ def test_runtime_payload_ready_reflects_runtime_state():
             runtime_state["ready"] = original
         if original_readiness is not None:
             runtime_state["readiness"] = original_readiness
+        if original_voice_warmup is not None:
+            runtime_state["voice_warmup"] = original_voice_warmup
+        else:
+            runtime_state.pop("voice_warmup", None)
+
+
+def test_runtime_payload_not_ready_during_voice_warmup():
+    original_ready = runtime_state.get("ready")
+    original_voice_warmup = runtime_state.get("voice_warmup")
+    original_readiness = runtime_state.get("readiness")
+    try:
+        runtime_state["ready"] = True
+        runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": []}
+        runtime_state["voice_warmup"] = {"status": "running"}
+        payload = runtime_payload()
+        assert payload.get("ready") is False
+        assert payload.get("status") == "warming"
+    finally:
+        if original_ready is not None:
+            runtime_state["ready"] = original_ready
+        if original_readiness is not None:
+            runtime_state["readiness"] = original_readiness
+        else:
+            runtime_state.pop("readiness", None)
+        if original_voice_warmup is not None:
+            runtime_state["voice_warmup"] = original_voice_warmup
+        else:
+            runtime_state.pop("voice_warmup", None)

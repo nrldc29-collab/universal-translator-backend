@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { View, Text, Pressable, StyleSheet, Animated } from "react-native";
 import type { RefObject } from "react";
+import { humanCertStep } from "../utils/humanCertification";
+import { shouldSkipBrainTts } from "../utils/brainPlan";
 
 interface DuplexModeProps {
   isConnected: boolean;
@@ -11,11 +13,26 @@ interface DuplexModeProps {
   onTranslationUpdate?: (speaker: string, text: string) => void;
 }
 
+type SpeakerStage =
+  | "Idle"
+  | "Listening"
+  | "Transcribing"
+  | "Translating"
+  | "Translated"
+  | "Speaking"
+  | "Certification required"
+  | "Native speaker listen"
+  | "Check meaning"
+  | "Voice skipped"
+  | "Weak audio"
+  | "Waiting"
+  | "Overlap";
+
 interface SpeakerState {
   active: boolean;
   transcript: string;
   translation: string;
-  stage: "Idle" | "Listening" | "Transcribing" | "Translating" | "Translated" | "Speaking";
+  stage: SpeakerStage;
   lastActivityAt: number;
 }
 
@@ -46,7 +63,7 @@ export default function DuplexMode({
   const [speakerA, setSpeakerA] = useState<SpeakerState>({ ...INITIAL_SPEAKER });
   const [speakerB, setSpeakerB] = useState<SpeakerState>({ ...INITIAL_SPEAKER });
   const [conversationHistory, setConversationHistory] = useState<
-    Array<{ speaker: string; source: string; translation: string; timestamp: number }>
+    { speaker: string; source: string; translation: string; timestamp: number }[]
   >([]);
   const pulseA = useRef(new Animated.Value(1)).current;
   const pulseB = useRef(new Animated.Value(1)).current;
@@ -68,11 +85,11 @@ export default function DuplexMode({
 
   useEffect(() => {
     if (speakerA.active) startPulse(pulseA); else stopPulse(pulseA);
-  }, [speakerA.active]);
+  }, [pulseA, speakerA.active, startPulse, stopPulse]);
 
   useEffect(() => {
     if (speakerB.active) startPulse(pulseB); else stopPulse(pulseB);
-  }, [speakerB.active]);
+  }, [pulseB, speakerB.active, startPulse, stopPulse]);
 
   const sendWs = useCallback(
     (payload: object) => {
@@ -159,27 +176,68 @@ export default function DuplexMode({
             break;
 
           case "live_translation":
-          case "partial_translation":
+          case "partial_translation": {
+            const partialCert = humanCertStep(data);
+            const partialThreshold = typeof data.confidence_threshold === "number" ? data.confidence_threshold : 0.72;
+            const lowConfidence = data.low_confidence
+              || (typeof data.confidence === "number" && data.confidence < partialThreshold);
             if (setter) {
               setter((prev) => ({
                 ...prev,
                 translation: data.text || prev.translation,
-                stage: "Translated",
+                stage: partialCert === "required"
+                  ? "Certification required"
+                  : partialCert === "advisory"
+                    ? "Native speaker listen"
+                    : lowConfidence
+                      ? "Check meaning"
+                      : shouldSkipBrainTts(data)
+                        ? "Voice skipped"
+                        : "Translated",
                 lastActivityAt: Date.now(),
               }));
               if (onTranslationUpdate) onTranslationUpdate(msgSpeaker, data.text);
             }
+            break;
+          }
+
+          case "clarify":
+            if (setter) {
+              setter((prev) => ({
+                ...prev,
+                stage: data.stage === "partial_low_confidence" ? "Listening" : "Check meaning",
+                lastActivityAt: Date.now(),
+              }));
+            }
+            break;
+
+          case "stage":
+            if (setter && ["partial_degraded", "turn_held", "weak_audio"].includes(String(data.stage || ""))) {
+              setter((prev) => ({
+                ...prev,
+                stage: data.stage === "weak_audio" ? "Weak audio" : "Waiting",
+                lastActivityAt: Date.now(),
+              }));
+            }
+            break;
+
+          case "semantic_context":
             break;
 
           case "final":
             if (setter) {
               const finalTranslation = data.translated_text || data.text || "";
               const finalSource = data.source_text || "";
+              const finalCert = humanCertStep(data);
               setter((prev) => ({
                 ...prev,
                 translation: finalTranslation || prev.translation,
                 transcript: finalSource || prev.transcript,
-                stage: "Idle",
+                stage: finalCert === "required"
+                  ? "Certification required"
+                  : finalCert === "advisory"
+                    ? "Native speaker listen"
+                    : "Idle",
                 active: false,
                 lastActivityAt: Date.now(),
               }));
@@ -210,9 +268,14 @@ export default function DuplexMode({
             break;
 
           case "turn":
-            // ConversationBrain arbitration — update UI indicators
             if (data.behavior === "hold" && setter) {
               setter((prev) => ({ ...prev, stage: "Idle" }));
+            } else if ((data.behavior === "interruption" || data.behavior === "turn_shift" || data.behavior === "overlap") && setter) {
+              setter((prev) => ({
+                ...prev,
+                stage: data.behavior === "overlap" ? "Overlap" : "Listening",
+                lastActivityAt: Date.now(),
+              }));
             }
             break;
 
@@ -227,7 +290,7 @@ export default function DuplexMode({
 
     ws.addEventListener("message", handler);
     return () => ws.removeEventListener("message", handler);
-  }, [wsControlRef.current, onTranscriptUpdate, onTranslationUpdate]);
+  }, [wsControlRef, onTranscriptUpdate, onTranslationUpdate]);
 
   return (
     <View style={styles.container}>

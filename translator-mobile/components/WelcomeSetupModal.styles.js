@@ -3,7 +3,7 @@ import { StyleSheet } from "react-native";
 export default StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#050711",
+    backgroundColor: "#03050a",
   },
   flex: {
     flex: 1,
@@ -19,6 +19,21 @@ export default StyleSheet.create({
     marginBottom: 8,
     marginTop: 12,
   },
+  heroIconHalo: {
+    width: 96,
+    height: 96,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroIconRingPulse: {
+    position: "absolute",
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    borderWidth: 1,
+    borderColor: "rgba(103, 232, 249, 0.42)",
+    backgroundColor: "rgba(34, 211, 238, 0.06)",
+  },
   heroIconRing: {
     width: 84,
     height: 84,
@@ -33,6 +48,14 @@ export default StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 24,
     elevation: 8,
+  },
+  headerShine: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    zIndex: 1,
   },
   stepRow: {
     flexDirection: "row",
@@ -86,11 +109,25 @@ export default StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 16,
     elevation: 6,
+    overflow: "hidden",
+    position: "relative",
+  },
+  cardShine: {
+    position: "absolute",
+    top: 0,
+    left: 16,
+    right: 16,
+    height: 1,
   },
   cardActive: {
     borderColor: "rgba(103, 232, 249, 0.42)",
     shadowColor: "#22d3ee",
     shadowOpacity: 0.18,
+  },
+  cardHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   cardTitle: {
     color: "#67e8f9",
@@ -98,6 +135,17 @@ export default StyleSheet.create({
     fontWeight: "900",
     textTransform: "uppercase",
     letterSpacing: 0.6,
+    flex: 1,
+  },
+  cardIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(34, 211, 238, 0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(103, 232, 249, 0.28)",
   },
   hint: {
     color: "#94a3b8",

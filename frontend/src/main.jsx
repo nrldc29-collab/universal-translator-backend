@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Activity, ArrowLeftRight, Check, Clock3, Copy, Download, Keyboard, Languages, Mic, Radio, Repeat2, Share2, Sparkles, Trash2, UserRound, Volume2 } from 'lucide-react';
+import { Activity, ArrowLeftRight, Check, Clock3, Copy, Download, Heart, Keyboard, Languages, Mic, Radio, Repeat2, Share2, Trash2, UserRound, Volume2 } from 'lucide-react';
 import './styles.css';
 import './beauty-polish.css';
 import './speech-first.css';
@@ -68,6 +68,9 @@ import { useHoldToTalk } from './hooks/useHoldToTalk';
 import { useAutoConversation } from './hooks/useAutoConversation';
 import useReliabilityMonitor from './hooks/useReliabilityMonitor';
 import { getFriendlyStatusLabel, getFriendlyStatusDetail } from './utils/friendlyStatus';
+import { humanCertStep, shouldBlockTtsForCert, certificationBanner, asCertBool } from './utils/humanCertification';
+import { showAdvancedInterpreterChrome } from './constants/productMode';
+import { targetPlaceholder, micLabels, micHints, pipelineStages, pipelineStageLabels, dockQuickActionLabels, clarifyMessages, bridgeErrors, formatBrainModeLabel, bridgeStatusMessages, normalizePipelineStage } from './utils/productVoice';
 import {
   // host detection + URL helpers
   isLocalHost,
@@ -133,6 +136,9 @@ const SAME_ORIGIN_BACKEND = isSameOriginBackendHost(window.location.hostname);
 const API_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? defaultApiUrl() : (configuredUrl(import.meta.env.VITE_API_URL) || defaultApiUrl())).replace(/\/+$/, '');
 const WS_BASE_URL = (LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? API_URL : (configuredUrl(import.meta.env.VITE_WS_URL) || API_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:'))).replace(/\/+$/, '');
 const WS_AUDIO_URL = LOCAL_BACKEND || SAME_ORIGIN_BACKEND ? `${WS_BASE_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')}/ws/audio` : (configuredUrl(import.meta.env.VITE_WS_AUDIO_URL) || `${WS_BASE_URL}/ws/audio`);
+const BRIDGE_STATUS = bridgeStatusMessages();
+const PIPELINE = pipelineStageLabels();
+const DOCK = dockQuickActionLabels();
 
 const INITIAL_DEVICE_ID = localStorage.getItem('translator_device_id') || crypto.randomUUID();
 
@@ -224,6 +230,7 @@ function browserTtsSpeak(text, langCode, speed = 1.0, options = {}) {
   }
   if (browserTtsResetTimer) window.clearTimeout(browserTtsResetTimer);
   browserTtsResetTimer = window.setTimeout(() => {
+    if (document.visibilityState !== 'visible') return;
     browserTtsLastText = '';
     browserTtsLastFullText = '';
     browserTtsLastSourceText = '';
@@ -265,16 +272,23 @@ function App() {
   const { languages, setLanguages, sourceLanguage, setSourceLanguage, targetLanguage, setTargetLanguage } = useLanguagePair();
   const { text, setText, result, setResult, status, setStatus } = useTranslationState();
   // Settings is loaded first (sync from localStorage) so liveApiUrl is available for all hooks below.
-  const { settings, updateSetting } = useSettings();
+  const { settings, updateSetting, NOISY_ENVIRONMENTS } = useSettings();
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const liveApiUrl = (settings.backendUrl || '').trim().replace(/\/+$/, '') || API_URL;
   const liveWsUrl = liveApiUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
+  const handleLanguagesLoaded = React.useCallback((langs) => {
+    if (langs) setLanguages((prev) => ({ ...prev, ...langs }));
+  }, [setLanguages]);
+  const handleConnectionOffline = React.useCallback(() => {
+    setStatus(BRIDGE_STATUS.serverOffline);
+  }, [setStatus]);
   const { connectionStatus, setConnectionStatus } = useConnectionStatus({
     apiUrl: liveApiUrl,
     pollIntervalMs: HEALTH_POLL_MS,
-    onLanguages: (langs) => langs && setLanguages((prev) => ({ ...prev, ...langs })),
-    onOffline: () => setStatus('Backend offline'),
+    onLanguages: handleLanguagesLoaded,
+    onOffline: handleConnectionOffline,
   });
+  const { diagnostics, diagnosticsStatus, loadDiagnostics } = useDiagnostics(liveApiUrl);
   const { micPermission, setMicPermission, requestMicPermission } = useMicPermission({
     onStatus: (message) => setStatus(message),
   });
@@ -317,10 +331,49 @@ function App() {
     confidenceWarningVisible,
     setConfidenceWarningVisible,
     confidenceWarningMessage,
+    humanCertificationStep,
+    setHumanCertificationStep,
   } = useBrainState();
-  const reliabilityMonitor = useReliabilityMonitor();
+  const {
+    recordSuccess: recordReliabilitySuccess,
+    recordFailure: recordReliabilityFailure,
+  } = useReliabilityMonitor();
+  const reliabilityRef = useRef({
+    recordSuccess: recordReliabilitySuccess,
+    recordFailure: recordReliabilityFailure,
+  });
+  useEffect(() => {
+    reliabilityRef.current = {
+      recordSuccess: recordReliabilitySuccess,
+      recordFailure: recordReliabilityFailure,
+    };
+  });
+  const {
+    mediaRecorderRef, streamRecorderRef, chunksRef, socketRef,
+    recordingStoppedRef, streamFinalizePendingRef, streamFinalizeTimerRef,
+    streamStartedAtRef, streamRecordingStartedAtRef, firstAudioSeenRef,
+    streamReconnectRef, streamReconnectTimerRef, streamSafetyTimeoutRef, resumeAfterTtsRef,
+  } = useStreamRefs();
   // Auth must be declared before any hook that references authToken.
   const { authToken, setAuthToken, username, setUsername, password, setPassword, login, logout, ensureAuthToken } = useAuth({ apiUrl: liveApiUrl, onStatus: setStatus });
+  const { voiceWarmupRef, resolveAudioUrl, prefetchAudioUrl, warmVoiceCache } = useVoiceWarmup({
+    apiUrl: liveApiUrl,
+    authToken,
+    targetLanguage,
+    warmupPhrases: VOICE_WARMUP_PHRASES,
+    cooldownMs: VOICE_WARMUP_COOLDOWN_MS,
+    prefetchTimeoutMs: VOICE_PREFETCH_TIMEOUT_MS,
+  });
+  const { streamHeartbeatRef, clearStreamHeartbeat, markStreamPong, startStreamHeartbeat } = useStreamHeartbeat({ socketRef, setPipelineStage, setStatus });
+  const { holdToTalkTimerRef, holdToTalkActiveRef, holdToTalkReleasePendingRef, ignoreNextMicClickRef } = useHoldToTalk();
+  const { audioSendQueueRef, sendAudioPacket, queueAudioPacket, flushAudioSendQueue, drainQueue: drainAudioSendQueue } = useAudioSendQueue({ debugLog });
+  const { wakeLockRef, requestWakeLock, releaseWakeLock } = useWakeLock();
+  const {
+    speechRecognitionRef, speechFastPathActiveRef,
+    speechFinalTextRef, speechInterimTextRef,
+    speechAssistSocketRef, speechAssistRestartTimerRef, speechAssistStopRequestedRef,
+    speechLastSentTextRef, speechLastSentAtRef, speechUtteranceSeqRef,
+  } = useSpeechFastPath();
   const autoConversation = useAutoConversation({
     wsAudioUrl: `${liveWsUrl}/ws/audio`,
     authToken,
@@ -338,6 +391,7 @@ function App() {
   });
   const autoTurnSyncRef = useRef(0);
   const lowBandwidthMode = !!settings.lowBandwidthMode;
+  const advancedChrome = showAdvancedInterpreterChrome(settings.debugMode);
   const [showDebugPanel, setShowDebugPanel] = useState(() => !!settings.debugMode);
   const [showAILangConfig, setShowAILangConfig] = useState(false);
   const [reconnectToastVisible, setReconnectToastVisible] = useState(false);
@@ -438,6 +492,10 @@ function App() {
     if (!enabled) return;
     autoListenBootRef.current = true;
     const timer = window.setTimeout(() => {
+      if (!navigator.onLine || document.visibilityState !== 'visible') {
+        autoListenBootRef.current = false;
+        return;
+      }
       handleMicClick().catch(() => { autoListenBootRef.current = false; });
     }, 700);
     return () => window.clearTimeout(timer);
@@ -456,9 +514,13 @@ function App() {
       if (!response.ok) throw new Error('health check failed');
       const data = await response.json();
       setConnectionStatus(data.ready === false ? 'warming' : 'online');
-      if (data.ready !== false) loadDiagnostics();
+      if (data.ready !== false) {
+        await loadDiagnostics();
+        reliabilityRef.current.recordSuccess('translation');
+      }
     } catch {
       setConnectionStatus('offline');
+      reliabilityRef.current.recordFailure('translation');
     }
   }
   // Volume state synced from settings; keyboard shortcut toggles mute
@@ -537,8 +599,7 @@ function App() {
     });
   }, [autoConversation.turns, appendConversationTurn]);
   const { analytics, setAnalytics, loadAnalytics } = useAnalytics({ apiUrl: liveApiUrl, authToken, onStatus: setStatus });
-  const { diagnostics, diagnosticsStatus, loadDiagnostics } = useDiagnostics(liveApiUrl);
-  const { wsDebug, setWsDebug } = useWsDebug(WS_AUDIO_URL);
+  const { wsDebug, setWsDebug } = useWsDebug(`${liveWsUrl}/ws/audio`);
   // selfTest + runSelfTest come from useSelfTest below (after authToken is declared).
   // Initial PWA-installed status (true if launched from the home screen).
   const initialPwaInstalled =
@@ -555,7 +616,7 @@ function App() {
     _copyToClipboard(text, key);
     const copyLabels = {
       src: 'Transcript copied',
-      tr: 'Translation copied',
+      tr: 'Bridged text copied',
       conversation: 'Conversation copied',
       room: 'Room link copied',
     };
@@ -596,16 +657,23 @@ function App() {
   useEffect(() => {
     if (!latencySummary.average || latencySummary.average <= LATENCY_TARGET_MS) return;
     if (connectionStatus !== 'online' || processing || playing || streaming) return;
-    warmVoiceCache('slow_latency');
-  }, [connectionStatus, latencySummary.average, playing, processing, streaming]);
+    if (!navigator.onLine || document.visibilityState !== 'visible') return;
+    warmVoiceCache('slow_latency').then((ok) => {
+      if (ok) reliabilityRef.current.recordSuccess('tts');
+      else reliabilityRef.current.recordFailure('tts');
+    }).catch(() => reliabilityRef.current.recordFailure('tts'));
+  }, [connectionStatus, latencySummary.average, playing, processing, streaming, warmVoiceCache]);
 
   useEffect(() => {
     if (connectionStatus !== 'online' || processing || playing || streaming) return undefined;
     const timer = window.setTimeout(() => {
-      warmVoiceCache('language_ready');
+      if (!navigator.onLine || document.visibilityState !== 'visible') return;
+      warmVoiceCache('language_ready').then((ok) => {
+        if (ok) reliabilityRef.current.recordSuccess('tts');
+      }).catch(() => reliabilityRef.current.recordFailure('tts'));
     }, 1200);
     return () => window.clearTimeout(timer);
-  }, [connectionStatus, playing, processing, streaming, targetLanguage]);
+  }, [connectionStatus, playing, processing, streaming, targetLanguage, warmVoiceCache]);
 
   // copyToClipboard + copiedKey come from useCopyToClipboard above.
 
@@ -613,6 +681,7 @@ function App() {
 
   function applyBrainPayload(payload = {}, origin = 'translation') {
     applyConfidenceSignals(payload);
+    if (payload.source_text) lastGuardedSourceRef.current = payload.source_text;
     const { plan, hints, repairOptions } = extractBrainPlan(payload);
     if (!plan && Object.keys(hints).length === 0 && repairOptions.length === 0) return null;
 
@@ -646,7 +715,7 @@ function App() {
     } else if (repairOptions.some((option) => option?.type === 'confirm_exact')) {
       message = 'Confirm exact words before speaking';
     } else if (plan?.turn_policy?.mode === 'guarded_translate') {
-      message = 'Guarded translation active';
+      message = pipelineStages().guarded;
     } else if (skipTts) {
       message = 'Voice skipped for confirmation';
     } else if (speakerShift && activeSpeakerLabel) {
@@ -700,11 +769,11 @@ function App() {
       const choices = Array.isArray(option.options) ? option.options.join(' / ') : 'the intended meaning';
       setClarifyMessage(`For "${option.word}", say: ${choices}`);
       setClarifyVisible(true);
-      setStatus('Choose the intended meaning');
+      setStatus(BRIDGE_STATUS.chooseMeaning);
       return;
     }
     setClarifyVisible(false);
-    setPipelineStage('Ready to repair');
+    setPipelineStage(PIPELINE.readyToRepair);
     setStatus(option.label || 'Please repeat');
     if (!streaming && !processing && !playing) {
       try { handleMicClick(); } catch {}
@@ -739,8 +808,8 @@ function App() {
     setAutoPlayFailed(false);
     setTtsQueueLength(0);
     setTtsChunksBuffer([]);
-    setStatus('Ready');
-    setPipelineStage('Ready');
+    setStatus(BRIDGE_STATUS.ready);
+    setPipelineStage(PIPELINE.ready);
   }
 
   function flipLanguageDirection() {
@@ -752,32 +821,8 @@ function App() {
     setTargetLanguage(nextTarget);
     resetBrainRuntimeUi();
     setStatus(`${languageName(nextSource)} to ${languageName(nextTarget)}`);
-    setPipelineStage('Direction switched');
+    setPipelineStage(PIPELINE.directionSwitched);
   }
-  const {
-    mediaRecorderRef, streamRecorderRef, chunksRef, socketRef,
-    recordingStoppedRef, streamFinalizePendingRef, streamFinalizeTimerRef,
-    streamStartedAtRef, streamRecordingStartedAtRef, firstAudioSeenRef,
-    streamReconnectRef, streamSafetyTimeoutRef, resumeAfterTtsRef,
-  } = useStreamRefs();
-  const { streamHeartbeatRef, clearStreamHeartbeat, markStreamPong, startStreamHeartbeat } = useStreamHeartbeat({ socketRef, setConnectionStatus, setPipelineStage, setStatus });
-  const { holdToTalkTimerRef, holdToTalkActiveRef, holdToTalkReleasePendingRef, ignoreNextMicClickRef } = useHoldToTalk();
-  const { audioSendQueueRef, sendAudioPacket, queueAudioPacket, flushAudioSendQueue, drainQueue: drainAudioSendQueue } = useAudioSendQueue({ debugLog });
-  const { requestWakeLock, releaseWakeLock } = useWakeLock();
-  const {
-    speechRecognitionRef, speechFastPathActiveRef,
-    speechFinalTextRef, speechInterimTextRef,
-    speechAssistSocketRef, speechAssistRestartTimerRef, speechAssistStopRequestedRef,
-    speechLastSentTextRef, speechLastSentAtRef, speechUtteranceSeqRef,
-  } = useSpeechFastPath();
-  const { voiceWarmupRef, resolveAudioUrl, prefetchAudioUrl, warmVoiceCache } = useVoiceWarmup({
-    apiUrl: liveApiUrl,
-    authToken,
-    targetLanguage,
-    warmupPhrases: VOICE_WARMUP_PHRASES,
-    cooldownMs: VOICE_WARMUP_COOLDOWN_MS,
-    prefetchTimeoutMs: VOICE_PREFETCH_TIMEOUT_MS,
-  });
   const appStateRef = useRef({});
   const liveVoiceFallbackTimerRef = useRef(null);
   const backendVoiceChunkSeenAtRef = useRef(0);
@@ -785,9 +830,72 @@ function App() {
   const micTracksPausedForVoiceRef = useRef([]);
   const liveTtsPlaybackRef = useRef(false);
   const languagePairRef = useRef({ sourceLanguage, targetLanguage });
+  const streamChunkCounterRef = useRef(0);
+  const lastGuardedSourceRef = useRef('');
   const browserVoiceReleaseTimerRef = useRef(null);
   const pendingBrowserVoiceTextRef = useRef(null);
   const languageName = (code) => languageNameUtil(code, languages);
+
+  function resolveStreamBarrierMode() {
+    if (settings.barrierMode === false) return false;
+    const pair = new Set([sourceLanguage, targetLanguage]);
+    return pair.has('ht') || settings.barrierMode === true;
+  }
+
+  function resolveStreamEnvironment() {
+    return settings.audioEnvironment || 'auto';
+  }
+
+  function shouldPreferHoldToTalk() {
+    const env = resolveStreamEnvironment();
+    if (settings.holdToTalkInNoise !== false && NOISY_ENVIRONMENTS.includes(env)) {
+      return true;
+    }
+    return false;
+  }
+
+  function streamConfigPayload(extra = {}) {
+    return {
+      type: 'config',
+      session_id: sessionId,
+      device_id: INITIAL_DEVICE_ID,
+      speaker_name: INITIAL_SPEAKER_NAME,
+      source_language: sourceLanguage,
+      target_language: targetLanguage,
+      speaker_mode: speakerMode,
+      speaker: speakerMode === 'auto' ? 'auto' : 'A',
+      barrier_mode: resolveStreamBarrierMode(),
+      environment: resolveStreamEnvironment(),
+      ...extra,
+    };
+  }
+
+  function sendGlossaryCorrection({ sourceText, translatedText, context = 'general' } = {}) {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const { sourceLanguage: activeSource, targetLanguage: activeTarget } = languagePairRef.current;
+    try {
+      socket.send(JSON.stringify({
+        type: 'glossary_correction',
+        session_id: sessionId,
+        source_text: sourceText,
+        corrected_text: translatedText,
+        source_language: activeSource,
+        target_language: activeTarget,
+        context,
+      }));
+      setHumanCertificationStep('none');
+      toast('Saved native-verified phrasing for this session.', 'success', 2500);
+    } catch (error) {
+      console.warn('glossary correction send failed:', error);
+    }
+  }
+
+  useEffect(() => {
+    if (diagnosticsStatus === 'online') {
+      reliabilityRef.current.recordSuccess('translation');
+    }
+  }, [diagnosticsStatus]);
 
   useEffect(() => {
     appStateRef.current = { interpreterMode, speakerMode, recording, processing, playing, streaming };
@@ -799,16 +907,7 @@ function App() {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     try {
-      socket.send(JSON.stringify({
-        type: 'config',
-        session_id: sessionId,
-        device_id: INITIAL_DEVICE_ID,
-        speaker_name: INITIAL_SPEAKER_NAME,
-        source_language: sourceLanguage,
-        target_language: targetLanguage,
-        speaker_mode: speakerMode,
-        speaker: speakerMode === 'auto' ? 'auto' : 'A',
-      }));
+      socket.send(JSON.stringify(streamConfigPayload()));
     } catch (error) {
       console.warn('stream language config send failed:', error);
     }
@@ -825,6 +924,7 @@ function App() {
         speechAssistRestartTimerRef.current = null;
       }
       window.setTimeout(() => {
+        if (!navigator.onLine || document.visibilityState !== 'visible') return;
         if (socketRef.current === socket && socket.readyState === WebSocket.OPEN) {
           startBrowserSpeechFastPath(socket);
         }
@@ -953,14 +1053,17 @@ function App() {
     const pending = pendingBrowserVoiceTextRef.current;
     pendingBrowserVoiceTextRef.current = null;
     if (pending && socketRef.current?.readyState === WebSocket.OPEN) {
-      window.setTimeout(() => speakTranslatedTextWithBrowser(pending.text, pending.sourceText, pending.utteranceId, pending.languageOverride), 80);
+      window.setTimeout(() => {
+        if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+        speakTranslatedTextWithBrowser(pending.text, pending.sourceText, pending.utteranceId, pending.languageOverride);
+      }, 80);
     } else if (socketRef.current?.readyState === WebSocket.OPEN) {
       if (shouldKeepContinuousStream(socketRef.current)) {
         setStreaming(true);
         setInstantListening(true);
       }
-      setPipelineStage('Listening');
-      setStatus('Listening for the next speaker...');
+      setPipelineStage(PIPELINE.listening);
+      setStatus(BRIDGE_STATUS.listeningNextSpeaker);
     }
   }
 
@@ -982,10 +1085,13 @@ function App() {
         ttsPlayingRef.current = true;
         setTtsPlaying(true);
         setPlaying(true);
-        setPipelineStage('Speaking translation');
-        setStatus('Speaking translated voice...');
+        setPipelineStage(pipelineStages().bridging);
+        setStatus(pipelineStages().bridgingStatus);
         if (browserVoiceReleaseTimerRef.current) window.clearTimeout(browserVoiceReleaseTimerRef.current);
-        browserVoiceReleaseTimerRef.current = window.setTimeout(finishBrowserTranslatedSpeech, estimatedMs);
+        browserVoiceReleaseTimerRef.current = window.setTimeout(() => {
+          if (document.visibilityState !== 'visible' || !navigator.onLine) return;
+          finishBrowserTranslatedSpeech();
+        }, estimatedMs);
       },
       onEnd: finishBrowserTranslatedSpeech,
     });
@@ -1000,12 +1106,146 @@ function App() {
       if (document.visibilityState === 'visible' && (streaming || instantListening) && !wakeLockRef.current) {
         requestWakeLock();
       }
-      if (document.visibilityState === 'hidden' && socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ type: 'ping' }));
+      if (document.visibilityState === 'hidden') {
+        clearStreamHeartbeat();
+        if (streamReconnectTimerRef.current) {
+          window.clearTimeout(streamReconnectTimerRef.current);
+          streamReconnectTimerRef.current = null;
+        }
+        if (streamSafetyTimeoutRef.current) {
+          window.clearTimeout(streamSafetyTimeoutRef.current);
+          streamSafetyTimeoutRef.current = null;
+        }
+        if (liveVoiceFallbackTimerRef.current) {
+          window.clearTimeout(liveVoiceFallbackTimerRef.current);
+          liveVoiceFallbackTimerRef.current = null;
+        }
+        if (browserVoiceReleaseTimerRef.current) {
+          window.clearTimeout(browserVoiceReleaseTimerRef.current);
+          browserVoiceReleaseTimerRef.current = null;
+        }
+        if (speechAssistRestartTimerRef.current) {
+          window.clearTimeout(speechAssistRestartTimerRef.current);
+          speechAssistRestartTimerRef.current = null;
+        }
+        stopBrowserSpeechFastPath();
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          try {
+            socketRef.current.send(JSON.stringify({ type: 'ping' }));
+          } catch {
+            // Socket may have closed between the check and send.
+          }
+        }
+      }
+      if (document.visibilityState === 'visible') {
+        const liveSocket = socketRef.current;
+        if (liveSocket?.readyState === WebSocket.OPEN) {
+          startStreamHeartbeat(liveSocket);
+        }
+      }
+      if (
+        document.visibilityState === 'visible'
+        && streamReconnectRef.current.enabled
+        && liveSpeechSessionRef.current
+        && !socketRef.current
+      ) {
+        if (streamReconnectTimerRef.current) window.clearTimeout(streamReconnectTimerRef.current);
+        streamReconnectTimerRef.current = window.setTimeout(() => {
+          streamReconnectTimerRef.current = null;
+          if (!navigator.onLine || document.visibilityState !== 'visible') return;
+          if (!streamReconnectRef.current.enabled || socketRef.current) return;
+          toggleStreaming({
+            ...(streamReconnectRef.current.options || {}),
+            interpreter: true,
+            speakerMode: 'auto',
+            reconnect: true,
+          });
+        }, 350);
+      }
+    };
+    const handleOnlineResume = () => {
+      if (!navigator.onLine) return;
+      const liveSocket = socketRef.current;
+      if (liveSocket?.readyState === WebSocket.OPEN) {
+        startStreamHeartbeat(liveSocket);
+      }
+      if (
+        streamReconnectRef.current.enabled
+        && liveSpeechSessionRef.current
+        && !socketRef.current
+      ) {
+        if (streamReconnectTimerRef.current) window.clearTimeout(streamReconnectTimerRef.current);
+        streamReconnectTimerRef.current = window.setTimeout(() => {
+          streamReconnectTimerRef.current = null;
+          if (!navigator.onLine || document.visibilityState !== 'visible') return;
+          if (!streamReconnectRef.current.enabled || socketRef.current) return;
+          toggleStreaming({
+            ...(streamReconnectRef.current.options || {}),
+            interpreter: true,
+            speakerMode: 'auto',
+            reconnect: true,
+          });
+        }, 400);
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    const handleOfflinePause = () => {
+      clearStreamHeartbeat();
+      if (streamReconnectTimerRef.current) {
+        window.clearTimeout(streamReconnectTimerRef.current);
+        streamReconnectTimerRef.current = null;
+      }
+      if (streamSafetyTimeoutRef.current) {
+        window.clearTimeout(streamSafetyTimeoutRef.current);
+        streamSafetyTimeoutRef.current = null;
+      }
+      if (liveVoiceFallbackTimerRef.current) {
+        window.clearTimeout(liveVoiceFallbackTimerRef.current);
+        liveVoiceFallbackTimerRef.current = null;
+      }
+      if (browserVoiceReleaseTimerRef.current) {
+        window.clearTimeout(browserVoiceReleaseTimerRef.current);
+        browserVoiceReleaseTimerRef.current = null;
+      }
+    };
+    const handlePageShow = () => {
+      if (!navigator.onLine || document.visibilityState !== 'visible') return;
+      const liveSocket = socketRef.current;
+      if (liveSocket?.readyState === WebSocket.OPEN) {
+        startStreamHeartbeat(liveSocket);
+      }
+      if (
+        streamReconnectRef.current.enabled
+        && liveSpeechSessionRef.current
+        && !socketRef.current
+      ) {
+        if (streamReconnectTimerRef.current) window.clearTimeout(streamReconnectTimerRef.current);
+        streamReconnectTimerRef.current = window.setTimeout(() => {
+          streamReconnectTimerRef.current = null;
+          if (!navigator.onLine || document.visibilityState !== 'visible') return;
+          if (!streamReconnectRef.current.enabled || socketRef.current) return;
+          toggleStreaming({
+            ...(streamReconnectRef.current.options || {}),
+            interpreter: true,
+            speakerMode: 'auto',
+            reconnect: true,
+          });
+        }, 350);
+      }
+    };
+    window.addEventListener('online', handleOnlineResume);
+    window.addEventListener('offline', handleOfflinePause);
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnlineResume);
+      window.removeEventListener('offline', handleOfflinePause);
+      window.removeEventListener('pageshow', handlePageShow);
+      if (streamReconnectTimerRef.current) {
+        window.clearTimeout(streamReconnectTimerRef.current);
+        streamReconnectTimerRef.current = null;
+      }
+    };
   }, [streaming, instantListening]);
 
   // mic permission lifecycle is in useMicPermission above.
@@ -1033,7 +1273,7 @@ function App() {
       gain.connect(context.destination);
       oscillator.start(context.currentTime);
       oscillator.stop(context.currentTime + 0.3);
-      setPipelineStage('Speaker test played');
+      setPipelineStage(PIPELINE.speakerTestPlayed);
       setStatus('Speaker test played');
       setLastAudioError(null);
     } catch (error) {
@@ -1140,7 +1380,7 @@ function App() {
     if (processing || !textToSend.trim()) return;
     if (textOverride) setText(textOverride);
     setProcessing(true);
-    setStatus('Translating text...');
+    setStatus(BRIDGE_STATUS.understandingText);
     resetBrainRuntimeUi();
     try {
       const response = await fetch(`${liveApiUrl}/translate/text`, {
@@ -1154,7 +1394,7 @@ function App() {
           googleTtsApiKey: settings.googleTtsApiKey || undefined,
         })),
       });
-      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Text translation failed'));
+      if (!response.ok) throw new Error(await responseErrorMessage(response, bridgeErrors().text));
       const data = await response.json();
       const brainUpdate = applyBrainPayload(data, 'text');
       setResult(data);
@@ -1169,16 +1409,18 @@ function App() {
         setClarifyVisible(true);
         setTextInputMode(false);
       } else {
-        setStatus(brainUpdate?.message || 'Text translated');
+        setStatus(brainUpdate?.message || 'Text bridged');
         setTextInputMode(false);
-        toast('Translation ready', 'success', 2200);
+        toast('Bridge ready', 'success', 2200);
+        reliabilityRef.current.recordSuccess('translation');
         if (data.translated_text && shouldUseBrowserTts(settings, languagePairRef.current.targetLanguage)) {
           speakTranslatedTextWithBrowser(data.translated_text, textToSend, `text-${Date.now()}`);
         }
       }
     } catch (error) {
-      setStatus(error.message || 'Text translation failed');
-      toast(error.message || 'Text translation failed', 'error', 3200);
+      reliabilityRef.current.recordFailure('translation');
+      setStatus(error.message || bridgeErrors().text);
+      toast(error.message || bridgeErrors().text, 'error', 3200);
     } finally {
       setProcessing(false);
     }
@@ -1190,7 +1432,7 @@ function App() {
       setPlaying(false);
       setTtsPlaying(false);
       setPipelineStage('Voice skipped');
-      setStatus('Confirmation needed before voice');
+      setStatus(BRIDGE_STATUS.confirmBeforeVoice);
       return false;
     }
     await ensureAudioUnlocked().catch((e) => console.warn('embedded audio unlock failed:', e));
@@ -1255,7 +1497,7 @@ function App() {
     } catch (error) {
       window.clearTimeout(timeoutId);
       if (error?.name === 'AbortError') {
-        setStatus('Voice is slow. Translation is ready.');
+        setStatus('Voice is slow. Bridge is ready.');
         setPipelineStage('Voice timed out');
       } else {
         setStatus(error.message || 'Voice unavailable');
@@ -1273,15 +1515,15 @@ function App() {
     setInstantListening(false);
     if (!spokenText) {
       setProcessing(false);
-      setPipelineStage('Ready');
-      setStatus('No speech heard');
+      setPipelineStage(PIPELINE.ready);
+      setStatus(BRIDGE_STATUS.noSpeech);
       return;
     }
 
     setPartialTranscript(spokenText);
     setProcessing(true);
-    setPipelineStage('Translating');
-    setStatus('Translating speech...');
+    setPipelineStage('Understanding');
+    setStatus(BRIDGE_STATUS.understandingSpeech);
     resetBrainRuntimeUi();
     const capturedAt = streamStartedAtRef.current || performance.now();
     const requestStartedAt = performance.now();
@@ -1308,7 +1550,7 @@ function App() {
       window.clearTimeout(timeoutId);
       const backendResponseMs = Math.round(performance.now() - requestStartedAt);
       updateLatency('backend_response', backendResponseMs);
-      if (!response.ok) throw new Error(await responseErrorMessage(response, 'Speech translation failed'));
+      if (!response.ok) throw new Error(await responseErrorMessage(response, bridgeErrors().speech));
       const data = await response.json();
       const endToEndMs = Math.round(performance.now() - capturedAt);
       updateLatency('end_to_end', endToEndMs);
@@ -1333,8 +1575,8 @@ function App() {
         setPipelineStage('Playing voice');
         setStatus(brainUpdate?.message || 'Playing voice...');
       } else {
-        setPipelineStage('Translation ready');
-        setStatus(brainUpdate?.message || 'Translation ready');
+        setPipelineStage('Bridge ready');
+        setStatus(brainUpdate?.message || 'Bridge ready');
       }
       const played = await playEmbeddedTranslationAudio(
         data,
@@ -1361,12 +1603,12 @@ function App() {
           backend_response: `${FAST_SPEECH_TIMEOUT_MS}ms+`,
           end_to_end: `${FAST_SPEECH_TIMEOUT_MS}ms+`,
         }));
-        setPipelineStage('Translation timed out');
-        setStatus('Network slow. Ready to try again.');
-        resumeInterpreterAfterPlayback('Ready to listen');
+        setPipelineStage('Bridge timed out');
+        setStatus(BRIDGE_STATUS.networkSlowReady);
+        resumeInterpreterAfterPlayback(BRIDGE_STATUS.bridgeReadySpeak);
       } else {
-        setPipelineStage('Speech translation failed');
-        setStatus(error.message || 'Speech translation failed');
+        setPipelineStage(bridgeErrors().speech);
+        setStatus(error.message || bridgeErrors().speech);
       }
     } finally {
       setProcessing(false);
@@ -1376,7 +1618,7 @@ function App() {
 
 
 
-  // diagnostics + loadDiagnostics come from useDiagnostics(API_URL) above.
+  // diagnostics + loadDiagnostics come from useDiagnostics(liveApiUrl) above.
 
   // selfTest + runSelfTest are in useSelfTest above.
 
@@ -1392,6 +1634,10 @@ function App() {
 
 
   function resetStreamState({ preserveInterpreter = false } = {}) {
+    if (streamReconnectTimerRef.current) {
+      window.clearTimeout(streamReconnectTimerRef.current);
+      streamReconnectTimerRef.current = null;
+    }
     if (streamSafetyTimeoutRef.current) {
       window.clearTimeout(streamSafetyTimeoutRef.current);
       streamSafetyTimeoutRef.current = null;
@@ -1440,15 +1686,15 @@ function App() {
   function restoreLiveListeningAfterVoice() {
     if (!liveSpeechSessionRef.current) return;
     setPlaying(false);
-    if (!resumeInterpreterListeningUI('Listening — speak anytime')) {
+    if (!resumeInterpreterListeningUI(BRIDGE_STATUS.listeningSpeak)) {
       setStreaming(true);
       setInstantListening(true);
-      setPipelineStage('Listening');
-      setStatus('Listening — speak anytime');
+      setPipelineStage(PIPELINE.listening);
+      setStatus(BRIDGE_STATUS.listeningSpeak);
     }
   }
 
-  function resumeInterpreterListeningUI(message = 'Listening — speak anytime') {
+  function resumeInterpreterListeningUI(message = BRIDGE_STATUS.listeningSpeak) {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     if (!shouldKeepContinuousStream(socket) && !(appStateRef.current.interpreterMode && appStateRef.current.speakerMode === 'auto')) {
@@ -1458,7 +1704,7 @@ function App() {
     setInstantListening(true);
     setPlaying(false);
     setProcessing(false);
-    setPipelineStage('Listening');
+    setPipelineStage(PIPELINE.listening);
     setStatus(message);
     return true;
   }
@@ -1473,6 +1719,7 @@ function App() {
     }
     const buffer = await event.data.arrayBuffer();
     const audioLevel = Number(micMeterRef.current?.smoothed || 0);
+    streamChunkCounterRef.current += 1;
     const packet = {
       meta: {
         type: 'chunk_meta',
@@ -1482,6 +1729,7 @@ function App() {
         mime_type: event.data.type || recorder?.mimeType || preferredAudioMimeType(),
         audio_level: Number(audioLevel.toFixed(4)),
         voice_active: audioLevel >= CLIENT_VAD_THRESHOLD,
+        heartbeat: streamChunkCounterRef.current % 5 === 0,
       },
       buffer,
     };
@@ -1490,6 +1738,10 @@ function App() {
 
 
   function disableStreamReconnect() {
+    if (streamReconnectTimerRef.current) {
+      window.clearTimeout(streamReconnectTimerRef.current);
+      streamReconnectTimerRef.current = null;
+    }
     streamReconnectRef.current = { ...streamReconnectRef.current, enabled: false };
   }
 
@@ -1502,7 +1754,7 @@ function App() {
       if (remainingMs > 0) {
         if (!streamFinalizeTimerRef.current) {
           setPipelineStage('Keep speaking');
-          setStatus('Keep speaking for a moment...');
+          setStatus(BRIDGE_STATUS.keepSpeaking);
           streamFinalizeTimerRef.current = window.setTimeout(() => {
             streamFinalizeTimerRef.current = null;
             finalizeCurrentStream(nextStatus, { delay: false });
@@ -1548,7 +1800,7 @@ function App() {
   }
 
 
-  function stopContinuousStream(nextStatus = 'Interpreter stopped') {
+  function stopContinuousStream(nextStatus = BRIDGE_STATUS.bridgePaused) {
     const socket = socketRef.current;
     const recorder = streamRecorderRef.current;
     if (!socket && !recorder) return false;
@@ -1618,7 +1870,7 @@ function App() {
       setInstantListening(false);
       setProcessing(true);
       setPipelineStage('Processing');
-      setStatus('Processing speech...');
+      setStatus(BRIDGE_STATUS.processingSpeech);
     }
     return true;
   }
@@ -1690,8 +1942,8 @@ function App() {
     setStreaming(true);
     setInstantListening(true);
     setProcessing(false);
-    setPipelineStage('Listening');
-    setStatus('Listening live...');
+    setPipelineStage(PIPELINE.listening);
+    setStatus(BRIDGE_STATUS.listeningLive);
     streamStartedAtRef.current = performance.now();
     requestWakeLock();
 
@@ -1743,7 +1995,7 @@ function App() {
           setStatus('Microphone permission blocked');
           setPipelineStage('Permission blocked');
         } else {
-          setStatus('Audio fallback listening...');
+          setStatus(BRIDGE_STATUS.audioFallbackListening);
           setPipelineStage('Audio fallback');
         }
         return;
@@ -1756,7 +2008,7 @@ function App() {
         speechInterimTextRef.current = '';
         speechLastSentTextRef.current = '';
         speechLastSentAtRef.current = 0;
-        setStatus('Audio fallback listening...');
+        setStatus(BRIDGE_STATUS.audioFallback);
         setPipelineStage('Audio fallback');
         return;
       }
@@ -1766,7 +2018,7 @@ function App() {
         setLiveAssistActive(false);
         releaseWakeLock();
         setStreaming(false);
-        setStatus('Using audio fallback...');
+        setStatus(BRIDGE_STATUS.usingAudioFallback);
         setPipelineStage('Audio fallback');
         window.setTimeout(() => toggleStreaming({ interpreter: true, speakerMode: 'auto' }), 80);
       }
@@ -1782,6 +2034,7 @@ function App() {
         return;
       }
       speechAssistRestartTimerRef.current = window.setTimeout(() => {
+        if (!navigator.onLine || document.visibilityState !== 'visible') return;
         if (!speechFastPathActiveRef.current || speechAssistStopRequestedRef.current) return;
         if (socketRef.current !== activeSocket || activeSocket.readyState !== WebSocket.OPEN) return;
         try {
@@ -1803,7 +2056,7 @@ function App() {
       speechAssistSocketRef.current = null;
       setLiveAssistActive(false);
       setPipelineStage('Audio fallback');
-      setStatus('Using audio fallback...');
+      setStatus(BRIDGE_STATUS.usingAudioFallback);
       if (!socketRef.current) {
         releaseWakeLock();
         setStreaming(false);
@@ -1816,7 +2069,7 @@ function App() {
     const current = appStateRef.current;
     if (!current.interpreterMode || current.speakerMode !== 'auto' || holdToTalkActiveRef.current) {
       setStatus(endStatus);
-      setPipelineStage('Ready');
+      setPipelineStage(PIPELINE.ready);
       return;
     }
 
@@ -1824,12 +2077,12 @@ function App() {
       resumeMicAfterVoicePlayback();
       setStreaming(true);
       setInstantListening(true);
-      setPipelineStage('Listening');
-      setStatus('Listening — speak anytime');
+      setPipelineStage(PIPELINE.listening);
+      setStatus(BRIDGE_STATUS.listeningSpeak);
       return;
     }
 
-    setStatus('Ready to listen');
+    setStatus(BRIDGE_STATUS.bridgeReadySpeak);
     setPipelineStage('Ready to listen');
     ensureAuthToken()
       .then(() => toggleStreaming({ interpreter: true, speakerMode: 'auto' }))
@@ -1861,7 +2114,7 @@ function App() {
       setProcessing(false);
       setPlaying(false);
       setPipelineStage('Stopped');
-      setStatus('Interpreter stopped');
+      setStatus(BRIDGE_STATUS.bridgePaused);
       setLiveSpeechSession(false);
       return;
     }
@@ -1878,6 +2131,10 @@ function App() {
       return;
     }
     if (liveSpeechSessionRef.current) {
+      if (document.visibilityState !== 'visible' || !navigator.onLine) {
+        setStatus('Come back to this tab to use the microphone');
+        return;
+      }
       haptic(14);
       setInstantListening(true);
       setInterpreterMode(true);
@@ -1894,7 +2151,12 @@ function App() {
     }
     stopBrowserSpeechFastPath();
     if (connectionStatus !== 'online' && connectionStatus !== 'warming') {
-      setStatus('Connect to the server first');
+      setStatus(BRIDGE_STATUS.linkFirst);
+      setPipelineStage('Offline');
+      return;
+    }
+    if (document.visibilityState !== 'visible' || !navigator.onLine) {
+      setStatus('Come back to this tab to use the microphone');
       setPipelineStage('Offline');
       return;
     }
@@ -1931,7 +2193,7 @@ function App() {
       holdToTalkReleasePendingRef.current = false;
       ignoreNextMicClickRef.current = true;
       toggleStreaming({ interpreter: true, speakerMode: 'auto', holdToTalk: true });
-    }, HOLD_TO_TALK_DELAY_MS);
+    }, shouldPreferHoldToTalk() ? 0 : HOLD_TO_TALK_DELAY_MS);
   }
 
   function handleMicPointerUp() {
@@ -1952,7 +2214,7 @@ function App() {
 
   function downloadPwaInstaller() {
     const appUrl = window.location.origin;
-    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install Anai Translator</title></head><body style="font-family:system-ui;margin:24px;line-height:1.5;background:#03050a;color:#f8fafc"><h1>Install Anai Translator</h1><p>Open <a style="color:#67e8f9" href="${appUrl}">${appUrl}</a>, then use your browser's Add to Home Screen or Install app option.</p><p><a style="color:#67e8f9" href="${appUrl}">Open app now</a></p></body></html>`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Install Anai</title></head><body style="font-family:system-ui;margin:24px;line-height:1.5;background:#03050a;color:#f8fafc"><h1>Install Anai</h1><p>Open <a style="color:#67e8f9" href="${appUrl}">${appUrl}</a>, then use your browser's Add to Home Screen or Install app option.</p><p><a style="color:#67e8f9" href="${appUrl}">Open app now</a></p></body></html>`;
     const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
     const link = document.createElement('a');
     link.href = url;
@@ -2047,7 +2309,7 @@ function App() {
       return;
     }
     setRecording(true);
-    setStatus('Listening...');
+    setStatus(BRIDGE_STATUS.listeningEllipsis);
     startSilenceDetector({ shouldStop: () => recordingStoppedRef.current || mediaRecorderRef.current?.state !== 'recording', onSilence: stopRecording });
   }
 
@@ -2063,7 +2325,7 @@ function App() {
     mediaRecorderRef.current?.stream?.getTracks().forEach((track) => track.stop());
     setRecording(false);
     setProcessing(true);
-    setStatus('Processing...');
+    setStatus(BRIDGE_STATUS.understandingEllipsis);
   }
 
   async function uploadRecording() {
@@ -2089,7 +2351,7 @@ function App() {
       const response = await fetch(`${liveApiUrl}/translate/audio`, { method: 'POST', headers: authHeaders(authToken), body: formData });
       debugLog('UPLOAD: response status', response.status);
       if (!response.ok) {
-        const errText = await responseErrorMessage(response, 'Audio translation failed');
+        const errText = await responseErrorMessage(response, bridgeErrors().audio);
         console.error('UPLOAD: response not ok', response.status, errText);
         throw new Error(errText);
       }
@@ -2107,7 +2369,7 @@ function App() {
         return;
       }
       setResult(data);
-      setStatus(brainUpdate?.message || (data.translated_text ? (data.audio_base64 ? 'Playing...' : 'Audio translated') : 'No clear speech recognized'));
+      setStatus(brainUpdate?.message || (data.translated_text ? (data.audio_base64 ? 'Playing...' : 'Audio bridged') : 'No clear speech recognized'));
       if (shouldSkipBrainTts(data)) {
         setPipelineStage('Voice skipped');
         return;
@@ -2140,21 +2402,25 @@ function App() {
           playTtsItem(item, { revokeOnFinish: false, manual: true, onEnd: () => {
             debugLog('UPLOAD: playTtsItem finished');
             setPlaying(false);
-            setStatus('Audio translated');
+            setStatus('Audio bridged');
           }});
         }, playDelay);
       } else if (data.translated_text) {
         const targetLang = data.target_language || languagePairRef.current.targetLanguage;
         if (shouldUseBrowserTts(settings, targetLang)) {
           const browserPlayed = speakTranslatedTextWithBrowser(data.translated_text, data.source_text || '', `upload-${Date.now()}`);
-          if (!browserPlayed) setStatus('Audio translated');
+          if (!browserPlayed) setStatus('Audio bridged');
         } else {
-          setStatus('Translation ready (neural voice unavailable)');
+          setStatus('Bridge ready (neural voice unavailable)');
         }
       }
+      reliabilityRef.current.recordSuccess('stt');
+      reliabilityRef.current.recordSuccess('audio');
     } catch (error) {
+      reliabilityRef.current.recordFailure('stt');
+      reliabilityRef.current.recordFailure('audio');
       console.error('UPLOAD: catch error', error);
-      setStatus(error.message || 'Audio translation failed');
+      setStatus(error.message || bridgeErrors().audio);
     } finally {
       setProcessing(false);
     }
@@ -2232,6 +2498,7 @@ function App() {
     socket.onopen = () => {
       if (streamSafetyTimeoutRef.current) window.clearTimeout(streamSafetyTimeoutRef.current);
       streamSafetyTimeoutRef.current = window.setTimeout(() => {
+        if (!navigator.onLine || document.visibilityState !== 'visible') return;
         const preserveInterpreter = streamReconnectRef.current.enabled && Boolean(streamReconnectRef.current.options?.interpreter);
         resetStreamState({ preserveInterpreter });
         disableStreamReconnect();
@@ -2242,7 +2509,7 @@ function App() {
         else stopTracks(stream);
         if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
         if (socketRef.current === socket) socketRef.current = null;
-        setStatus('Ready to try again');
+        setStatus(BRIDGE_STATUS.readyTryAgain);
         setPipelineStage('Safety reset');
       }, 15000);
       streamFinalizePendingRef.current = false;
@@ -2264,7 +2531,7 @@ function App() {
         liveVoiceFallbackTimerRef.current = null;
       }
       resetBrainRuntimeUi();
-      setPipelineStage('Listening');
+      setPipelineStage(PIPELINE.listening);
       setStatus(selectedSpeakerMode === 'auto' ? 'Interpreter mode listening...' : 'Streaming audio...');
       const { sourceLanguage: activeSourceLanguage, targetLanguage: activeTargetLanguage } = languagePairRef.current;
       socket.send(JSON.stringify({
@@ -2277,12 +2544,18 @@ function App() {
         speaker_mode: selectedSpeakerMode,
         speaker: selectedSpeakerMode === 'auto' ? 'auto' : 'A',
         mime_type: recorder.mimeType || preferredAudioMimeType(),
+        barrier_mode: resolveStreamBarrierMode(),
+        environment: resolveStreamEnvironment(),
       }));
       if (!cleanOptions.holdToTalk && !speechFastPathActiveRef.current) {
         startBrowserSpeechFastPath(socket);
       }
+      if (reconnecting) {
+        drainAudioSendQueue();
+      }
       flushAudioSendQueue(socket);
       startStreamHeartbeat(socket);
+      reliabilityRef.current.recordSuccess('websocket');
       streamRecorderRef.current = recorder;
       debugLog('STEP 9: starting recorder');
       try {
@@ -2313,9 +2586,28 @@ function App() {
       debugLog('WS MESSAGE:', event.data);
       if (data.type === 'pong') {
         markStreamPong();
+        reliabilityRef.current.recordSuccess('websocket');
         return;
       }
-      if (data.type === 'session_restored' || data.type === 'session_sync') applySharedSession(data.session?.shared || data.session);
+      if (data.type === 'listening') {
+        markStreamPong();
+      }
+      if (data.type === 'ready') {
+        reliabilityRef.current.recordSuccess('websocket');
+      }
+      if (data.type === 'session_restored' || data.type === 'session_sync') {
+        applySharedSession(data.session?.shared || data.session);
+        const turns = data.session?.turns
+          || data.session?.history
+          || data.session?.shared?.history;
+        if (Array.isArray(turns) && turns.length) {
+          const lastTurn = turns[turns.length - 1];
+          if (lastTurn?.source_text || lastTurn?.translated_text) {
+            if (lastTurn.source_text) setPartialTranscript(lastTurn.source_text);
+            if (lastTurn.translated_text) setLiveTranslation(lastTurn.translated_text);
+          }
+        }
+      }
       if (data.type === 'speaker_detected') {
         const label = rememberSpeaker(data);
         setPipelineStage(`${label} detected`);
@@ -2337,20 +2629,76 @@ function App() {
         }
       }
       if (data.type === 'clarify') {
-        setPipelineStage('Clarification needed');
-        setStatus(data.message || 'Clarification requested');
-        setClarifyMessage(data.message || 'Clarification requested');
-        setClarifyVisible(true);
+        if (data.stage === 'partial_low_confidence' || data.stage === 'final_low_confidence') {
+          setPipelineStage(data.stage === 'partial_low_confidence' ? 'Listening for clearer speech' : 'Moderate confidence');
+          setConfidenceWarningMessage(
+            data.message || (data.stage === 'partial_low_confidence'
+              ? 'Listening for clearer speech…'
+              : 'Moderate confidence — double-check important details.'),
+          );
+          setConfidenceWarningVisible(true);
+          setStatus(data.message || 'Keep speaking…');
+        } else if (
+          data.stage === 'cip_clarification'
+          || data.stage === 'translation_safety'
+          || asCertBool(data.needs_confirmation)
+          || shouldBlockTtsForCert(humanCertStep(data))
+        ) {
+          setPipelineStage('Clarification needed');
+          setStatus(data.message || 'Clarification requested');
+          setClarifyMessage(data.message || 'Clarification requested');
+          setClarifyVisible(true);
+        } else {
+          setConfidenceWarningMessage(data.message || 'Check meaning');
+          setConfidenceWarningVisible(true);
+        }
       }
       if (data.type === 'stage') {
         setPipelineStage(data.message);
-        setStatus(data.message);
+        if (data.stage === 'tts_skipped') {
+          const skipReason = String(data.message || '');
+          const benignSkip = /already streamed|browser voice handles|live voice/i.test(skipReason);
+          if (benignSkip && brainHintsRef.current) {
+            brainHintsRef.current = { ...brainHintsRef.current, skip_tts: false, tts_mode: undefined };
+          }
+          if (benignSkip && shouldKeepContinuousStream(socket)) {
+            resumeMicAfterVoicePlayback();
+          }
+        }
+        if (data.stage === 'partial_degraded' || data.stage === 'turn_held' || data.stage === 'weak_audio') {
+          setStatus(data.message || data.stage);
+        } else {
+          setStatus(data.message);
+        }
       }
       if (data.type === 'turn') {
         const label = rememberSpeaker(data);
         const brainUpdate = applyBrainPayload(data, 'turn');
         const playback = data.playback_owner_label || data.playback_owner;
         setConversationBrain(`${label}: ${data.reason}${data.behavior ? ` - ${data.behavior}` : ''}${playback ? ` - playback: ${playback}` : ''}`);
+        if (data.behavior === 'hold' || data.behavior === 'playback' || data.allowed === false) {
+          pauseMicForVoicePlayback();
+          setStatus(data.reason || 'Waiting for other speaker');
+        } else if (data.behavior === 'interruption' || data.behavior === 'turn_shift' || data.behavior === 'overlap') {
+          clearTtsQueue();
+          setPlaying(false);
+          setTtsPlaying(false);
+          if (liveVoiceFallbackTimerRef.current) {
+            window.clearTimeout(liveVoiceFallbackTimerRef.current);
+            liveVoiceFallbackTimerRef.current = null;
+          }
+          try { window.speechSynthesis?.cancel?.(); } catch {}
+          resumeMicAfterVoicePlayback();
+          if (data.behavior === 'turn_shift') {
+            setStatus(BRIDGE_STATUS.speakerSwitched);
+          } else if (data.behavior === 'interruption') {
+            setStatus(BRIDGE_STATUS.speakerInterrupted);
+          } else if (data.behavior === 'overlap') {
+            setStatus(BRIDGE_STATUS.bothSpeakers);
+          }
+        } else if (shouldKeepContinuousStream(socket)) {
+          resumeMicAfterVoicePlayback();
+        }
         if (brainUpdate?.speakerShift && brainUpdate.message) {
           setPipelineStage(brainUpdate.message);
           setStatus(brainUpdate.message);
@@ -2366,7 +2714,24 @@ function App() {
       if (data.type === 'partial_translation') {
         rememberSpeaker(data);
         scheduleLiveTranslation(data.text);
-        setPipelineStage('Live translation');
+        setPipelineStage(pipelineStages().liveBridge);
+        applyConfidenceSignals(data);
+        const partialThreshold = typeof data.confidence_threshold === 'number' ? data.confidence_threshold : 0.72;
+        const partialCertStep = humanCertStep(data);
+        if (shouldBlockTtsForCert(partialCertStep)) {
+          clearTtsQueue();
+          setPlaying(false);
+          setTtsPlaying(false);
+          try { window.speechSynthesis?.cancel?.(); } catch {}
+          setClarifyMessage(data.certification_message || data.confidence_message || clarifyMessages().honorNative);
+          setClarifyVisible(true);
+        } else if (data.low_confidence || (typeof data.confidence === 'number' && data.confidence < partialThreshold)) {
+          setConfidenceWarningMessage(data.confidence_message || 'Listening for clearer speech…');
+          setConfidenceWarningVisible(true);
+        } else if (partialCertStep === 'advisory') {
+          setConfidenceWarningMessage(certificationBanner(data, partialCertStep));
+          setConfidenceWarningVisible(true);
+        }
       }
       if (data.type === 'final_transcription') {
         rememberSpeaker(data);
@@ -2376,12 +2741,14 @@ function App() {
       if (data.type === 'live_translation') {
         rememberSpeaker(data);
         setLiveTranslation(data.text);
-        setPipelineStage('Translation ready');
+        setPipelineStage('Bridge ready');
         const continuousVoiceEnabled = !lowBandwidthMode;
         const activeTargetLanguage = data.target_language || data.targetLanguage || languagePairRef.current.targetLanguage;
         const useBackendNeural = prefersBackendNeuralVoice(settings, activeTargetLanguage);
         const useImmediateBrowserTts = shouldUseBrowserTts(settings, activeTargetLanguage);
-        if (continuousVoiceEnabled && data.text) {
+        const liveThreshold = typeof data.confidence_threshold === 'number' ? data.confidence_threshold : 0.72;
+        const certBlocksVoice = shouldBlockTtsForCert(humanCertStep(data));
+        if (continuousVoiceEnabled && data.text && !certBlocksVoice && !shouldSkipBrainTts(data)) {
           const speakWithBrowserFallback = () => {
             speakTranslatedTextWithBrowser(
               data.text,
@@ -2403,6 +2770,7 @@ function App() {
             const scheduledAt = performance.now();
             liveVoiceFallbackTimerRef.current = window.setTimeout(() => {
               liveVoiceFallbackTimerRef.current = null;
+              if (document.visibilityState !== 'visible' || !navigator.onLine) return;
               if (backendVoiceChunkSeenAtRef.current > scheduledAt) return;
               speakWithBrowserFallback();
             }, BACKEND_TTS_WAIT_MS);
@@ -2424,7 +2792,7 @@ function App() {
           setPlaying(false);
           setTtsPlaying(false);
           setPipelineStage('Voice skipped');
-          setStatus('Confirmation needed before voice');
+          setStatus(BRIDGE_STATUS.confirmBeforeVoice);
           return;
         }
         audioSendQueueRef.current = [];
@@ -2484,7 +2852,7 @@ function App() {
           setPlaying(false);
           setTtsPlaying(false);
           setPipelineStage('Voice skipped');
-          setStatus('Confirmation needed before voice');
+          setStatus(BRIDGE_STATUS.confirmBeforeVoice);
           return;
         }
         setPipelineStage('Voice stream complete');
@@ -2503,7 +2871,7 @@ function App() {
               setTtsPlaying(false);
               if (!resumeInterpreterListeningUI('Listening for the next speaker...')) {
                 setPipelineStage('Voice played');
-                setStatus('Voice played');
+                setStatus(BRIDGE_STATUS.voicePlayed);
               }
               return [];
             }
@@ -2518,7 +2886,7 @@ function App() {
                 resumeMicAfterVoicePlayback();
                 if (!resumeInterpreterListeningUI('Listening for the next speaker...')) {
                   setPipelineStage('Voice played');
-                  setStatus('Voice played');
+                  setStatus(BRIDGE_STATUS.voicePlayed);
                 }
                 return;
               }
@@ -2554,7 +2922,7 @@ function App() {
         const message = data.message || 'Stream recovered';
         if (shouldKeepContinuousStream(socket) && !isFatalStreamError(message)) {
           setProcessing(false);
-          setPipelineStage('Listening');
+          setPipelineStage(PIPELINE.listening);
           setStatus(`${message} Listening...`);
           streamFinalizePendingRef.current = false;
           holdToTalkReleasePendingRef.current = false;
@@ -2575,7 +2943,7 @@ function App() {
         socket.close();
         socketRef.current = null;
       }
-      if (data.type === 'vad' && data.speech_detected) setStatus('Streaming audio... speech detected');
+      if (data.type === 'vad' && data.speech_detected) setStatus(BRIDGE_STATUS.speechDetected);
       if (data.type === 'final') {
         const keepContinuous = liveSpeechSessionRef.current
           || shouldKeepContinuousStream(socket)
@@ -2587,8 +2955,40 @@ function App() {
         }
         const brainUpdate = applyBrainPayload(data, 'final');
         rememberSpeaker(data);
+        applyConfidenceSignals(data);
+        if (data.source_text) lastGuardedSourceRef.current = data.source_text;
         setResult(data);
         if (data.translated_text) setLiveTranslation(data.translated_text);
+        if (shouldSkipBrainTts(data)) {
+          clearTtsQueue();
+          setPlaying(false);
+          setTtsPlaying(false);
+          if (liveVoiceFallbackTimerRef.current) {
+            window.clearTimeout(liveVoiceFallbackTimerRef.current);
+            liveVoiceFallbackTimerRef.current = null;
+          }
+          try { window.speechSynthesis?.cancel?.(); } catch {}
+        } else if (brainHintsRef.current?.skip_tts || brainHintsRef.current?.tts_mode === 'skip') {
+          brainHintsRef.current = { ...brainHintsRef.current, skip_tts: false, tts_mode: undefined };
+        }
+        if (data.low_confidence || data.needs_native_certification || humanCertStep(data) !== 'none') {
+          applyConfidenceSignals(data);
+          if (data.confidence_message || data.certification_message) {
+            setConfidenceWarningMessage(
+              data.certification_message || data.confidence_message || clarifyMessages().checkMeaning,
+            );
+            setConfidenceWarningVisible(true);
+          }
+        }
+        if (shouldBlockTtsForCert(humanCertStep(data)) || data.stage === 'translation_safety') {
+          setClarifyMessage(
+            data.clarify_message || data.certification_message || data.confidence_message || clarifyMessages().checkMeaning,
+          );
+          setClarifyVisible(true);
+        } else if (asCertBool(data.needs_confirmation) || data.stage === 'cip_clarification') {
+          setClarifyMessage(data.clarify_message || data.confidence_message || clarifyMessages().checkMeaning);
+          setClarifyVisible(true);
+        }
         if (data.session) {
           applySharedSession(data.session);
         } else {
@@ -2601,8 +3001,8 @@ function App() {
           setInstantListening(true);
           if (!ttsPlayingRef.current && !appStateRef.current.playing) {
             scheduleStatusUpdate(
-              data.clarify ? 'Clarification needed' : 'Listening',
-              brainUpdate?.message || (data.clarify ? 'Clarification needed. Keep speaking...' : 'Listening — speak anytime'),
+              asCertBool(data.needs_confirmation) ? 'Clarification needed' : 'Listening',
+              brainUpdate?.message || (asCertBool(data.needs_confirmation) ? 'Clarification needed. Keep speaking...' : 'Listening — speak anytime'),
             );
           }
           const activeRecorder = streamRecorderRef.current;
@@ -2627,7 +3027,7 @@ function App() {
           return;
         }
         setPipelineStage('Complete');
-        setStatus(brainUpdate?.message || 'Stream translated');
+        setStatus(brainUpdate?.message || 'Stream bridged');
         setLiveSpeechSession(false);
         if (streamRecorderRef.current?.state === 'recording') {
           streamRecorderRef.current.stop();
@@ -2638,8 +3038,9 @@ function App() {
       }
     };
     socket.onerror = (event) => {
+      reliabilityRef.current.recordFailure('websocket', event);
       setWsDebug((current) => ({ ...current, error: 'socket error' }));
-      setStatus('Stream connection error');
+      setStatus(BRIDGE_STATUS.streamError);
       setPipelineStage('Connection error');
       releaseWakeLock();
       stopBrowserSpeechFastPath();
@@ -2677,11 +3078,12 @@ function App() {
       }
 
       if (streamReconnectRef.current.attempts >= STREAM_RECONNECT_MAX_ATTEMPTS) {
+        reliabilityRef.current.recordFailure('websocket');
         disableStreamReconnect();
         audioSendQueueRef.current = [];
         releaseWakeLock();
         setLiveSpeechSession(false);
-        setStatus('Connection lost. Tap to restart.');
+        setStatus(BRIDGE_STATUS.bridgeDroppedRestart);
         setPipelineStage('Connection lost');
         setConnectionStatus('offline');
         return;
@@ -2697,7 +3099,10 @@ function App() {
         fastReconnect ? 'Listening' : `Reconnecting ${attempt}/${STREAM_RECONNECT_MAX_ATTEMPTS}`,
         fastReconnect ? 'Reconnecting — keep speaking...' : 'Reconnecting stream...',
       );
-      window.setTimeout(() => {
+      if (streamReconnectTimerRef.current) window.clearTimeout(streamReconnectTimerRef.current);
+      streamReconnectTimerRef.current = window.setTimeout(() => {
+        streamReconnectTimerRef.current = null;
+        if (!navigator.onLine || document.visibilityState !== 'visible') return;
         if (!streamReconnectRef.current.enabled || socketRef.current) return;
         toggleStreaming({
           ...(streamReconnectRef.current.options || {}),
@@ -2715,7 +3120,7 @@ function App() {
       return;
     }
     if (lowBandwidthMode) {
-      setPipelineStage('Low-bandwidth mode: text translation only');
+      setPipelineStage(pipelineStages().lowBandwidth);
       return;
     }
     ensureAudioContext().catch((e) => console.warn('enqueueTtsChunk AudioContext failed:', e));
@@ -2763,8 +3168,8 @@ function App() {
     ttsPlayingRef.current = true;
     setTtsPlaying(true);
     setPlaying(true);
-    setPipelineStage(manual ? 'Playing translation voice' : liveVoice ? 'Speaking live translation' : 'Playing voice');
-    setStatus(manual ? 'Playing translation voice...' : liveVoice ? 'Speaking translated voice...' : 'Playing voice...');
+    setPipelineStage(manual ? pipelineStages().playVoiceManual : liveVoice ? pipelineStages().bridgingLive : 'Playing voice');
+    setStatus(manual ? `${pipelineStages().playVoiceManual}…` : liveVoice ? `${pipelineStages().bridgingStatus}` : 'Playing voice...');
     haptic(6);
     let finished = false;
     const finish = () => {
@@ -2779,7 +3184,7 @@ function App() {
       if (manual) {
         setPlaying(false);
         setPipelineStage('Voice played');
-        if (!onEnd) setStatus('Voice played');
+        if (!onEnd) setStatus(BRIDGE_STATUS.voicePlayed);
         resumeMicAfterVoicePlayback();
         return;
       }
@@ -2804,7 +3209,7 @@ function App() {
       if (manual) {
         setPlaying(false);
         setPipelineStage('Voice played');
-        if (!onEnd) setStatus('Voice played');
+        if (!onEnd) setStatus(BRIDGE_STATUS.voicePlayed);
         resumeMicAfterVoicePlayback();
         return;
       }
@@ -2835,8 +3240,8 @@ function App() {
           setTtsPlaying(true);
           setPlaying(true);
           if (!liveVoice) pauseMicForVoicePlayback();
-          setPipelineStage(liveVoice ? 'Speaking live translation' : 'Speaking translation');
-          setStatus('Speaking translated voice...');
+          setPipelineStage(pipelineStages().bridgingLive);
+          setStatus(`${pipelineStages().bridgingStatus}`);
         },
         onEnd: finishBrowserFallback,
       });
@@ -2894,7 +3299,9 @@ function App() {
           audio.play().then(() => {
             debugLog('HTML audio playing successfully (persistent element)');
             setLastAudioError(null);
+            reliabilityRef.current.recordSuccess('tts');
           }).catch((error) => {
+            reliabilityRef.current.recordFailure('tts');
             console.error('HTML audio play failed on persistent element:', error);
             // Nuclear fallback: try a completely fresh audio element
             debugLog('Trying nuclear fallback with fresh audio element');
@@ -2921,7 +3328,7 @@ function App() {
               setPlaying(false);
               setAudioReplayAvailable(true);
               setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
-              setStatus('Tap Play Voice to hear translation');
+              setStatus(clarifyMessages().tapPlayVoice);
               setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
             };
             fresh.play().then(() => {
@@ -2936,7 +3343,7 @@ function App() {
               setPlaying(false);
               setAudioReplayAvailable(true);
               setPipelineStage(`Audio playback blocked: ${err2?.name || 'tap play voice'}`);
-              setStatus('Tap Play Voice to hear translation');
+              setStatus(clarifyMessages().tapPlayVoice);
               setLastAudioError({ type: 'tts_playback_blocked', name: err2?.name, message: err2?.message });
             });
           });
@@ -3004,7 +3411,7 @@ function App() {
         setPlaying(false);
         setAudioReplayAvailable(true);
         setPipelineStage(`Audio playback blocked: ${error?.name || 'tap play voice'}`);
-        setStatus('Tap Play Voice to hear translation');
+        setStatus(clarifyMessages().tapPlayVoice);
         setLastAudioError({ type: 'tts_playback_blocked', name: error?.name, message: error?.message });
       });
     };
@@ -3394,7 +3801,7 @@ function App() {
         resumeMicAfterVoicePlayback();
         if (!resumeInterpreterListeningUI('Listening live...')) {
           setPipelineStage('Ready to listen');
-          setStatus('Ready to listen');
+          setStatus(BRIDGE_STATUS.bridgeReadySpeak);
         }
       }
     };
@@ -3418,7 +3825,7 @@ function App() {
         setTtsQueueLength(0);
         if (!resumeInterpreterListeningUI('Listening live...')) {
           setPipelineStage('Ready to listen');
-          setStatus('Ready to listen');
+          setStatus(BRIDGE_STATUS.bridgeReadySpeak);
         }
       }
       return;
@@ -3512,6 +3919,7 @@ function App() {
     };
 
     socket.onopen = () => {
+      refs.reconnectAttempts = 0;
       updateDuplexSpeaker(speaker, { active: true, transcript: '', translation: '', stage: 'Listening' });
       socket.send(JSON.stringify({
         type: 'start',
@@ -3523,16 +3931,29 @@ function App() {
         source_language: source,
         target_language: target,
         mime_type: recorder.mimeType || preferredAudioMimeType(),
+        barrier_mode: resolveStreamBarrierMode(),
+        environment: resolveStreamEnvironment(),
       }));
       recorder.start(activePacketMs());
       startMicMeter(stream);
+      reliabilityRef.current.recordSuccess('websocket');
     };
 
     socket.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'session_restored') {
-        applySharedSession(data.session?.shared);
-        updateDuplexSpeaker(speaker, { stage: `Rebound session (${data.session.reconnects} reconnects)` });
+        applySharedSession(data.session?.shared || data.session);
+        const history = data.session?.turns || data.session?.history || data.session?.shared?.history;
+        if (Array.isArray(history) && history.length) {
+          const lastTurn = history[history.length - 1];
+          updateDuplexSpeaker(speaker, {
+            transcript: lastTurn.source_text || '',
+            translation: lastTurn.translated_text || '',
+            stage: `Rebound session (${data.session.reconnects || 0} reconnects)`,
+          });
+        } else {
+          updateDuplexSpeaker(speaker, { stage: `Rebound session (${data.session.reconnects || 0} reconnects)` });
+        }
       }
       if (data.type === 'session_sync') applySharedSession(data.session);
       if (data.type === 'speaker_detected') {
@@ -3551,12 +3972,22 @@ function App() {
         if (brainUpdate?.speakerShift && brainUpdate.message) {
           updateDuplexSpeaker(speaker, { stage: brainUpdate.message });
         }
-        if (!data.allowed && data.behavior === 'hold') {
-          refs.recorder?.stop();
-          refs.recorder?.stream.getTracks().forEach((track) => track.stop());
-          socket.close();
-          refs.socket = null;
-          updateDuplexSpeaker(speaker, { active: false, stage: data.reason });
+        if (!data.allowed && (data.behavior === 'hold' || data.behavior === 'playback')) {
+          pauseMicForVoicePlayback();
+          updateDuplexSpeaker(speaker, { stage: data.reason || 'Waiting for playback' });
+        } else if (data.behavior === 'interruption' || data.behavior === 'turn_shift' || data.behavior === 'overlap') {
+          clearTtsQueue();
+          setPlaying(false);
+          setTtsPlaying(false);
+          try { window.speechSynthesis?.cancel?.(); } catch {}
+          resumeMicAfterVoicePlayback();
+          ['A', 'B'].forEach((spk) => {
+            const otherR = duplexRefs.current[spk];
+            if (otherR?._pausedForTts && otherR.recorder?.state === 'paused') {
+              otherR.recorder.resume?.();
+              otherR._pausedForTts = false;
+            }
+          });
         }
       }
       if (data.type === 'final_transcription') {
@@ -3573,11 +4004,21 @@ function App() {
       }
       if (data.type === 'live_translation') {
         rememberSpeaker(data);
-        updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Translation ready' });
+        updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Bridge ready' });
       }
       if (data.type === 'partial_translation') {
         rememberSpeaker(data);
-        updateDuplexSpeaker(speaker, { translation: data.text, stage: 'Live translation' });
+        applyConfidenceSignals(data);
+        const duplexPartialThreshold = typeof data.confidence_threshold === 'number' ? data.confidence_threshold : 0.72;
+        if (shouldSkipBrainTts(data)) {
+          clearTtsQueue();
+          setPlaying(false);
+          setTtsPlaying(false);
+        } else if (data.low_confidence || (typeof data.confidence === 'number' && data.confidence < duplexPartialThreshold)) {
+          setConfidenceWarningMessage(data.confidence_message || 'Listening for clearer speech…');
+          setConfidenceWarningVisible(true);
+        }
+        updateDuplexSpeaker(speaker, { translation: data.text, stage: pipelineStages().liveBridge });
       }
       if (data.type === 'tts_audio_chunk') {
         if (shouldSkipBrainTts(data)) {
@@ -3618,13 +4059,43 @@ function App() {
         refs.shouldReconnect = false;
         const brainUpdate = applyBrainPayload(data, `duplex-${speaker}`);
         const label = rememberSpeaker(data);
+        applyConfidenceSignals(data);
+        if (shouldSkipBrainTts(data)) {
+          clearTtsQueue();
+          setPlaying(false);
+          setTtsPlaying(false);
+          try { window.speechSynthesis?.cancel?.(); } catch {}
+        }
+        if (data.low_confidence || data.needs_native_certification || humanCertStep(data) !== 'none') {
+          applyConfidenceSignals(data);
+          if (data.confidence_message || data.certification_message) {
+            setConfidenceWarningMessage(
+              data.certification_message || data.confidence_message || clarifyMessages().checkMeaning,
+            );
+            setConfidenceWarningVisible(true);
+          }
+        }
+        if (shouldBlockTtsForCert(humanCertStep(data)) || data.stage === 'translation_safety') {
+          setClarifyMessage(
+            data.clarify_message || data.certification_message || data.confidence_message || clarifyMessages().checkMeaning,
+          );
+          setClarifyVisible(true);
+        } else if (asCertBool(data.needs_confirmation) || data.stage === 'cip_clarification') {
+          setClarifyMessage(data.clarify_message || data.confidence_message || clarifyMessages().checkMeaning);
+          setClarifyVisible(true);
+        } else if (data.native_speaker_listen_recommended && data.certification_message) {
+          setConfidenceWarningVisible(true);
+          setConfidenceWarningMessage(data.certification_message);
+        }
         if (data.session) applySharedSession(data.session);
         updateDuplexSpeaker(speaker, {
           active: false,
           transcript: data.source_text,
           translation: data.translated_text,
           speaker_label: label,
-          stage: brainUpdate?.message || 'Complete',
+          stage: data.clarify || data.low_confidence || data.needs_native_certification
+            ? (data.certification_message || data.confidence_message || 'Clarification needed')
+            : (brainUpdate?.message || 'Complete'),
         });
         // Append to shared conversation history so turns persist
         if (data.source_text || data.translated_text) {
@@ -3644,6 +4115,7 @@ function App() {
     };
 
     socket.onerror = () => {
+      reliabilityRef.current.recordFailure('websocket');
       updateDuplexSpeaker(speaker, { active: false, stage: 'Connection error' });
       setConversationBrain('WebSocket connection error');
       resetStreamState();
@@ -3656,8 +4128,22 @@ function App() {
       refs.socket = null;
       resetStreamState();
       if (refs.shouldReconnect && !refs.manualClose) {
-        updateDuplexSpeaker(speaker, { stage: 'Reconnecting...' });
-        window.setTimeout(() => toggleDuplexSpeaker(speaker), 1500);
+        refs.reconnectAttempts = (refs.reconnectAttempts || 0) + 1;
+        if (refs.reconnectAttempts >= STREAM_RECONNECT_MAX_ATTEMPTS) {
+          updateDuplexSpeaker(speaker, { active: false, stage: 'Reconnect failed — tap to retry' });
+          setReconnectToastVisible(true);
+          return;
+        }
+        const delay = Math.min(
+          STREAM_RECONNECT_MS * Math.pow(2, refs.reconnectAttempts - 1),
+          STREAM_RECONNECT_MAX_DELAY_MS,
+        );
+        updateDuplexSpeaker(speaker, {
+          stage: `Reconnecting (${refs.reconnectAttempts}/${STREAM_RECONNECT_MAX_ATTEMPTS})...`,
+        });
+        window.setTimeout(() => {
+          if (refs.shouldReconnect && !refs.manualClose) toggleDuplexSpeaker(speaker);
+        }, delay);
       } else {
         setReconnectToastVisible(true);
       }
@@ -3668,26 +4154,20 @@ function App() {
   const hasSourceText = Boolean(partialTranscript || result?.source_text);
   const hasTranslatedText = Boolean(liveTranslation || result?.translated_text);
   const sourceText = partialTranscript || result?.source_text || (hasSourceText ? '' : 'Your words will appear here');
-  const translatedText = liveTranslation || result?.translated_text || (hasTranslatedText ? '' : 'Translation will appear here');
+  const translatedText = liveTranslation || result?.translated_text || (hasTranslatedText ? '' : targetPlaceholder());
   const interpreterSessionLive = interpreterMode && speakerMode === 'auto' && interpreterSocketOpen;
   const perceivedListening = liveSpeechSession || interpreterSessionLive || streaming || instantListening;
   const displayMicLevel = micLevel;
   const micReady = connectionStatus === 'online' && micPermission !== 'denied' && micPermission !== 'unavailable';
   const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
-  const micLabel = connectionStatus === 'checking'
-    ? 'Connecting…'
-    : connectionStatus === 'warming'
-      ? 'Starting engine…'
-      : !micReady
-    ? (connectionStatus !== 'online' ? 'Server offline' : 'Mic unavailable')
-    : playing
-      ? 'Speaking translation'
-      : perceivedListening
-        ? 'Listening — speak anytime'
-        : processing
-          ? 'Translating…'
-          : 'Tap mic to start';
-  const rawStatusText = pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status;
+  const micLabel = micLabels({
+    connectionStatus,
+    micReady,
+    playing,
+    perceivedListening,
+    processing,
+  });
+  const rawStatusText = normalizePipelineStage(pipelineStage && pipelineStage !== 'Idle' ? pipelineStage : status);
   const showInstallAction = !pwaInstalled && (installPrompt || isManualInstallBrowser());
   const activeSpeakerLabel = detectedSpeaker && detectedSpeaker !== '-' && detectedSpeaker !== 'Person' ? detectedSpeaker : '';
   const recentConversationTurns = settings.showConversationHistory !== false ? conversationTurns.slice(-4) : [];
@@ -3722,26 +4202,23 @@ function App() {
     : '';
   const speakerSummary = showFriendlyStatus ? '' : activeSpeakerLabel;
   const displayTimingLabel = showFriendlyStatus ? '' : timingLabel;
-  const micHint = perceivedListening
-    ? 'Just speak — use Stop listening below when you are done'
-    : processing
-      ? 'Translating your speech…'
-      : playing
-        ? 'Playing translated voice — mic resumes automatically'
-        : connectionStatus === 'online'
-          ? 'Tap once to start live speech recognition'
-          : 'Connect to the server to begin';
+  const micHint = micHints({
+    perceivedListening,
+    processing,
+    playing,
+    connectionStatus,
+  });
   const visibleRepairOptions = (brainUi.repairOptions || []).slice(0, 3);
   const visibleHighlightTerms = (brainUi.highlightTerms || []).slice(0, 5);
-  const brainModeLabel = brainUi.mode ? brainUi.mode.replace(/_/g, ' ') : brainUi.strategy?.replace(/_/g, ' ');
+  const brainModeLabel = formatBrainModeLabel(brainUi.mode, brainUi.strategy);
   const liveHudMode = liveAssistActive ? 'Instant' : perceivedListening ? 'Audio' : connectionStatus === 'online' ? 'Ready' : 'Offline';
   const transcriptState = hasSourceText ? (perceivedListening ? 'live' : 'filled') : 'empty';
   const translationState = hasTranslatedText ? ((playing || ttsPlaying) ? 'speaking' : 'filled') : 'empty';
   const liveHudItems = [
     { key: 'listen', label: 'Hear', Icon: Radio, active: perceivedListening, level: displayMicLevel },
-    { key: 'ai', label: 'AI', Icon: Sparkles, active: liveAssistActive || brainUi.visible },
-    { key: 'translate', label: 'Text', Icon: Languages, active: Boolean(liveTranslation) || /translat/i.test(rawStatusText || '') },
-    { key: 'voice', label: 'Voice', Icon: Volume2, active: playing || ttsPlaying || ttsQueueLength > 0 },
+    { key: 'understand', label: 'Understand', Icon: Heart, active: liveAssistActive || brainUi.visible || processing },
+    { key: 'bridge', label: 'Bridge', Icon: Languages, active: Boolean(liveTranslation) || /translat|understand|bridg/i.test(rawStatusText || '') },
+    { key: 'speak', label: 'Out loud', Icon: Volume2, active: playing || ttsPlaying || ttsQueueLength > 0 },
   ];
   const hasVisibleConversation = perceivedListening || hasSourceText || hasTranslatedText || recentConversationTurns.length > 0 || clarifyVisible || brainUi.visible;
   const isTextTranslating = processing && textInputMode;
@@ -3753,7 +4230,7 @@ function App() {
   const quickActions = perceivedListening ? [] : [
     {
       key: 'type',
-      label: 'Type',
+      label: DOCK.typeToBridge,
       Icon: Keyboard,
       onClick: () => setTextInputMode(true),
       disabled: streaming || processing || playing || connectionStatus !== 'online',
@@ -3761,14 +4238,14 @@ function App() {
     },
     {
       key: 'flip',
-      label: 'Flip',
+      label: DOCK.flip,
       Icon: Repeat2,
       onClick: flipLanguageDirection,
       disabled: streaming || processing || playing || ttsPlaying || sourceLanguage === targetLanguage,
     },
     {
       key: 'replay',
-      label: 'Replay',
+      label: DOCK.replay,
       Icon: Volume2,
       onClick: playTranslationAudio,
       disabled: !audioReplayAvailable || playing || ttsPlaying,
@@ -3776,7 +4253,7 @@ function App() {
     },
     {
       key: 'clear',
-      label: 'Clear',
+      label: DOCK.clear,
       Icon: Trash2,
       onClick: clearInterpreterScreen,
       disabled: streaming || processing || playing || ttsPlaying || !hasVisibleConversation,
@@ -3843,7 +4320,7 @@ function App() {
             apiUrl={liveApiUrl}
             diagnostics={diagnostics}
           />
-          {showConnectionQuality && (
+          {advancedChrome && showConnectionQuality && (
             <ConnectionQualityIndicator
               connectionStatus={connectionStatus}
               latencyMs={latencySummary.average}
@@ -3938,6 +4415,9 @@ function App() {
           confidenceWarningVisible={confidenceWarningVisible}
           confidenceWarningMessage={confidenceWarningMessage}
           setConfidenceWarningVisible={setConfidenceWarningVisible}
+          humanCertificationStep={humanCertificationStep}
+          onConfirmTranslation={sendGlossaryCorrection}
+          guardedSourceText={lastGuardedSourceRef.current}
           result={result}
           setClarifyVisible={setClarifyVisible}
           setPipelineStage={setPipelineStage}
@@ -4006,8 +4486,9 @@ function App() {
 
       <ToastRegion toasts={toasts} dismiss={dismiss} />
       </section>
-      <OnboardingTour />
+      {advancedChrome ? <OnboardingTour /> : null}
       <KeyboardHelp isOpen={showKeyboardHelp} onClose={() => setShowKeyboardHelp(false)} />
+      {advancedChrome ? (
       <Assistant
         apiUrl={liveApiUrl}
         authToken={authToken}
@@ -4021,6 +4502,7 @@ function App() {
           };
         }}
       />
+      ) : null}
     </main>
   );
 }

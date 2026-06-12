@@ -177,6 +177,7 @@ class AnaiTranslatorPipeline:
             # Apply context layer improvements
             improved_text = self.context_layer.improve(working_text, source_language, target_language, tone)
         else:
+            analysis = {}
             improved_text = self.context_layer.improve(text, source_language, target_language, tone)
         
         # Base translation with predictive cache
@@ -211,9 +212,33 @@ class AnaiTranslatorPipeline:
                     self._cache_misses = 1
         
         if not translated_text:
-            # Perform translation if not cached
+            from backend.glossary import finalize_translation, prepare_for_translation
+
+            strict_medical = "medical" in list((analysis.get("domains") or {}).get("high_stakes") or [])
+            prepared_text, gloss_meta = prepare_for_translation(improved_text, strict_medical=strict_medical)
+            translation_hints = list(analysis.get("instructions") or [])
+            style_guide = analysis.get("style_guide")
+            if style_guide:
+                translation_hints.append(str(style_guide))
+            use_quality = quality or bool((analysis.get("domains") or {}).get("high_stakes"))
+            translate_kwargs = {"quality": use_quality}
+            try:
+                import inspect
+                if "hints" in inspect.signature(self.translator.translate).parameters:
+                    translate_kwargs["hints"] = translation_hints
+            except (TypeError, ValueError):
+                pass
             translated_text = self.translator.translate(
-                improved_text, source_language, target_language, quality=quality,
+                prepared_text, source_language, target_language, **translate_kwargs,
+            )
+            translated_text, _ = finalize_translation(
+                text,
+                translated_text,
+                session_id=self.session_id,
+                source_lang=source_language,
+                target_lang=target_language,
+                strict_medical=strict_medical,
+                metadata=gloss_meta,
             )
             
             # Cache the result (fast mode only — see note above)
@@ -265,12 +290,27 @@ class AnaiTranslatorPipeline:
             if back_translation_result.get("improved"):
                 translated_text = back_translation_result["final_translation"]
                 ailang_metadata["back_translation"] = back_translation_result
-            
-            # Add conversation turn to history
+
+        memory_context = None
+        if self.ailang_pipeline:
+            ctx = self.ailang_pipeline.get_or_create_context(self.session_id)
+            memory_context = {
+                "history": [
+                    {"source_text": turn.get("text", ""), "translated_text": turn.get("translated", "")}
+                    for turn in ctx.conversation_history[-8:]
+                ],
+            }
+
+        from backend.refine import refine_translation
+
+        speaker_context = {"history": [{"source_text": text}]} if text.strip() else None
+        translated_text = refine_translation(text, translated_text, memory_context, speaker_context)
+
+        if self.ailang_pipeline:
             self.ailang_pipeline.add_conversation_turn(
                 self.session_id, speaker or "unknown", text, translated_text
             )
-        
+
         audio_output_path = None
         if synthesize_audio:
             # Apply emotion-aware TTS configuration if AILang is enabled
@@ -351,18 +391,41 @@ class AnaiTranslatorPipeline:
             
             improved_text = self.context_layer.improve(working_text, source_language, target_language, tone)
         else:
+            analysis = {}
             improved_text = self.context_layer.improve(text, source_language, target_language, tone)
-        
+
+        from backend.glossary import finalize_translation, prepare_for_translation
         from translation.hybrid_translator import HybridTranslator
         from translation.marian_translator import MarianTranslator
 
+        strict_medical = "medical" in list((analysis.get("domains") or {}).get("high_stakes") or [])
+        prepared_text, gloss_meta = prepare_for_translation(improved_text, strict_medical=strict_medical)
+        translation_hints = list(analysis.get("instructions") or [])
+        style_guide = analysis.get("style_guide")
+        if style_guide:
+            translation_hints.append(str(style_guide))
+        translate_kwargs: dict = {}
         if quality and isinstance(translator, (MarianTranslator, HybridTranslator)):
-            translated_text = translator.translate(
-                improved_text, source_language, target_language, quality=True,
-            )
-        else:
-            translated_text = translator.translate(improved_text, source_language, target_language)
-        
+            translate_kwargs["quality"] = True
+        try:
+            import inspect
+            if "hints" in inspect.signature(translator.translate).parameters and translation_hints:
+                translate_kwargs["hints"] = translation_hints
+        except (TypeError, ValueError):
+            pass
+        translated_text = translator.translate(
+            prepared_text, source_language, target_language, **translate_kwargs,
+        )
+        translated_text, _ = finalize_translation(
+            text,
+            translated_text,
+            session_id=self.session_id,
+            source_lang=source_language,
+            target_lang=target_language,
+            strict_medical=strict_medical,
+            metadata=gloss_meta,
+        )
+
         # AILang post-translation pipeline
         if self.ailang_pipeline:
             context = self.ailang_pipeline.get_or_create_context(self.session_id)
@@ -400,11 +463,27 @@ class AnaiTranslatorPipeline:
             if back_translation_result.get("improved"):
                 translated_text = back_translation_result["final_translation"]
                 ailang_metadata["back_translation"] = back_translation_result
-            
+
+        memory_context = None
+        if self.ailang_pipeline:
+            ctx = self.ailang_pipeline.get_or_create_context(self.session_id)
+            memory_context = {
+                "history": [
+                    {"source_text": turn.get("text", ""), "translated_text": turn.get("translated", "")}
+                    for turn in ctx.conversation_history[-8:]
+                ],
+            }
+
+        from backend.refine import refine_translation
+
+        speaker_context = {"history": [{"source_text": text}]} if text.strip() else None
+        translated_text = refine_translation(text, translated_text, memory_context, speaker_context)
+
+        if self.ailang_pipeline:
             self.ailang_pipeline.add_conversation_turn(
                 self.session_id, speaker or "unknown", text, translated_text
             )
-        
+
         audio_output_path = None
         if synthesize_audio:
             emotion_config = None
@@ -450,10 +529,29 @@ class AnaiTranslatorPipeline:
         return final
 
     def translate_audio(self, audio_path, source_language="en", target_language="ht", tone=None, synthesize_audio=True, output_audio_path="models/output.wav", speaker=None, confidence=0.0):
-        source_text = self.stt.transcribe(audio_path, source_language)
-        return self.translate_text(source_text, source_language=source_language, target_language=target_language, tone=tone, synthesize_audio=synthesize_audio, output_audio_path=output_audio_path, speaker=speaker, confidence=confidence)
+        acoustic_confidence = 0.0
+        if hasattr(self.stt, "transcribe_result"):
+            stt_result = self.stt.transcribe_result(audio_path, source_language)
+            source_text = stt_result.text
+            acoustic_confidence = float(stt_result.confidence or 0.0)
+        else:
+            source_text = self.stt.transcribe(audio_path, source_language)
+        effective_confidence = acoustic_confidence if acoustic_confidence > 0 else confidence
+        return self.translate_text(
+            source_text,
+            source_language=source_language,
+            target_language=target_language,
+            tone=tone,
+            synthesize_audio=synthesize_audio,
+            output_audio_path=output_audio_path,
+            speaker=speaker,
+            confidence=effective_confidence,
+        )
     
     def set_glossary(self, glossary):
+        from backend.glossary import set_session_glossary
+
+        set_session_glossary(self.session_id, glossary or [])
         if self.ailang_pipeline:
             self.ailang_pipeline.set_glossary(self.session_id, glossary)
     

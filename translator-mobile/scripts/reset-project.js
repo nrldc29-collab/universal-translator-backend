@@ -14,7 +14,7 @@ const root = process.cwd();
 const entry = path.join(root, "App.js");
 if (fs.existsSync(entry)) {
   console.error(
-    "reset-project is disabled for Anai Translator. This app uses App.js (not expo-router).",
+    "reset-project is disabled for Anai. This app uses App.js (not expo-router).",
   );
   process.exit(1);
 }

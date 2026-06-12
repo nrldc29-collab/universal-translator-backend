@@ -14,10 +14,13 @@ Usage:
     enhanced_audio = enhancer.process(raw_audio)
 """
 
+import contextlib
+import os
+import wave
+
 import numpy as np
 from typing import Optional, Tuple
 import scipy.signal
-from scipy.ndimage import median_filter
 
 
 class AudioEnhancer:
@@ -146,3 +149,32 @@ class AudioEnhancer:
         """Reset enhancer state."""
         self.agc_gain = 1.0
         self.noise_floor = 0.0
+
+    def enhance_wav_file(self, wav_path: str) -> tuple[str | None, dict]:
+        """Read a PCM WAV, enhance it, and write a sibling enhanced file."""
+        try:
+            with contextlib.closing(wave.open(wav_path, "rb")) as wf:
+                nch = wf.getnchannels()
+                sw = wf.getsampwidth()
+                sr = wf.getframerate()
+                nframes = wf.getnframes()
+                if sw != 2 or nframes == 0:
+                    return None, {}
+                raw = wf.readframes(nframes)
+        except (OSError, ValueError, wave.Error):
+            return None, {}
+
+        data = np.frombuffer(raw, dtype=np.int16)
+        if nch > 1:
+            data = data.reshape(-1, nch).mean(axis=1).astype(np.int16)
+        self.sample_rate = sr
+        enhanced = self.process(data)
+        out_i16 = np.clip(enhanced * 32768.0, -32768, 32767).astype(np.int16)
+        base, _ext = os.path.splitext(wav_path)
+        out_path = f"{base}-enhanced.wav"
+        with contextlib.closing(wave.open(out_path, "wb")) as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            wf.writeframes(out_i16.tobytes())
+        return out_path, {"sample_rate": sr, "frames": len(out_i16)}

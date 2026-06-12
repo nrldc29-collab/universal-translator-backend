@@ -1,4 +1,4 @@
-import { apiToWsUrl, connectWS } from '../services/ws';
+import { apiToWsUrl, connectWS, wsSocketHasAuthToken } from '../services/ws';
 
 const activeSockets = [];
 
@@ -13,6 +13,13 @@ describe('WebSocket Service', () => {
       }
     }
   });
+  describe('wsSocketHasAuthToken', () => {
+    test('detects access_token query param', () => {
+      expect(wsSocketHasAuthToken('ws://192.168.1.1/ws/audio?access_token=abc')).toBe(true);
+      expect(wsSocketHasAuthToken('ws://192.168.1.1/ws/audio')).toBe(false);
+    });
+  });
+
   describe('apiToWsUrl', () => {
     test('converts HTTP to WS', () => {
       const result = apiToWsUrl('http://localhost:8000', '/ws/audio', 'token123');
@@ -50,8 +57,10 @@ describe('WebSocket Service', () => {
       
       expect(typeof wsControl.send).toBe('function');
       expect(typeof wsControl.close).toBe('function');
+      expect(typeof wsControl.dispose).toBe('function');
       expect(typeof wsControl.updateHandlers).toBe('function');
       expect(typeof wsControl.forceReconnect).toBe('function');
+      expect(typeof wsControl.resetReconnectState).toBe('function');
       expect(typeof wsControl.isConnected).toBe('boolean');
       expect(typeof wsControl.reconnectAttempts).toBe('number');
       expect(typeof wsControl.connectionDuration).toBe('number');
@@ -105,6 +114,17 @@ describe('WebSocket Service', () => {
       expect(() => {
         wsControl.forceReconnect();
       }).not.toThrow();
+    });
+
+    test('shouldReconnect=false blocks auto-reconnect scheduling', () => {
+      const mockOnMessage = jest.fn();
+      const mockSetStatus = jest.fn();
+      const wsControl = connectWS('ws://localhost:8000/ws/audio', mockOnMessage, mockSetStatus, {
+        shouldReconnect: () => false,
+      });
+      activeSockets.push(wsControl);
+      expect(wsControl.isReconnecting()).toBe(false);
+      expect(typeof wsControl.close).toBe('function');
     });
   });
 });

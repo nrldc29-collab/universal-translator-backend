@@ -14,16 +14,31 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  AppState,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { assistantWelcomeLine } from "../constants/productVoice";
 
 function buildAuthHeaders(token, extra = {}) {
   if (!token) return extra;
   return { ...extra, Authorization: `Bearer ${token}` };
 }
 
-export default function Assistant({ apiUrl = "", authToken = "", getTranslationContext }) {
-  const [open, setOpen] = useState(false);
+export default function Assistant({
+  apiUrl = "",
+  authToken = "",
+  getTranslationContext,
+  open: controlledOpen,
+  onOpenChange,
+  renderFab = true,
+}) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : uncontrolledOpen;
+  const setOpen = (next) => {
+    if (isControlled) onOpenChange?.(next);
+    else setUncontrolledOpen(next);
+  };
   const [available, setAvailable] = useState(null);
   const [unavailableReason, setUnavailableReason] = useState("");
   const [messages, setMessages] = useState([]);
@@ -31,6 +46,11 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
   const [pending, setPending] = useState(false);
   const sessionIdRef = useRef(null);
   const scrollRef = useRef(null);
+  const scrollTimerRef = useRef(null);
+  const sendAbortRef = useRef(null);
+  const healthAbortRef = useRef(null);
+  const healthCheckGenRef = useRef(0);
+  const mountedRef = useRef(true);
 
   if (!sessionIdRef.current) {
     sessionIdRef.current = `m-${Math.random().toString(36).slice(2)}-${Date.now()}`;
@@ -38,21 +58,48 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
 
   const checkHealth = useCallback(() => {
     if (!apiUrl) return;
+    const checkGen = healthCheckGenRef.current + 1;
+    healthCheckGenRef.current = checkGen;
+    healthAbortRef.current?.abort();
+    const controller = new AbortController();
+    healthAbortRef.current = controller;
     setAvailable(null);
     setUnavailableReason("");
     (async () => {
+      const timeoutId = setTimeout(() => controller.abort(), 12000);
       try {
         const res = await fetch(`${apiUrl}/api/assistant/health`, {
           headers: buildAuthHeaders(authToken),
+          signal: controller.signal,
         });
+        if (!mountedRef.current || healthCheckGenRef.current !== checkGen || controller.signal.aborted) return;
         const body = await res.json().catch(() => ({}));
+        if (!mountedRef.current || healthCheckGenRef.current !== checkGen || controller.signal.aborted) return;
         setAvailable(Boolean(body.available));
         setUnavailableReason(body.error || "");
       } catch (err) {
+        if (!mountedRef.current || healthCheckGenRef.current !== checkGen || controller.signal.aborted) return;
+        if (err?.name === "AbortError") return;
         setAvailable(false);
         setUnavailableReason(String(err?.message || err));
+      } finally {
+        clearTimeout(timeoutId);
+        if (healthAbortRef.current === controller) {
+          healthAbortRef.current = null;
+        }
       }
     })();
+  }, [apiUrl, authToken]);
+
+  useEffect(() => {
+    healthCheckGenRef.current += 1;
+    healthAbortRef.current?.abort();
+    healthAbortRef.current = null;
+    sendAbortRef.current?.abort();
+    sendAbortRef.current = null;
+    setAvailable(null);
+    setUnavailableReason("");
+    setPending(false);
   }, [apiUrl, authToken]);
 
   useEffect(() => {
@@ -60,10 +107,42 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
   }, [open, available, checkHealth]);
 
   useEffect(() => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
     if (scrollRef.current) {
-      setTimeout(() => scrollRef.current?.scrollToEnd?.({ animated: true }), 50);
+      scrollTimerRef.current = setTimeout(() => {
+        scrollTimerRef.current = null;
+        scrollRef.current?.scrollToEnd?.({ animated: true });
+      }, 50);
     }
+    return () => {
+      if (scrollTimerRef.current) {
+        clearTimeout(scrollTimerRef.current);
+        scrollTimerRef.current = null;
+      }
+    };
   }, [messages, pending, open]);
+
+  useEffect(() => () => {
+    mountedRef.current = false;
+    healthCheckGenRef.current += 1;
+    healthAbortRef.current?.abort();
+    healthAbortRef.current = null;
+    sendAbortRef.current?.abort();
+    sendAbortRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") return;
+      healthCheckGenRef.current += 1;
+      healthAbortRef.current?.abort();
+      healthAbortRef.current = null;
+      sendAbortRef.current?.abort();
+      sendAbortRef.current = null;
+      setPending(false);
+    });
+    return () => subscription.remove();
+  }, []);
 
   async function send() {
     const text = draft.trim();
@@ -73,9 +152,12 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
     setPending(true);
 
     const ctx = typeof getTranslationContext === "function" ? getTranslationContext() : null;
+    let controller = null;
 
     try {
-      const controller = new AbortController();
+      sendAbortRef.current?.abort();
+      controller = new AbortController();
+      sendAbortRef.current = controller;
       const timeout = setTimeout(() => controller.abort(), 30000);
       const res = await fetch(`${apiUrl}/api/assistant/chat`, {
         method: "POST",
@@ -88,7 +170,9 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
         signal: controller.signal,
       });
       clearTimeout(timeout);
+      if (!mountedRef.current || controller.signal.aborted) return;
       const body = await res.json().catch(() => ({}));
+      if (!mountedRef.current || controller.signal.aborted) return;
       if (!res.ok) {
         const detail =
           body?.detail ||
@@ -105,13 +189,16 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
         ]);
       }
     } catch (err) {
-      const msg =
-        err?.name === "AbortError"
-          ? "Request timed out. Try again."
-          : `Network error: ${err?.message || err}`;
-      setMessages((prev) => [...prev, { role: "system", text: msg }]);
+      if (mountedRef.current && err?.name !== "AbortError") {
+        setMessages((prev) => [...prev, { role: "system", text: `Network error: ${err?.message || err}` }]);
+      } else if (mountedRef.current && err?.name === "AbortError") {
+        setMessages((prev) => [...prev, { role: "system", text: "Request timed out. Try again." }]);
+      }
     } finally {
-      setPending(false);
+      if (controller && sendAbortRef.current === controller) {
+        sendAbortRef.current = null;
+      }
+      if (mountedRef.current) setPending(false);
     }
   }
 
@@ -121,7 +208,7 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
 
   return (
     <>
-      {!open && (
+      {renderFab && !open ? (
         <Pressable
           style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
           onPress={() => setOpen(true)}
@@ -130,7 +217,7 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
         >
           <Text style={styles.fabText}>Ask NAIA</Text>
         </Pressable>
-      )}
+      ) : null}
 
       <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
         <KeyboardAvoidingView
@@ -148,7 +235,7 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
                     ? "Unavailable"
                     : available === true
                     ? "Ready"
-                    : "Connecting\u2026"}
+                    : "Linking bridge\u2026"}
                 </Text>
               </View>
               <View style={styles.headerActions}>
@@ -199,7 +286,7 @@ export default function Assistant({ apiUrl = "", authToken = "", getTranslationC
                     <Ionicons name="sparkles-outline" size={22} color="#67e8f9" />
                   </View>
                   <Text style={styles.placeholder}>
-                    Ask a question about your translation, request a rephrase, or get a language tip.
+                    {assistantWelcomeLine()}
                   </Text>
                 </View>
               )}

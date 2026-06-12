@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { Modal, View, Text, TextInput, Pressable, ScrollView, SafeAreaView } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import pickerStyles from "./LanguagePickerModal.styles";
+import LanguagePickerRow from "./LanguagePickerRow";
 
 const LANGUAGE_OPTIONS = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -22,7 +24,8 @@ const LANGUAGE_OPTIONS = [
 
 export { LANGUAGE_OPTIONS };
 
-export default function LanguagePickerModal({ visible, title, selectedCode, onSelect, onClose }) {
+export default function LanguagePickerModal({ visible, title, selectedCode, onSelect, onClose, variant = "target" }) {
+  const isSource = variant === "source";
   const [query, setQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
 
@@ -51,19 +54,35 @@ export default function LanguagePickerModal({ visible, title, selectedCode, onSe
       <View style={pickerStyles.backdrop}>
         <Pressable style={pickerStyles.backdropTap} onPress={onClose} accessibilityRole="button" accessibilityLabel="Close language picker" />
         <Pressable onPress={() => {}} style={pickerStyles.sheetWrap}>
-        <SafeAreaView style={pickerStyles.sheet}>
+        <SafeAreaView style={[pickerStyles.sheet, isSource ? pickerStyles.sheetSource : pickerStyles.sheetTarget]}>
+          <LinearGradient
+            colors={isSource
+              ? ["rgba(148, 163, 184, 0.28)", "transparent"]
+              : ["rgba(103, 232, 249, 0.35)", "transparent"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={pickerStyles.headerShine}
+            pointerEvents="none"
+          />
           <View style={pickerStyles.handle} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />
           <View style={pickerStyles.header}>
-            <Text style={pickerStyles.title}>
-              {titleAccent ? (
-                <>
-                  {titleLead}{" "}
-                  <Text style={pickerStyles.titleAccent}>{titleAccent}</Text>
-                </>
-              ) : (
-                title
-              )}
-            </Text>
+            <View style={pickerStyles.titleWrap}>
+              <Text style={pickerStyles.title}>
+                {titleAccent ? (
+                  <>
+                    {titleLead}{" "}
+                    <Text style={pickerStyles.titleAccent}>{titleAccent}</Text>
+                  </>
+                ) : (
+                  title
+                )}
+              </Text>
+              <View style={[pickerStyles.variantBadge, isSource ? pickerStyles.variantBadgeSource : pickerStyles.variantBadgeTarget]}>
+                <Text style={[pickerStyles.variantBadgeText, !isSource && pickerStyles.variantBadgeTargetText]}>
+                  {isSource ? "SPEAK" : "TRANSLATE"}
+                </Text>
+              </View>
+            </View>
             <Pressable
               onPress={onClose}
               style={({ pressed }) => [pickerStyles.closeBtn, pressed && pickerStyles.closeBtnPressed]}
@@ -93,6 +112,10 @@ export default function LanguagePickerModal({ visible, title, selectedCode, onSe
               </Pressable>
             ) : null}
           </View>
+          <Text style={pickerStyles.resultCount}>
+            {filteredLanguages.length} language{filteredLanguages.length === 1 ? "" : "s"}
+            {query ? ` matching “${query.trim()}”` : ""}
+          </Text>
           <ScrollView contentContainerStyle={pickerStyles.list} keyboardShouldPersistTaps="handled">
             {filteredLanguages.length === 0 ? (
               <View style={pickerStyles.emptyWrap}>
@@ -102,27 +125,17 @@ export default function LanguagePickerModal({ visible, title, selectedCode, onSe
                 <Text style={pickerStyles.emptyText}>No languages match your search.</Text>
               </View>
             ) : (
-              filteredLanguages.map((language) => {
-                const active = language.code === selectedCode;
-                return (
-                  <Pressable
-                    key={language.code}
-                    onPress={() => onSelect(language.code)}
-                    style={({ pressed }) => [
-                      pickerStyles.row,
-                      active && pickerStyles.rowActive,
-                      pressed && pickerStyles.rowPressed,
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                    accessibilityLabel={language.label}
-                  >
-                    <Text style={pickerStyles.flag}>{language.flag}</Text>
-                    <Text style={[pickerStyles.label, active && pickerStyles.labelActive]}>{language.label}</Text>
-                    {active ? <Ionicons name="checkmark-circle" size={20} color="#22d3ee" /> : null}
-                  </Pressable>
-                );
-              })
+              filteredLanguages.map((language, index) => (
+                <LanguagePickerRow
+                  key={language.code}
+                  language={language}
+                  index={index}
+                  visible={visible}
+                  active={language.code === selectedCode}
+                  isSource={isSource}
+                  onSelect={onSelect}
+                />
+              ))
             )}
           </ScrollView>
         </SafeAreaView>

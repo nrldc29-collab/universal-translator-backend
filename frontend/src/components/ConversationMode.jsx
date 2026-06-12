@@ -1,5 +1,5 @@
 /**
- * ConversationMode -- 10/10 automatic bidirectional live translation UI.
+ * ConversationMode — automatic bidirectional conversation bridge UI.
  */
 import React, { useEffect, useRef, useCallback } from 'react';
 import { Mic, Square } from 'lucide-react';
@@ -94,9 +94,16 @@ function Bubble({ turn, isLatest }) {
         </div>
       )}
 
-      {/* Translation bubble */}
+      {/* Bridged meaning */}
+      {turn.source_text && turn.translated_text && (
+        <div className={`conv-bubble-bridge ${speaker}`} aria-hidden="true">
+          <span className="conv-bubble-bridge-line" />
+          <span className="conv-bubble-bridge-hub">⬡</span>
+          <span className="conv-bubble-bridge-line" />
+        </div>
+      )}
       {turn.translated_text && (
-        <div className={`conv-bubble-translation ${speaker}`}>
+        <div className={`conv-bubble-bridged ${speaker}`}>
           {turn.translated_text}
         </div>
       )}
@@ -119,7 +126,7 @@ function ConversationHistory({ turns, onClear }) {
   // Copy all turns to clipboard
   const copyAll = useCallback(() => {
     const text = turns.map(t =>
-      `[${t.speaker_label||'?'}] ${t.source_text}\n  → ${t.translated_text}`
+      `[${t.speaker_label||'?'}] ${t.source_text}\n  ⬡ ${t.translated_text}`
     ).join('\n\n');
     navigator.clipboard?.writeText(text).catch(()=>{});
   }, [turns]);
@@ -130,7 +137,7 @@ function ConversationHistory({ turns, onClear }) {
     <div className="conv-history">
       <div className="conv-history-header">
         <span className="conv-history-count">
-          {turns.length} exchange{turns.length!==1?'s':''}
+          {turns.length} bridge exchange{turns.length!==1?'s':''}
         </span>
         <div className="conv-history-actions">
           <button type="button" className="conv-ghost-btn" onClick={copyAll} title="Copy conversation">Copy</button>
@@ -182,11 +189,11 @@ export default function ConversationMode({
   const isSpeaking   = phase==='speaking';
 
   const statusCfg = {
-    idle:       { text: !backendReady ? 'Wait for LIVE' : active ? 'Starting…' : 'Tap to start' },
+    idle:       { text: !backendReady ? 'Link bridge to begin' : active ? 'Opening bridge…' : 'Tap to open bridge' },
     ready:      { text: 'Ready…' },
-    listening:  { text: 'Listening…' },
-    processing: { text: 'Translating…' },
-    speaking:   { text: 'Speaking…' },
+    listening:  { text: 'Listening — speak in your voice' },
+    processing: { text: 'Understanding…' },
+    speaking:   { text: 'Bridging out loud…' },
   }[phase] || { text: '' };
 
   return (
@@ -199,7 +206,7 @@ export default function ConversationMode({
           null,
           [targetLanguage, targetLanguageLabel],
         ].map((item, i) => {
-          if (!item) return <span key="sep" className="conv-lang-sep">⇄</span>;
+          if (!item) return <span key="sep" className="conv-lang-sep conv-lang-bridge">⬡</span>;
           const [code, label] = item;
           const isActive = active && detectedLang === code;
           return (
@@ -229,7 +236,7 @@ export default function ConversationMode({
           className={`conv-mic-btn ${active ? 'active' : ''} ${isListening ? 'listening' : ''}`}
           onClick={active ? stop : start}
           disabled={!active && !backendReady}
-          aria-label={active ? 'Stop conversation' : 'Start auto conversation'}
+          aria-label={active ? 'Pause conversation bridge' : 'Open conversation bridge'}
         >
           {active ? (
             <Square size={26} strokeWidth={2.4} fill="currentColor" aria-hidden="true" />
@@ -272,9 +279,9 @@ export default function ConversationMode({
             <div className="conv-live-text">&ldquo;{liveText}&rdquo;</div>
           )}
 
-          {/* Live translation */}
+          {/* Live bridged meaning */}
           {liveTranslation && (
-            <div className={`conv-live-translation ${isSpeaking ? 'speaking' : ''}`}>
+            <div className={`conv-live-bridged ${isSpeaking ? 'speaking' : ''}`}>
               {isSpeaking && <span className="conv-note-icon">♪</span>}
               {liveTranslation}
             </div>
@@ -285,7 +292,7 @@ export default function ConversationMode({
             <p className="conv-idle-hint">
               One mic &mdash; speak naturally in <strong>{sourceLanguageLabel}</strong>{' '}
               or <strong>{targetLanguageLabel}</strong>.<br/>
-              Auto-detects, translates, and speaks back.
+              Anai hears, understands, and bridges meaning both ways.
             </p>
           )}
         </div>

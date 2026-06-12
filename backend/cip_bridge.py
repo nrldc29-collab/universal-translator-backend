@@ -43,11 +43,27 @@ def should_block_translation_for_cip(
     cip: dict | None,
     fallback_text: str,
     translation_confidence: float | None = None,
+    *,
+    source_text: str | None = None,
+    source_language: str | None = None,
+    target_language: str | None = None,
+    session_id: str | None = None,
 ) -> bool:
     if not is_cip_clarification(cip):
         return False
 
     fallback = (fallback_text or "").strip()
+    if source_text and fallback and session_id and source_language and target_language:
+        from backend.glossary import get_session_glossary, glossary_blocks_clarification
+
+        if glossary_blocks_clarification(
+            source_text,
+            fallback,
+            get_session_glossary(session_id),
+            source_language,
+            target_language,
+        ):
+            return False
     if not fallback or _PLACEHOLDER_TRANSLATION.match(fallback):
         return True
 
@@ -66,7 +82,9 @@ def should_block_translation_for_cip(
     except (TypeError, ValueError):
         confidence = 0.0
 
-    return confidence < 0.4
+    from backend.config import get_cip_confidence_threshold
+
+    return confidence < get_cip_confidence_threshold()
 
 
 def get_cip_confidence(cip: dict | None) -> float | None:

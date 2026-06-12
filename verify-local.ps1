@@ -125,7 +125,7 @@ Test-Step "Diagnostics endpoint" {
 # -------------------------------------------------------
 Test-Step "Languages endpoint" {
     $resp = Invoke-RestMethod -Uri "$BackendUrl/languages" -TimeoutSec 5
-    $count = ($resp.languages | Measure-Object).Count
+    $count = @($resp.languages.PSObject.Properties).Count
     Write-Host "  Languages available: $count"
     return ($count -gt 0)
 }

@@ -1,5 +1,6 @@
 import inspect
 
+from backend.config import get_translation_backend, get_whisper_model_size
 from backend.pipeline import AnaiTranslatorPipeline
 from translation.hybrid_translator import HybridTranslator
 from translation.lightweight_translator import LightweightTranslator
@@ -15,6 +16,16 @@ def test_pipeline_defaults_target_haitian_creole():
 
     sig_audio = inspect.signature(AnaiTranslatorPipeline.translate_audio)
     assert sig_audio.parameters["target_language"].default == "ht"
+
+
+def test_default_translation_backend_is_resilient_hybrid(monkeypatch):
+    monkeypatch.delenv("TRANSLATION_BACKEND", raising=False)
+    assert get_translation_backend() == "hybrid"
+
+
+def test_default_whisper_model_is_realtime_cpu_base(monkeypatch):
+    monkeypatch.delenv("WHISPER_MODEL_SIZE", raising=False)
+    assert get_whisper_model_size() == "base"
 
 
 def test_translator_module_defaults_target_haitian_creole():

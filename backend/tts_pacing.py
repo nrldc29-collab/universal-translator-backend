@@ -52,6 +52,38 @@ class ProsodyFeatures:
 
 
 # Advanced emotion detection with contextual awareness
+_MULTILINGUAL_EMOTION_KEYWORDS = {
+    "es": {
+        EmotionType.HAPPY: ["gracias", "excelente", "perfecto", "genial", "feliz"],
+        EmotionType.APOLOGETIC: ["perdón", "perdon", "disculpa", "lo siento"],
+        EmotionType.SERIOUS: ["urgente", "emergencia", "importante", "ahora"],
+        EmotionType.FEARFUL: ["ayuda", "peligro", "miedo", "socorro"],
+    },
+    "fr": {
+        EmotionType.HAPPY: ["merci", "parfait", "excellent", "super"],
+        EmotionType.APOLOGETIC: ["pardon", "désolé", "desole", "excusez"],
+        EmotionType.SERIOUS: ["urgent", "important", "immédiatement"],
+        EmotionType.FEARFUL: ["aide", "danger", "peur"],
+    },
+    "ht": {
+        EmotionType.HAPPY: ["mèsi", "mesi", "byen", "kontan"],
+        EmotionType.APOLOGETIC: ["padon", "dezole", "désolé"],
+        EmotionType.SERIOUS: ["ijans", "enpòtan", "enpotan", "vit"],
+        EmotionType.FEARFUL: ["èd", "ed", "danje", "pè"],
+    },
+    "pt": {
+        EmotionType.HAPPY: ["obrigado", "obrigada", "ótimo", "otimo"],
+        EmotionType.APOLOGETIC: ["desculpa", "perdão", "perdao"],
+        EmotionType.SERIOUS: ["urgente", "emergência", "emergencia"],
+    },
+    "de": {
+        EmotionType.HAPPY: ["danke", "perfekt", "toll"],
+        EmotionType.APOLOGETIC: ["entschuldigung", "sorry"],
+        EmotionType.SERIOUS: ["dringend", "wichtig", "notfall"],
+    },
+}
+
+
 def detect_emotion_advanced(text: str, intent: str | None = None, context: dict | None = None) -> tuple[str, float]:
     """
     Advanced emotion detection with confidence scoring.
@@ -59,7 +91,8 @@ def detect_emotion_advanced(text: str, intent: str | None = None, context: dict 
     """
     normalized = text.lower()
     intent = intent or ""
-    
+    language = str((context or {}).get("target_language") or (context or {}).get("language") or "").lower().split("-")[0]
+
     # Emotion keywords with weights
     emotion_patterns = {
         EmotionType.HAPPY: {
@@ -123,6 +156,12 @@ def detect_emotion_advanced(text: str, intent: str | None = None, context: dict 
                 score += config["weight"]
         if score > 0:
             scores[emotion] = score
+
+    lang_keywords = _MULTILINGUAL_EMOTION_KEYWORDS.get(language) or {}
+    for emotion, keywords in lang_keywords.items():
+        lang_score = sum(1.0 for keyword in keywords if keyword in normalized)
+        if lang_score > 0:
+            scores[emotion] = scores.get(emotion, 0) + lang_score
     
     # Check for punctuation emphasis
     if "!!!" in text or "???" in text:
@@ -263,7 +302,7 @@ def apply_human_pauses_advanced(text: str, emotion: str, intent: str | None = No
         pause_token = " "
     
     # Split by sentence endings
-    parts = [part.strip() for part in re.split(r"(?<=[.!?;:])\s+", text.strip()) if part.strip()]
+    parts = [part.strip() for part in re.split(r"(?<=[.!?;:,。！？])\s*", text.strip()) if part.strip()]
     
     if not parts:
         return [text]
@@ -356,7 +395,7 @@ def style_for_emotion(emotion: str, urgency: str = "low") -> dict:
 
 def apply_human_pauses(text: str, emotion: str) -> list[str]:
     pause_token = "... " if emotion == "apologetic" else " "
-    parts = [part.strip() for part in re.split(r"(?<=[.!?;:])\s+", text.strip()) if part.strip()]
+    parts = [part.strip() for part in re.split(r"(?<=[.!?;:,。！？])\s*", text.strip()) if part.strip()]
     if not parts:
         return [text]
     if emotion == "apologetic" and len(parts) == 1:
@@ -425,7 +464,9 @@ def natural_baseline_emotion_config() -> dict:
 
 def resolve_tts_emotion_config(text: str, emotion_config: dict | None = None) -> dict:
     """Merge pacing-derived prosody with any explicit emotion config."""
-    pacing = build_tts_pacing(text or "")
+    target_lang = (emotion_config or {}).get("target_language")
+    pacing_context = {"target_language": target_lang} if target_lang else None
+    pacing = build_tts_pacing_advanced(text or "", context=pacing_context)
     resolved = emotion_config_from_style(pacing.get("style"))
     if emotion_config:
         merged = dict(emotion_config)

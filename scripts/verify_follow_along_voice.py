@@ -30,7 +30,7 @@ async def run() -> int:
     tts_chunks: list[dict] = []
     errors: list[str] = []
 
-    async with websockets.connect(WS, open_timeout=15, ping_interval=None) as ws:
+    async with websockets.connect(WS, open_timeout=15, ping_interval=None, max_size=None) as ws:
         ready = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
         if ready.get("type") != "ready":
             errors.append(f"unexpected ready: {ready!r}")

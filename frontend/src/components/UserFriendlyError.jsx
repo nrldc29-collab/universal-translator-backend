@@ -17,7 +17,7 @@ const ERROR_MAPPINGS = {
     icon: Mic,
     severity: 'error',
     title: 'Microphone Access Needed',
-    message: 'Please allow microphone access in your browser settings to use voice translation.',
+    message: 'Please allow microphone access in your browser settings to open the conversation bridge.',
     action: 'Allow mic',
   },
   'mic_not_found': {
@@ -39,15 +39,15 @@ const ERROR_MAPPINGS = {
   'network_offline': {
     icon: Wifi,
     severity: 'error',
-    title: 'No Internet Connection',
-    message: 'Please check your internet connection and try again.',
+    title: 'Bridge Offline',
+    message: 'Check your network and bridge server, then try linking again.',
     action: 'Retry',
   },
   'network_timeout': {
     icon: Wifi,
     severity: 'warning',
-    title: 'Connection Slow',
-    message: 'The connection is taking longer than expected. Please wait or try again.',
+    title: 'Bridge Link Slow',
+    message: 'Linking the bridge is taking longer than expected. Please wait or try again.',
     action: 'Retry',
   },
   'quota_exceeded': {
@@ -60,9 +60,9 @@ const ERROR_MAPPINGS = {
   'websocket_disconnected': {
     icon: Wifi,
     severity: 'warning',
-    title: 'Connection Lost',
-    message: 'We lost connection to the server. Reconnecting automatically...',
-    action: 'Reconnect',
+    title: 'Bridge Dropped',
+    message: 'We lost the bridge link. Relinking automatically…',
+    action: 'Relink',
   },
 
   // Audio errors
@@ -88,15 +88,15 @@ const ERROR_MAPPINGS = {
   'translation_failed': {
     icon: AlertTriangle,
     severity: 'error',
-    title: 'Translation Failed',
-    message: 'Something went wrong with the translation. Please try again.',
+    title: 'Bridge Failed',
+    message: 'Something went wrong bridging meaning. Please try again.',
     action: 'Retry',
   },
   'translation_timeout': {
     icon: AlertTriangle,
     severity: 'warning',
-    title: 'Translation Taking Long',
-    message: 'The translation is taking longer than usual. Please wait...',
+    title: 'Bridge Taking Long',
+    message: 'Understanding is taking longer than usual. Please wait…',
     action: 'Wait',
   },
 
@@ -168,7 +168,7 @@ export default function UserFriendlyError({ errorCode, onDismiss, onRetry }) {
           className="error-action"
           onClick={handleAction}
         >
-          {errorConfig.action === 'Retry' || errorConfig.action === 'Reconnect' ? (
+          {errorConfig.action === 'Retry' || errorConfig.action === 'Relink' ? (
             <RefreshCw size={16} strokeWidth={2.5} />
           ) : null}
           {errorConfig.action}

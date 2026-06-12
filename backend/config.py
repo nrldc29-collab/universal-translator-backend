@@ -95,10 +95,10 @@ def get_whisper_compute_type() -> str:
 
 
 def get_whisper_model_size() -> str:
-    # Default to small for better accent/dialect accuracy; override with WHISPER_MODEL_SIZE.
+    # Base is both faster and more accurate for the live CPU path used by this app.
     if os.getenv("GPU_COST_MODE", "balanced").lower() == "low":
-        return os.getenv("WHISPER_MODEL_SIZE", "small")
-    return os.getenv("WHISPER_MODEL_SIZE", "small")
+        return os.getenv("WHISPER_MODEL_SIZE", "base")
+    return os.getenv("WHISPER_MODEL_SIZE", "base")
 
 
 def get_whisper_cpu_threads() -> int:
@@ -129,7 +129,10 @@ def get_nllb_model() -> str:
 
 
 def get_translation_backend() -> str:
-    return os.getenv("TRANSLATION_BACKEND", "marian").lower()
+    # Hybrid keeps common phrases instant, uses the remote provider when
+    # available, and treats local neural models as a fallback. This prevents a
+    # single oversized Marian/NLLB model from taking down the default API path.
+    return os.getenv("TRANSLATION_BACKEND", "hybrid").lower()
 
 
 def get_hybrid_enable_remote() -> bool:
@@ -173,6 +176,14 @@ def get_cip_ambiguity_threshold() -> float:
     return _to_float("CIP_AMBIGUITY_THRESHOLD", 0.68, minimum=0.0, maximum=1.0)
 
 
+def get_conversation_soft_overlap_seconds() -> float:
+    return _to_float("CONVERSATION_SOFT_OVERLAP_SECONDS", 0.35, minimum=0.1, maximum=2.0)
+
+
+def get_conversation_interruption_grace_seconds() -> float:
+    return _to_float("CONVERSATION_INTERRUPTION_GRACE_SECONDS", 0.15, minimum=0.05, maximum=1.0)
+
+
 def get_preload_models() -> bool:
     raw = os.getenv("PRELOAD_MODELS", "").strip()
     if raw:
@@ -199,6 +210,7 @@ def get_allowed_origin_regex() -> str:
     default = (
         r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|"
         r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})"
+        r"(:\d+)?|https?://[\w.-]+\.(trycloudflare\.com|loca\.lt|ngrok-free\.app|ngrok\.io)"
         r"(:\d+)?"
     )
     pattern = os.getenv("ALLOWED_ORIGIN_REGEX", default)
@@ -294,11 +306,11 @@ def get_free_daily_audio_minutes() -> int:
 
 def get_tts_chunk_chars() -> int:
     # Larger chunks = fewer hard cuts between TTS segments (less robotic).
-    return _to_int("TTS_CHUNK_CHARS", 48, minimum=6)
+    return _to_int("TTS_CHUNK_CHARS", 56, minimum=6)
 
 
 def get_tts_first_chunk_chars() -> int:
-    return _to_int("TTS_FIRST_CHUNK_CHARS", 28, minimum=4)
+    return _to_int("TTS_FIRST_CHUNK_CHARS", 32, minimum=4)
 
 
 def get_tts_max_single_pass_chars() -> int:

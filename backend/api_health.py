@@ -85,17 +85,26 @@ def stt_provider_health_snapshot(timeout_seconds: float = 1.5) -> dict:
     return snapshot
 
 
+def voice_warmup_blocks_ready() -> bool:
+    """True while startup voice cache warmup is still in progress."""
+
+    voice = runtime_state.get("voice_warmup") or {}
+    status = str(voice.get("status") or "").strip().lower()
+    return bool(status and status not in ("complete", "skipped", "failed"))
+
+
 def runtime_payload(include_details: bool = False) -> dict:
     """Compose the JSON payload returned by `/health`, `/ready`, etc."""
 
+    ready = bool(runtime_state["ready"]) and not voice_warmup_blocks_ready()
     payload = {
-        "status": "ok" if runtime_state["ready"] else "warming",
-        "ready": runtime_state["ready"],
+        "status": "ok" if ready else "warming",
+        "ready": ready,
         "release": RELEASE_ID,
         "uptime_seconds": round(time() - runtime_state["started_at"], 2),
     }
     readiness = runtime_state.get("readiness")
-    if readiness and not runtime_state["ready"]:
+    if readiness and not ready:
         payload["blockers"] = readiness.get("blockers") or []
         payload["warnings"] = readiness.get("warnings") or []
         if payload["blockers"]:
@@ -104,7 +113,7 @@ def runtime_payload(include_details: bool = False) -> dict:
         stt_provider = stt_provider_health_snapshot()
         preload = runtime_state.get("models", {}).get("preloaded")
         readiness = runtime_state.get("readiness") or evaluate_preload_result(preload if isinstance(preload, dict) else None)
-        ready = bool(runtime_state["ready"]) and bool(readiness.get("ready", True))
+        ready = ready and bool(readiness.get("ready", True))
         payload.update(
             {
                 "models": runtime_state["models"],
@@ -126,6 +135,7 @@ __all__ = [
     "RELEASE_ID",
     "runtime_state",
     "metrics",
+    "voice_warmup_blocks_ready",
     "stt_provider_health_snapshot",
     "runtime_payload",
 ]

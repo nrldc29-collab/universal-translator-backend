@@ -1,7 +1,7 @@
 {
-  "name": "Anai Translator",
+  "name": "Anai",
   "short_name": "Anai",
-  "description": "Futuristic one-tap real-time speech translation.",
+  "description": "Bridge languages in real conversations — hear, understand, and speak across the gap.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
@@ -16,9 +16,9 @@
   "prefer_related_applications": false,
   "shortcuts": [
     {
-      "name": "Start Interpreter",
-      "short_name": "Interpret",
-      "description": "Open Anai in one-tap interpreter mode.",
+      "name": "Open Anai",
+      "short_name": "Anai",
+      "description": "Open the conversation bridge in one tap.",
       "url": "/?mode=interpreter",
       "icons": [
         {
@@ -31,7 +31,7 @@
     {
       "name": "Install Help",
       "short_name": "Install",
-      "description": "Open install instructions.",
+      "description": "Install the conversation bridge on your home screen.",
       "url": "/install.html",
       "icons": [
         {

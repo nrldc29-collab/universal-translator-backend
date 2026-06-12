@@ -113,9 +113,10 @@ export default function useReliabilityMonitor() {
     
     Object.keys(errorCounts.current).forEach(subsystem => {
       const errors = errorCounts.current[subsystem];
-      const lastSuccess = lastSuccess.current[subsystem];
+      // Must not reuse the name `lastSuccess` here — it shadows the ref and throws TDZ.
+      const lastSuccessAt = lastSuccess.current[subsystem];
       const circuit = circuitStates[subsystem];
-      const timeSinceSuccess = now - lastSuccess;
+      const timeSinceSuccess = now - lastSuccessAt;
       
       health[subsystem] = {
         status: circuit === 'open' ? 'degraded' : errors > 0 ? 'warning' : 'healthy',
@@ -145,14 +146,18 @@ export default function useReliabilityMonitor() {
   // Auto-recovery check interval
   useEffect(() => {
     const interval = window.setInterval(() => {
-      const health = getHealthStatus();
-      
-      // Log degraded services
-      Object.entries(health).forEach(([subsystem, status]) => {
-        if (status.status === 'degraded') {
-          console.warn(`[ReliabilityMonitor] ${subsystem} is degraded:`, status);
-        }
-      });
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+      try {
+        const health = getHealthStatus();
+        Object.entries(health).forEach(([subsystem, status]) => {
+          if (status.status === 'degraded') {
+            console.warn(`[ReliabilityMonitor] ${subsystem} is degraded:`, status);
+          }
+        });
+      } catch (error) {
+        console.warn('[ReliabilityMonitor] health check failed:', error);
+      }
     }, 10000); // Check every 10 seconds
 
     return () => window.clearInterval(interval);

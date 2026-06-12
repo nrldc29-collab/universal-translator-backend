@@ -3,8 +3,8 @@
  * Displays latency bars, connection status, and auto-reconnect status
  */
 
-import React from 'react';
-import { WifiOff, AlertTriangle, Activity, CheckCircle2 } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, WifiOff } from 'lucide-react';
+import { connectionQualityLabels } from '../utils/productVoice';
 
 export default function ConnectionQualityIndicator({
   connectionStatus = 'unknown',
@@ -60,16 +60,18 @@ export default function ConnectionQualityIndicator({
     );
   };
 
+  const labels = connectionQualityLabels();
+
   const getStatusText = () => {
     if (isReconnecting) {
-      return `Reconnecting... (${reconnectAttempt}/${maxReconnectAttempts})`;
+      return labels.relinking(reconnectAttempt, maxReconnectAttempts);
     }
-    if (connectionStatus === 'checking') return 'Syncing';
-    if (connectionStatus === 'offline') return 'Offline';
-    if (connectionStatus === 'warming') return 'Starting models';
-    if (connectionStatus === 'error') return 'Connection Error';
+    if (connectionStatus === 'checking') return labels.syncing;
+    if (connectionStatus === 'offline') return labels.offline;
+    if (connectionStatus === 'warming') return labels.warming;
+    if (connectionStatus === 'error') return labels.error;
     if (latencyMs) return `${latencyMs}ms`;
-    return 'Connected';
+    return labels.linked;
   };
 
   return (
@@ -78,7 +80,7 @@ export default function ConnectionQualityIndicator({
       data-quality={connectionStatus === 'online' ? quality.level : connectionStatus}
       role="status"
       aria-live="polite"
-      aria-label={`Connection status: ${getStatusText()}`}
+      aria-label={`Bridge status: ${getStatusText()}`}
     >
       <div className="indicator-main">
         <span className={`conn-status-icon status-${connectionStatus}`} aria-hidden="true">

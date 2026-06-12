@@ -1,4 +1,9 @@
-from backend.communication_brain import analyze_communication, derive_adaptive_policy, evaluate_translation_brain
+from backend.communication_brain import analyze_communication, derive_adaptive_policy, detect_register, evaluate_translation_brain
+
+
+def test_register_detection_does_not_match_slang_inside_normal_words():
+    assert detect_register("Bonjour") == "neutral"
+    assert detect_register("jo") == "informal"
 
 
 def test_python_brain_matches_ai_comm_ambiguity_behavior():
@@ -166,6 +171,25 @@ def test_python_brain_high_stakes_placeholder_uses_specific_prompt():
     assert "medical" in result["decision"]["message"]
 
 
+def test_python_brain_speaks_clear_hospital_location_request_immediately():
+    result = evaluate_translation_brain(
+        "Where is the nearest hospital?",
+        "ht",
+        source_language="en",
+        fallback_translation="Kote lopital ki pi pre a ye?",
+        stt_confidence=0.95,
+        translation_confidence=0.95,
+    )
+
+    assert result["analysis"]["domains"]["risk_level"] == "high"
+    assert result["analysis"]["precision_status"]["safe_location_request"] is True
+    assert result["analysis"]["precision_status"]["mode"] == "fast_lane"
+    assert result["decision"]["type"] == "response"
+    assert result["translated"] == "Kote lopital ki pi pre a ye?"
+    assert result["response_plan"]["speak"] is True
+    assert result["response_plan"]["client_hints"]["skip_tts"] is False
+
+
 def test_python_brain_financial_amount_uses_precision_plan():
     result = evaluate_translation_brain(
         "the price is $25",
@@ -237,6 +261,14 @@ def test_python_brain_auto_repairs_source_language_mismatch_when_translation_is_
     assert result["response_plan"]["client_hints"]["repaired_source_language"] == "es"
     assert result["response_plan"]["turn_policy"]["mode"] == "instant_translate"
     assert any(option["type"] == "auto_switch_source_language" and option["language"] == "es" for option in result["response_plan"]["repair_options"])
+
+
+def test_python_brain_detects_informal_register():
+    from backend.communication_brain import analyze_communication, detect_register
+
+    assert detect_register("yeah nah mate") == "informal"
+    analysis = analyze_communication("yeah I'm gonna head out")
+    assert analysis.get("register") == "informal"
 
 
 def test_python_brain_placeholder_language_mismatch_uses_repair_prompt():

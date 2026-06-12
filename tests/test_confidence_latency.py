@@ -49,15 +49,19 @@ class TestEstimateSttConfidence:
         assert estimate_stt_confidence("") == 0.0
         assert estimate_stt_confidence("   ") == 0.0
 
-    def test_single_word_returns_low(self):
-        assert estimate_stt_confidence("hello") == 0.28
+    def test_single_word_returns_moderate_without_acoustic(self):
+        assert estimate_stt_confidence("hello") == 0.42
+
+    def test_acoustic_confidence_boosts_short_utterances(self):
+        score = estimate_stt_confidence("yes", acoustic_confidence=0.9)
+        assert score >= 0.75
 
     def test_medium_sentence_returns_moderate(self):
         score = estimate_stt_confidence("hello how are you")
         assert 0.5 <= score <= 0.82
 
     def test_long_sentence_returns_high(self):
-        assert estimate_stt_confidence("the quick brown fox jumps over the lazy dog") == 0.82
+        assert estimate_stt_confidence("the quick brown fox jumps over the lazy dog") == 0.84
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +69,14 @@ class TestEstimateSttConfidence:
 # ---------------------------------------------------------------------------
 
 class TestEstimateTranslationConfidence:
+    def test_cross_script_translation_does_not_compare_words_to_characters(self):
+        assert estimate_translation_confidence("Hello", "\u3053\u3093\u306b\u3061\u306f\u3002") >= 0.65
+
+    def test_missing_cjk_name_lowers_confidence(self):
+        with_name = estimate_translation_confidence("Dr. Chen went to the clinic.", "El Dr. Chen fue a la clínica.")
+        without_name = estimate_translation_confidence("Dr. Chen went to the clinic.", "El doctor fue a la clínica.")
+        assert with_name > without_name
+
     def test_empty_translation_returns_zero(self):
         assert estimate_translation_confidence("hello", "") == 0.0
 
@@ -83,6 +95,11 @@ class TestEstimateTranslationConfidence:
     def test_extreme_length_ratio_returns_moderate(self):
         score = estimate_translation_confidence("hi", "this is a very very very very long translation")
         assert score < 0.7
+
+    def test_missing_proper_nouns_lowers_confidence(self):
+        with_name = estimate_translation_confidence("Meet Marie at CVS.", "Rencontrez Marie à CVS.")
+        without_name = estimate_translation_confidence("Meet Marie at CVS.", "Rencontrez-les là-bas.")
+        assert with_name > without_name
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +151,87 @@ class TestAmbiguity:
         msg = clarification_for("hello", [])
         assert "rephrase" in msg.lower() or "misunderstood" in msg.lower()
 
+    def test_detects_spanish_ambiguity(self):
+        result = detect_ambiguities("fui al banco", source_lang="es")
+        assert "banco" in result
+
+    def test_detects_french_ambiguity(self):
+        result = detect_ambiguities("je vais à la banque", source_lang="fr")
+        assert "banque" in result
+
+    def test_cjk_heuristic_stt_confidence_uses_length_units(self):
+        from backend.confidence import _heuristic_stt_confidence
+
+        short_cjk = _heuristic_stt_confidence("你好")
+        longer_cjk = _heuristic_stt_confidence("你好世界今天天气很好")
+        assert short_cjk < longer_cjk
+
+    def test_assess_uses_source_language_ambiguity(self):
+        es = assess_translation_confidence(
+            "fui al banco",
+            "I went to the bench",
+            source_language="es",
+        )
+        en = assess_translation_confidence(
+            "fui al banco",
+            "I went to the bench",
+            source_language="en",
+        )
+        assert es.get("confidence", 1.0) <= en.get("confidence", 1.0)
+
+
+class TestNativeSpeakerCertification:
+    def test_clear_short_text_without_measured_audio_is_not_blocked(self):
+        assessed = assess_translation_confidence("Hello", "Hola")
+
+        assert assessed["low_confidence"] is False
+        assert assessed["needs_native_certification"] is False
+        assert assessed["human_certification_step"] == "none"
+
+    def test_informal_register_recommends_native_listen(self):
+        from backend.confidence import subjective_accent_tone_signals
+
+        subj = subjective_accent_tone_signals(register="informal", tone="neutral", emotion="neutral")
+        assert subj["subjective"] is True
+        assert "informal_register" in subj["signals"]
+
+    def test_high_confidence_informal_does_not_require_certification_block(self):
+        assessed = assess_translation_confidence(
+            "yeah I'm gonna head out",
+            "sí, me voy",
+            stt_confidence=0.92,
+            register="informal",
+            tone="neutral",
+            context_match=0.8,
+        )
+        assert assessed["native_speaker_listen_recommended"] is True
+        assert assessed["needs_native_certification"] is False
+        assert assessed["human_certification_step"] == "advisory"
+        assert assessed["certification_message"]
+
+    def test_weak_acoustic_informal_requires_certification(self):
+        assessed = assess_translation_confidence(
+            "yeah I'm gonna head out",
+            "sí, me voy",
+            stt_confidence=0.5,
+            acoustic_confidence=0.4,
+            register="informal",
+            tone="emphatic",
+            context_match=0.7,
+        )
+        assert assessed["needs_native_certification"] is True
+        assert assessed["human_certification_step"] == "required"
+
+    def test_low_confidence_informal_requires_certification(self):
+        assessed = assess_translation_confidence(
+            "yeah",
+            "[en->es] yeah",
+            register="informal",
+            stt_confidence=0.4,
+            context_match=0.5,
+        )
+        assert assessed["needs_native_certification"] is True
+
 
 class TestAssessTranslationConfidence:
     def test_high_stakes_lowers_threshold(self):
@@ -153,6 +251,23 @@ class TestAssessTranslationConfidence:
         )
         assert assessment["low_confidence"] is True
         assert assessment["confidence_message"]
+
+    def test_weak_context_match_lowers_confidence(self):
+        strong = assess_translation_confidence(
+            "I need help at the hospital",
+            "Necesito ayuda en el hospital",
+            context_match=0.85,
+        )
+        weak = assess_translation_confidence(
+            "I need help at the hospital",
+            "Necesito ayuda en el hospital",
+            context_match=0.25,
+        )
+        assert strong["confidence"] > weak["confidence"]
+
+    def test_cjk_length_ratio_uses_characters(self):
+        score = estimate_translation_confidence("我需要帮助", "I need help")
+        assert score > 0.5
 
 
 # ---------------------------------------------------------------------------

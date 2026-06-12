@@ -32,13 +32,13 @@ export default function AppHeader({
       {/* Brand */}
       <div className={`neo-brand${isOnline ? ' neo-brand--live' : ''}`}>
         <h1 className="neo-title">
-          <span className="neo-mark">ANAI</span>
-          <span className="neo-sub">TRANSLATOR</span>
+          <span className="neo-mark">Anai</span>
+          {isOnline ? <span className="neo-sub neo-sub--live">Bridge</span> : null}
         </h1>
         <div className="neo-status-row">
           <span className={`neo-conn-dot ${connectionStatus}`} />
           <span className="neo-conn-label">
-            {isWarming ? 'STARTING' : isChecking ? 'CONNECTING' : isOnline ? 'LIVE' : 'OFFLINE'}
+            {isWarming ? 'OPENING' : isChecking ? 'LINKING' : isOnline ? 'LIVE' : 'OFFLINE'}
           </span>
           <span className="neo-build-stamp" title="UI build">v46</span>
           <AILangStatusBadge apiUrl={apiUrl} />

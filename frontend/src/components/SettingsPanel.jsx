@@ -22,7 +22,7 @@ const UI_LANGUAGES = [
 const SECTIONS = [
   { id: 'language',     label: 'Language',     Icon: Languages  },
   { id: 'audio',        label: 'Audio',         Icon: Volume2    },
-  { id: 'translation',  label: 'Translation',   Icon: Zap        },
+  { id: 'translation',  label: 'Bridge engine', Icon: Zap        },
   { id: 'ailang',       label: 'AILang',         Icon: Brain      },
   { id: 'display',      label: 'Display',       Icon: Monitor    },
   { id: 'privacy',      label: 'Privacy',       Icon: Shield     },
@@ -74,7 +74,7 @@ export default function SettingsPanel({
     try {
       const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
       const json = await res.json().catch(() => ({}));
-      setBackendTestResult({ ok: res.ok, msg: res.ok ? `Connected — ${json.status || 'ok'}` : `HTTP ${res.status}` });
+      setBackendTestResult({ ok: res.ok, msg: res.ok ? `Bridge linked — ${json.status || 'ok'}` : `HTTP ${res.status}` });
     } catch (err) {
       setBackendTestResult({ ok: false, msg: err?.message || 'Unreachable' });
     } finally {
@@ -202,10 +202,10 @@ function SectionLanguage({ settings, updateSetting }) {
 
       <div className="sp-info-box">
         <Info size={13} />
-        <span>Source and target languages are set on the main screen. UI language is saved for a future localized interface update.</span>
+        <span>Source and target languages are set on the main screen — each person stays in their language while Anai bridges meaning.</span>
       </div>
 
-      <div className="sp-divider-label">Available Translation Languages</div>
+      <div className="sp-divider-label">Bridge languages</div>
       <div className="sp-lang-grid">
         {TARGET_LANGUAGE_OPTIONS.map((opt) => (
           <div key={opt.code} className="sp-lang-badge">
@@ -325,6 +325,28 @@ function SectionAudio({ settings, updateSetting, micDevices, diagnostics, apiUrl
         </select>
       </SettingRow>
 
+      <SettingRow label="Room noise" hint="Tune speech detection for your environment" icon={<Mic size={15} />}>
+        <select
+          className="sp-select"
+          value={settings.audioEnvironment || 'auto'}
+          onChange={(e) => updateSetting('audioEnvironment', e.target.value)}
+        >
+          <option value="auto">Auto-detect</option>
+          <option value="quiet">Quiet room</option>
+          <option value="office">Office</option>
+          <option value="restaurant">Restaurant / café</option>
+          <option value="street">Street / outdoor</option>
+          <option value="crowded">Crowded / noisy</option>
+        </select>
+      </SettingRow>
+
+      <SettingRow label="Hold to talk in noise" hint="Use push-to-talk in loud places" icon={<Mic size={15} />}>
+        <Toggle
+          value={settings.holdToTalkInNoise !== false}
+          onChange={(v) => updateSetting('holdToTalkInNoise', v)}
+        />
+      </SettingRow>
+
       {micDevices.length === 0 && (
         <div className="sp-info-box warning">
           <AlertTriangle size={13} />
@@ -339,7 +361,11 @@ function SectionAudio({ settings, updateSetting, micDevices, diagnostics, apiUrl
 function SectionTranslation({ settings, updateSetting }) {
   return (
     <div className="sp-section">
-      <h2 className="sp-section-title">Translation Settings</h2>
+      <h2 className="sp-section-title">Bridge engine</h2>
+      <div className="sp-info-box">
+        <Info size={13} />
+        <span>Technical settings for how Anai understands and bridges meaning. Most people can leave these at defaults.</span>
+      </div>
 
       <SettingRow label="Translation Mode" hint="Speed vs. accuracy tradeoff" icon={<Zap size={15} />}>
         <div className="sp-button-group">
@@ -361,7 +387,14 @@ function SectionTranslation({ settings, updateSetting }) {
         </div>
       </SettingRow>
 
-      <SettingRow label="Partial TTS" hint="Speak partial translations as they arrive" icon={<Volume2 size={15} />}>
+      <SettingRow label="Together mode (barrier)" hint="Each person stays in their language — Anai bridges both ways" icon={<Zap size={15} />}>
+        <Toggle
+          value={settings.barrierMode !== false}
+          onChange={(v) => updateSetting('barrierMode', v)}
+        />
+      </SettingRow>
+
+      <SettingRow label="Partial TTS" hint="Speak partial bridge text as meaning arrives" icon={<Volume2 size={15} />}>
         <Toggle
           value={settings.partialTts}
           onChange={(v) => updateSetting('partialTts', v)}
@@ -582,7 +615,7 @@ function SectionDisplay({ settings, updateSetting }) {
         </div>
       </SettingRow>
 
-      <SettingRow label="Conversation History" hint="Show recent translations on screen" icon={settings.showConversationHistory ? <Eye size={15} /> : <EyeOff size={15} />}>
+      <SettingRow label="Conversation History" hint="Show recent bridge exchanges on screen" icon={settings.showConversationHistory ? <Eye size={15} /> : <EyeOff size={15} />}>
         <Toggle
           value={settings.showConversationHistory}
           onChange={(v) => updateSetting('showConversationHistory', v)}
@@ -600,7 +633,7 @@ function SectionPrivacy({ clearConfirm, onClearConfirm }) {
 
       <div className="sp-info-box">
         <Shield size={13} />
-        <span>All translations are processed on your configured backend. No data is stored on third-party servers by default.</span>
+        <span>All conversation bridging runs on your configured backend. No audio or text is stored on third-party servers by default.</span>
       </div>
 
       <div className="sp-divider-label">Data Management</div>
@@ -700,9 +733,9 @@ function SectionAdvanced({
         />
       </SettingRow>
 
-      <div className="sp-divider-label">Backend Connection</div>
+      <div className="sp-divider-label">Bridge Server</div>
 
-      <SettingRow label="Backend URL" hint="Override the default API endpoint" icon={<Server size={15} />}>
+      <SettingRow label="Bridge server URL" hint="Override the default API endpoint" icon={<Server size={15} />}>
         <div className="sp-input-row">
           <input
             type="url"
@@ -779,14 +812,13 @@ function SectionAbout({ diagnostics, apiUrl }) {
 
   return (
     <div className="sp-section">
-      <h2 className="sp-section-title">About ANAI Translator</h2>
+      <h2 className="sp-section-title">About Anai</h2>
 
       <div className="sp-about-brand">
         <div className="sp-about-logo">
-          <span className="sp-about-mark">ANAI</span>
-          <span className="sp-about-sub">TRANSLATOR</span>
+          <span className="sp-about-mark">Anai</span>
         </div>
-        <div className="sp-about-tagline">Real-time AI translation for everyone</div>
+        <div className="sp-about-tagline">Bridge languages · Real conversations</div>
       </div>
 
       <div className="sp-divider-label">Version Info</div>
@@ -827,7 +859,7 @@ function SectionAbout({ diagnostics, apiUrl }) {
       <div className="sp-divider-label">Legal</div>
       <div className="sp-info-box">
         <Info size={13} />
-        <span>ANAI Translator uses open-source speech and translation engines. No audio or text is stored on external servers without your explicit consent.</span>
+        <span>Anai uses open-source speech and translation engines to bridge conversations. No audio or text is stored on external servers without your explicit consent.</span>
       </div>
     </div>
   );
