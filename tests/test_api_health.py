@@ -193,18 +193,24 @@ def test_runtime_payload_ready_reflects_runtime_state():
     original_voice_warmup = runtime_state.get("voice_warmup")
     try:
         runtime_state["ready"] = True
-        runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": []}
         runtime_state["voice_warmup"] = {"status": "complete"}
-        payload = runtime_payload()
+        with patch(
+            "backend.api_health.evaluate_preload_result",
+            return_value={"ready": True, "blockers": [], "warnings": []},
+        ):
+            payload = runtime_payload()
         assert payload.get("ready") is True
 
         runtime_state["ready"] = False
-        runtime_state["readiness"] = {
-            "ready": False,
-            "blockers": ["translation_preload_failed"],
-            "warnings": [],
-        }
-        payload = runtime_payload()
+        with patch(
+            "backend.api_health.evaluate_preload_result",
+            return_value={
+                "ready": False,
+                "blockers": ["translation_preload_failed"],
+                "warnings": [],
+            },
+        ):
+            payload = runtime_payload()
         assert payload.get("ready") is False
         assert payload.get("blockers") == ["translation_preload_failed"]
         assert payload.get("status") == "degraded"
@@ -225,11 +231,49 @@ def test_runtime_payload_not_ready_during_voice_warmup():
     original_readiness = runtime_state.get("readiness")
     try:
         runtime_state["ready"] = True
-        runtime_state["readiness"] = {"ready": True, "blockers": [], "warnings": []}
         runtime_state["voice_warmup"] = {"status": "running"}
-        payload = runtime_payload()
+        with patch(
+            "backend.api_health.evaluate_preload_result",
+            return_value={"ready": True, "blockers": [], "warnings": []},
+        ):
+            payload = runtime_payload()
         assert payload.get("ready") is False
         assert payload.get("status") == "warming"
+    finally:
+        if original_ready is not None:
+            runtime_state["ready"] = original_ready
+        if original_readiness is not None:
+            runtime_state["readiness"] = original_readiness
+        else:
+            runtime_state.pop("readiness", None)
+        if original_voice_warmup is not None:
+            runtime_state["voice_warmup"] = original_voice_warmup
+        else:
+            runtime_state.pop("voice_warmup", None)
+
+
+def test_runtime_payload_uses_fresh_readiness_not_stale_cache():
+    original_ready = runtime_state.get("ready")
+    original_readiness = runtime_state.get("readiness")
+    original_voice_warmup = runtime_state.get("voice_warmup")
+    try:
+        runtime_state["ready"] = True
+        runtime_state["readiness"] = {
+            "ready": False,
+            "blockers": ["espeak_missing_ht_tts_unavailable"],
+            "warnings": [],
+            "neural_tts_ready": False,
+        }
+        runtime_state["voice_warmup"] = {"status": "complete"}
+        with patch("backend.api_health.evaluate_preload_result", return_value={
+            "ready": True,
+            "blockers": [],
+            "warnings": ["espeak_missing_using_neural_ht_tts"],
+            "neural_tts_ready": True,
+        }):
+            payload = runtime_payload(include_details=False)
+        assert payload.get("ready") is True
+        assert payload.get("blockers") is None or payload.get("blockers") == []
     finally:
         if original_ready is not None:
             runtime_state["ready"] = original_ready
@@ -247,19 +291,20 @@ def test_runtime_payload_health_and_ready_agree_on_ready_flag():
     original_ready = runtime_state.get("ready")
     original_readiness = runtime_state.get("readiness")
     original_voice_warmup = runtime_state.get("voice_warmup")
+    blocked = {
+        "ready": False,
+        "blockers": ["translation_preload_failed"],
+        "warnings": [],
+    }
     try:
         runtime_state["ready"] = True
-        runtime_state["readiness"] = {
-            "ready": False,
-            "blockers": ["stt_preload_failed"],
-            "warnings": [],
-        }
         runtime_state["voice_warmup"] = {"status": "complete"}
-        basic = runtime_payload(include_details=False)
-        detailed = runtime_payload(include_details=True)
+        with patch("backend.api_health.evaluate_preload_result", return_value=blocked):
+            basic = runtime_payload(include_details=False)
+            detailed = runtime_payload(include_details=True)
         assert basic.get("ready") is False
         assert detailed.get("ready") is False
-        assert basic.get("blockers") == ["stt_preload_failed"]
+        assert basic.get("blockers") == ["translation_preload_failed"]
     finally:
         if original_ready is not None:
             runtime_state["ready"] = original_ready
@@ -279,15 +324,18 @@ def test_runtime_payload_basic_health_surfaces_readiness_blockers():
     original_voice_warmup = runtime_state.get("voice_warmup")
     try:
         runtime_state["ready"] = True
-        runtime_state["readiness"] = {
-            "ready": False,
-            "blockers": ["stt_preload_failed"],
-            "warnings": [],
-        }
         runtime_state["voice_warmup"] = {"status": "complete"}
-        payload = runtime_payload(include_details=False)
+        with patch(
+            "backend.api_health.evaluate_preload_result",
+            return_value={
+                "ready": False,
+                "blockers": ["translation_preload_failed"],
+                "warnings": [],
+            },
+        ):
+            payload = runtime_payload(include_details=False)
         assert payload.get("ready") is False
-        assert payload.get("blockers") == ["stt_preload_failed"]
+        assert payload.get("blockers") == ["translation_preload_failed"]
         assert payload.get("status") == "degraded"
     finally:
         if original_ready is not None:

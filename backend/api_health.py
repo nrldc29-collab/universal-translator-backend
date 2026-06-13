@@ -109,9 +109,7 @@ def runtime_payload(include_details: bool = False) -> dict:
     }
 
     preload = runtime_state.get("models", {}).get("preloaded")
-    readiness = runtime_state.get("readiness") or evaluate_preload_result(
-        preload if isinstance(preload, dict) else None
-    )
+    readiness = evaluate_preload_result(preload if isinstance(preload, dict) else None)
     blockers = readiness.get("blockers") or []
     warnings = readiness.get("warnings") or []
     if blockers:

@@ -49,7 +49,10 @@ def evaluate_preload_result(preload: dict[str, Any] | None) -> dict[str, Any]:
         if not lazy_startup and not _component_ok(preload.get("stt")):
             blockers.append("stt_streaming_provider_unreachable")
     elif not lazy_startup and not _component_ok(preload.get("stt")):
-        blockers.append("stt_preload_failed")
+        if stt_mode == "local":
+            warnings.append("stt_preload_failed")
+        else:
+            blockers.append("stt_preload_failed")
     elif lazy_startup:
         warnings.append("stt_lazy_load_deferred")
 
@@ -67,8 +70,10 @@ def evaluate_preload_result(preload: dict[str, Any] | None) -> dict[str, Any]:
     neural_ready = is_neural_tts_ready()
     if not lazy_startup and not _component_ok(preload.get("tts")):
         warnings.append("tts_piper_preload_failed")
-    if voices["missing"] and not has_espeak and not neural_ready:
+    if not has_piper and not has_espeak and not neural_ready:
         blockers.append("tts_no_piper_voices_or_espeak")
+    elif voices["missing"] and has_piper and not has_espeak and not neural_ready:
+        warnings.append("tts_partial_piper_voices_missing")
     elif voices["missing"] and has_espeak:
         warnings.append("tts_using_espeak_fallback_for_missing_piper_voices")
     elif voices["missing"] and neural_ready:

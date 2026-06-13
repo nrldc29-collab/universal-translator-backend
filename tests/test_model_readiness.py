@@ -25,8 +25,9 @@ def test_evaluate_preload_blocks_on_stt_failure(monkeypatch):
     monkeypatch.setenv("STT_PROVIDER", "local")
     monkeypatch.setenv("TRANSLATION_BACKEND", "lightweight")
     result = evaluate_preload_result({"stt": {"ok": False}, "tts": {"ok": True}, "translation": {"ok": True}})
-    assert result["ready"] is False
-    assert "stt_preload_failed" in result["blockers"]
+    assert result["ready"] is True
+    assert "stt_preload_failed" in result["warnings"]
+    assert "stt_preload_failed" not in result["blockers"]
 
 
 def test_evaluate_preload_blocks_on_translation_failure(monkeypatch):
@@ -96,7 +97,23 @@ def test_evaluate_preload_ready_with_lazy_startup(monkeypatch):
     assert "stt_lazy_load_deferred" in result["warnings"]
 
 
-def test_evaluate_preload_blocks_streaming_stt_when_unreachable(monkeypatch):
+def test_evaluate_preload_partial_piper_voices_not_blocker_when_neural_ready(monkeypatch):
+    monkeypatch.setenv("STT_PROVIDER", "local")
+    monkeypatch.setenv("TRANSLATION_BACKEND", "marian")
+    monkeypatch.setattr(
+        "backend.model_readiness.check_piper_voices",
+        lambda: {
+            "present": [{"lang": "en", "path": "models/tts/en_US-lessac-medium.onnx"}],
+            "missing": [{"lang": "nl", "path": "models/tts/nl_NL-rlt-medium.onnx"}],
+        },
+    )
+    monkeypatch.setattr("backend.model_readiness.espeak_available", lambda: False)
+    monkeypatch.setattr("backend.model_readiness.is_neural_tts_ready", lambda: True)
+    result = evaluate_preload_result({"stt": {"ok": True}, "tts": {"ok": True}, "translation": {"ok": True}})
+    assert result["ready"] is True
+    assert "tts_no_piper_voices_or_espeak" not in result["blockers"]
+    assert "tts_using_neural_fallback_for_missing_piper_voices" in result["warnings"]
+
     monkeypatch.setenv("STT_PROVIDER", "streaming")
     monkeypatch.setenv("TRANSLATION_BACKEND", "lightweight")
     monkeypatch.setenv("PRELOAD_MODELS", "1")
