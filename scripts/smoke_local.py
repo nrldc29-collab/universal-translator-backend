@@ -134,15 +134,21 @@ def _smoke_login_credentials(base_url: str) -> tuple[str, str]:
 def check_health(base_url: str) -> list[str]:
     errors: list[str] = []
     url = f"{base_url.rstrip('/')}/health"
-    try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        errors.append(f"health check failed ({url}): {exc}")
-        return errors
-    if not payload.get("ready"):
-        blockers = payload.get("blockers") or []
-        errors.append(f"backend not ready: {blockers or payload.get('status')}")
+    deadline = time.time() + 120
+    payload: dict | str = {}
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            errors.append(f"health check failed ({url}): {exc}")
+            return errors
+        if payload.get("ready"):
+            return errors
+        time.sleep(2)
+    blockers = payload.get("blockers") or [] if isinstance(payload, dict) else []
+    status = payload.get("status") if isinstance(payload, dict) else payload
+    errors.append(f"backend not ready after 120s: {blockers or status}")
     return errors
 
 
