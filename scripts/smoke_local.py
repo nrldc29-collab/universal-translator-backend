@@ -131,23 +131,46 @@ def _smoke_login_credentials(base_url: str) -> tuple[str, str]:
     return "demo", "demo"
 
 
+def _fetch_json_url(url: str, timeout: float = 10) -> dict:
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8")
+        return json.loads(raw) if raw else {}
+
+
 def check_health(base_url: str) -> list[str]:
-    """Wait up to 120s for `/health` to report ready."""
+    """Wait up to 120s for `/ready` to report ready."""
     errors: list[str] = []
-    url = f"{base_url.rstrip('/')}/health"
+    root = base_url.rstrip("/")
+    health_url = f"{root}/health"
+    ready_url = f"{root}/ready"
     deadline = time.time() + 120
-    payload: dict | str = {}
+    payload: dict = {}
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=10) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
+            health_payload = _fetch_json_url(health_url)
+            ready_payload = _fetch_json_url(ready_url)
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            errors.append(f"health check failed ({url}): {exc}")
+            errors.append(f"health check failed ({ready_url}): {exc}")
             return errors
+        if health_payload.get("ready") and not ready_payload.get("ready"):
+            blockers = (
+                ready_payload.get("blockers")
+                or (ready_payload.get("readiness") or {}).get("blockers")
+                or []
+            )
+            uptime = health_payload.get("uptime_seconds")
+            uptime_note = f" (uptime {uptime}s)" if uptime is not None else ""
+            errors.append(
+                "backend /health and /ready disagree"
+                f"{uptime_note} — restart with .\\Start-Translator.ps1 -Restart. "
+                f"/ready blockers: {blockers or ready_payload.get('status')}"
+            )
+            return errors
+        payload = ready_payload
         if payload.get("ready"):
             return errors
         time.sleep(2)
-    blockers = payload.get("blockers") or [] if isinstance(payload, dict) else []
+    blockers = payload.get("blockers") or (payload.get("readiness") or {}).get("blockers") or []
     status = payload.get("status") if isinstance(payload, dict) else payload
     errors.append(f"backend not ready after 120s: {blockers or status}")
     return errors
