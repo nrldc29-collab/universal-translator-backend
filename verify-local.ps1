@@ -191,6 +191,22 @@ Test-Step "Latency report (post-translation)" {
 }
 
 # -------------------------------------------------------
+# 11. Language routing (barrier direction flip)
+# -------------------------------------------------------
+Test-Step "Language routing verification" {
+    python scripts/verify_language_routing.py
+    return ($LASTEXITCODE -eq 0)
+}
+
+# -------------------------------------------------------
+# 12. Speech pipeline (14 languages translate + TTS)
+# -------------------------------------------------------
+Test-Step "Speech pipeline verification" {
+    python scripts/verify_speech_pipeline.py $BackendUrl
+    return ($LASTEXITCODE -eq 0)
+}
+
+# -------------------------------------------------------
 # Summary
 # -------------------------------------------------------
 Write-Host ""

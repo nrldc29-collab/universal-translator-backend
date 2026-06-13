@@ -100,6 +100,11 @@ def audit_core(live_url: str | None) -> Dimension:
     langs = read(verify)
     add(dim, "14-language speech verify script", len(re.findall(r'"[a-z]{2}"', langs)) >= 14)
 
+    route_verify = ROOT / "scripts" / "verify_language_routing.py"
+    add(dim, "Language routing verify script", route_verify.is_file())
+    ok, msg = run_script("scripts/verify_language_routing.py")
+    add(dim, "Barrier language routing (offline)", ok, msg)
+
     for rel in (
         "backend/pipeline.py",
         "backend/streaming.py",

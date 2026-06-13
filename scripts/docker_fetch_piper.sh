@@ -50,7 +50,11 @@ sleep 2
 fetch_required "en_US-lessac-medium.onnx.json" \
   "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"
 
-fetch_optional "es_MX-claude-high.onnx" \
-  "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx"
-fetch_optional "es_MX-claude-high.onnx.json" \
-  "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx.json"
+fetch_optional "es_ES-carlfm-x_low.onnx" \
+  "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/carlfm/x_low/es_ES-carlfm-x_low.onnx"
+fetch_optional "es_ES-carlfm-x_low.onnx.json" \
+  "https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_ES/carlfm/x_low/es_ES-carlfm-x_low.onnx.json"
+fetch_optional "nl_NL-ronnie-medium.onnx" \
+  "https://huggingface.co/rhasspy/piper-voices/resolve/main/nl/nl_NL/ronnie/medium/nl_NL-ronnie-medium.onnx"
+fetch_optional "nl_NL-ronnie-medium.onnx.json" \
+  "https://huggingface.co/rhasspy/piper-voices/resolve/main/nl/nl_NL/ronnie/medium/nl_NL-ronnie-medium.onnx.json"

@@ -42,6 +42,22 @@ def test_barrier_route_keeps_primary_direction_when_source_language_speaks():
     assert route["route_confidence"] >= 0.8
 
 
+def test_barrier_route_prefers_dutch_for_hallo_in_en_nl_pair():
+    route = resolve_barrier_route("hallo", "en", "nl", enabled=True)
+
+    assert route["source_language"] == "nl"
+    assert route["target_language"] == "en"
+    assert route["speaker"] == "person-2"
+
+
+def test_barrier_route_prefers_portuguese_for_ola_greeting():
+    route = resolve_barrier_route("Olá", "en", "pt", enabled=True)
+
+    assert route["source_language"] == "pt"
+    assert route["target_language"] == "en"
+    assert route["speaker"] == "person-2"
+
+
 def test_barrier_route_flags_out_of_pair_language_for_meaning_check():
     route = resolve_barrier_route("Привет", "en", "fr", enabled=True)
 

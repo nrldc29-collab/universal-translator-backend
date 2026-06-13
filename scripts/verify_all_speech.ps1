@@ -26,6 +26,10 @@ try {
         python scripts/verify_speech_pipeline.py $BaseUrl
         if ($LASTEXITCODE -ne 0) { throw "speech pipeline failed" }
     }
+    Step "Language routing (barrier direction)" {
+        python scripts/verify_language_routing.py
+        if ($LASTEXITCODE -ne 0) { throw "language routing failed" }
+    }
     Step "Live API matrix (182 pairs)" {
         python scripts/live_api_lang_test.py --api-url $BaseUrl --phrases greeting --max-seconds 180
         if ($LASTEXITCODE -ne 0) { throw "live api failed" }

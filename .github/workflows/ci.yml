@@ -45,6 +45,8 @@ jobs:
         run: python scripts/smoke_local.py
       - name: Product readiness (static)
         run: python scripts/product_readiness.py --static-only
+      - name: Language routing verification
+        run: python scripts/verify_language_routing.py
       - name: Run backend tests
         run: python -m pytest -q
 
@@ -121,6 +123,7 @@ jobs:
             sleep 2
           done
           python scripts/smoke_local.py http://127.0.0.1:8001
+          python scripts/verify_language_routing.py
           python benchmarks/run_benchmark.py --mode direct --direction en-ht --limit 5 --min-chrf 12
           kill $(cat logs/bundled-backend.pid) 2>/dev/null || true
 

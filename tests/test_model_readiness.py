@@ -104,7 +104,7 @@ def test_evaluate_preload_partial_piper_voices_not_blocker_when_neural_ready(mon
         "backend.model_readiness.check_piper_voices",
         lambda: {
             "present": [{"lang": "en", "path": "models/tts/en_US-lessac-medium.onnx"}],
-            "missing": [{"lang": "nl", "path": "models/tts/nl_NL-rlt-medium.onnx"}],
+            "missing": [{"lang": "nl", "path": "models/tts/nl_NL-ronnie-medium.onnx"}],
         },
     )
     monkeypatch.setattr("backend.model_readiness.espeak_available", lambda: False)

@@ -90,6 +90,10 @@ class TestRefineTranslation:
     def test_does_not_inject_cjk_source_text_as_a_name(self):
         assert refine_translation("\u3053\u3093\u306b\u3061\u306f", "Hello.") == "Hello."
 
+    def test_does_not_append_sentence_initial_source_word(self):
+        assert refine_translation("Waar is het toilet?", "Where is the bathroom?") == "Where is the bathroom?"
+        assert refine_translation("Guten Tag", "Good day") == "Good day"
+
     def test_restores_proper_noun_casing_from_source(self):
         result = refine_translation("Meet Marie at CVS.", "Rencontrez marie à cvs.")
         assert "Marie" in result

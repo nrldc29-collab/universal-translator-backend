@@ -41,15 +41,20 @@ def _source_proper_nouns(source_text: str) -> list[str]:
     text = source_text or ""
     common_sentence_words = {
         "a", "an", "are", "bonjour", "bonjou", "can", "ciao", "could", "danke",
-        "do", "does", "good", "grazie", "gracias", "hallo", "hello", "hey", "hi",
+        "do", "does", "good", "grazie", "gracias", "guten", "hallo", "hello", "hey", "hi",
         "hola", "how", "i", "is", "merci", "mesi", "no", "ola", "olá", "please",
-        "thanks", "thank", "that", "the", "they", "this", "we", "what", "when",
-        "where", "why", "would", "yes", "you",
+        "tag", "thanks", "thank", "that", "the", "they", "this", "waar", "we", "what",
+        "when", "where", "why", "would", "yes", "you",
     }
+    first_word = ""
+    first_match = re.match(r"^\s*([A-Za-z\u00c0-\u024f]+)", text)
+    if first_match:
+        first_word = first_match.group(1)
     titled = [
         match.group(0)
         for match in re.finditer(r"\b[A-Z][a-z]{2,}(?:'[A-Za-z]+)?\b", text)
-        if match.group(0).lower() not in common_sentence_words
+        if not (first_word and match.group(0).lower() == first_word.lower())
+        and match.group(0).lower() not in common_sentence_words
     ]
     hyphenated = re.findall(r"\b[A-Z][a-z]+(?:-[A-Z][a-z]+)+\b", text)
     acronyms = re.findall(r"\b[A-Z]{2,}\b", text)

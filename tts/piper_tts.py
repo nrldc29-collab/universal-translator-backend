@@ -31,7 +31,7 @@ DEFAULT_VOICES = {
     "de": "models/tts/de_DE-thorsten-medium.onnx",
     "it": "models/tts/it_IT-riccardo-x_low.onnx",
     "pt": "models/tts/pt_BR-faber-medium.onnx",
-    "nl": "models/tts/nl_NL-rlt-medium.onnx",
+    "nl": "models/tts/nl_NL-ronnie-medium.onnx",
     "ru": "models/tts/ru_RU-dmitri-medium.onnx",
     "zh": "models/tts/zh_CN-huayan-medium.onnx",
     "ar": "models/tts/ar_JO-kareem-medium.onnx",

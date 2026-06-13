@@ -150,6 +150,13 @@ def detect_language_with_confidence(text: str) -> Dict[str, Any]:
     if ht_markers >= 2:
         return {"language": "ht", "confidence": 0.9, "reason": "creole_markers"}
 
+    if {"ola", "olá"} & tokens and "hola" not in tokens:
+        spanish_markers = tokens & {
+            "el", "la", "los", "las", "gracias", "buenos", "dias", "como", "estas", "usted",
+        }
+        if not spanish_markers:
+            return {"language": "pt", "confidence": 0.88, "reason": "portuguese_greeting"}
+
     for language, pattern in ACCENT_LANGUAGES:
         if pattern.search(t):
             return {"language": language, "confidence": 0.84, "reason": "accent"}
@@ -193,6 +200,16 @@ def resolve_barrier_route(
     detected = _language_code(detection.get("language"))
     confidence = float(detection.get("confidence") or 0.0)
     in_pair = detected in {primary_source, primary_target}
+    if (
+        enabled
+        and not in_pair
+        and detected == "de"
+        and primary_target == "nl"
+        and re.fullmatch(r"(?i)hallo!?", (text or "").strip())
+    ):
+        detected = "nl"
+        in_pair = True
+        confidence = max(confidence, 0.75)
     if not enabled:
         detected = primary_source
         confidence = 1.0
