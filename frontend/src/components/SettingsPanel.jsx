@@ -40,6 +40,8 @@ export default function SettingsPanel({
   onClearSession,
   diagnostics,
   apiUrl,
+  selfTest,
+  runSelfTest,
 }) {
   const [activeSection, setActiveSection] = useState('language');
   const [micDevices, setMicDevices] = useState([]);
@@ -165,6 +167,8 @@ export default function SettingsPanel({
                 backendTestResult={backendTestResult}
                 onTestBackend={testBackendUrl}
                 apiUrl={apiUrl}
+                selfTest={selfTest}
+                runSelfTest={runSelfTest}
               />
             )}
             {activeSection === 'about' && (
@@ -721,10 +725,36 @@ function SectionAdvanced({
   apiKeyVisible, setApiKeyVisible,
   testingBackend, backendTestResult, onTestBackend,
   apiUrl,
+  selfTest,
+  runSelfTest,
 }) {
+  const selfTestRunning = selfTest?.status === 'running';
+  const selfTestLabel = selfTestRunning
+    ? 'Running self test…'
+    : selfTest?.status === 'online'
+      ? 'Run Self Test'
+      : 'Run Self Test';
+
   return (
     <div className="sp-section">
       <h2 className="sp-section-title">Advanced Settings</h2>
+
+      <SettingRow label="Self test" hint="Verify bridge, translation, voice, and WebSocket paths" icon={<RefreshCw size={15} />}>
+        <button
+          type="button"
+          className="sp-btn-option"
+          onClick={() => runSelfTest?.()}
+          disabled={!runSelfTest || selfTestRunning}
+        >
+          {selfTestLabel}
+        </button>
+      </SettingRow>
+      {selfTest?.message ? (
+        <div className={`sp-info-box ${selfTest.status === 'online' ? '' : 'warning'}`}>
+          {selfTest.status === 'online' ? <Check size={13} /> : <AlertTriangle size={13} />}
+          <span>{selfTest.message}</span>
+        </div>
+      ) : null}
 
       <SettingRow label="Debug Mode" hint="Show diagnostics panel and verbose logs" icon={<Bug size={15} />}>
         <Toggle

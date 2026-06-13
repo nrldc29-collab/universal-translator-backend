@@ -1603,6 +1603,37 @@ async def websocket_audio_translation(
         live_speaker_label = payload["speaker_label"]
         live_route = payload.get("route") or {}
         live_barrier_mode = bool(payload.get("barrier_mode"))
+        live_utterance_id = payload.get("utterance_id")
+        live_final_sent = False
+
+        async def emit_live_text_final_turn(*, translated_text: str = "", skip_tts_end: bool = False) -> None:
+            nonlocal live_final_sent
+            if not payload.get("final") or live_final_sent:
+                return
+            live_final_sent = True
+            if not skip_tts_end:
+                await websocket.send_json({
+                    "type": "tts_end",
+                    "speaker": live_speaker,
+                    "speaker_label": live_speaker_label,
+                    "partial": False,
+                    "source_language": live_source_language,
+                    "target_language": live_target_language,
+                    "barrier_mode": live_barrier_mode,
+                    "source": "browser_live_text",
+                })
+            await websocket.send_json({
+                "type": "final",
+                "speaker": live_speaker,
+                "speaker_label": live_speaker_label,
+                "source_text": text_value,
+                "translated_text": translated_text,
+                "source_language": live_source_language,
+                "target_language": live_target_language,
+                "source": "browser_live_text",
+                "utterance_id": live_utterance_id,
+            })
+
         live_memory = memory.get_context()
         live_speaker_ctx = speaker_memory.get_context(live_speaker)
         live_semantic = resolve_brain(session_id).semantic_snapshot()
@@ -1629,15 +1660,18 @@ async def websocket_audio_translation(
         except PipelineStepTimeout as exc:
             if payload_revision == live_text_revision:
                 await websocket.send_json({"type": "stage", "stage": "live_text_timeout", "message": str(exc)})
+            await emit_live_text_final_turn()
             return
         except Exception as exc:
             logger.warning("live_text_translation_failed error=%s", exc)
+            await emit_live_text_final_turn()
             return
 
         if not speaker_memory.get_language(live_speaker):
             speaker_memory.register(live_speaker, language=live_source_language or detect_language_heuristic(text_value))
         refined = refine_translation(text_value, raw_translation, memory.get_context(), speaker_memory.get_context(live_speaker))
         if not refined or is_internal_translation_artifact(refined):
+            await emit_live_text_final_turn()
             return
         refined = _apply_ailang_enhancements(
             refined, text_value, live_source_language, live_target_language,
@@ -1645,7 +1679,6 @@ async def websocket_audio_translation(
             session_context=_ailang_session_context(session_id, live_analysis),
         )
 
-        live_utterance_id = payload.get("utterance_id")
         normalized_live_utterance_id = str(live_utterance_id) if live_utterance_id is not None else None
         previous_live_source = folded_live_text(last_live_tts_source_text)
         current_live_source = folded_live_text(text_value)
@@ -1698,6 +1731,7 @@ async def websocket_audio_translation(
             })
 
         if live_low_confidence:
+            await emit_live_text_final_turn()
             return
 
         if refined != last_sent_translation or new_live_utterance:
@@ -1748,9 +1782,9 @@ async def websocket_audio_translation(
             last_partial_tts_at = 0.0
         else:
             live_tts_delta = live_translation_delta(partial_tts_text, refined)
-        # Only speak new words (real delta). Never fall back to full sentence â€”
-        # that causes repeating from the start when translation rewrites itself.
-        if not get_partial_tts_mode() or not is_speakable_live_delta(live_tts_delta):
+
+        partial_tts_enabled = get_partial_tts_mode()
+        if not partial_tts_enabled and not payload.get("final"):
             return
         if not _should_use_backend_live_tts(live_target_language):
             logger.info(
@@ -1758,38 +1792,53 @@ async def websocket_audio_translation(
                 live_target_language,
                 refined[:60],
             )
-            return
-        candidate = live_tts_delta
-
-        # Accumulate into buffer â€” only start the clock on first text, never reset mid-speech
-        now = time()
-        if not phrase_accumulation_buffer:
-            phrase_accumulation_start = now
-        phrase_accumulation_buffer = candidate
-
-        # Fire when: interval elapsed OR enough words accumulated.
-        elapsed = now - last_partial_tts_at if last_partial_tts_at else None
-        word_count = len(phrase_accumulation_buffer.split())
-        time_accumulating = now - phrase_accumulation_start
-
-        too_soon = elapsed is not None and elapsed < PARTIAL_TTS_MIN_INTERVAL
-        too_short = word_count < PARTIAL_TTS_MIN_WORDS
-        # Force fire if we've been accumulating > 2s regardless of word count
-        force = bool(payload.get("final") and word_count >= 1) or (new_live_utterance and word_count >= 1) or (time_accumulating >= 1.5 and word_count >= 2)
-
-        if too_soon and not force:
-            return
-        if too_short and not force:
+            await emit_live_text_final_turn(translated_text=refined)
             return
 
-        words = phrase_accumulation_buffer.split()
-        live_tts_to_speak = " ".join(words[:PARTIAL_TTS_MAX_WORDS])
-        logger.info("live_tts_firing words=%d elapsed=%.1fs text=%r", word_count, elapsed or 0.0, live_tts_to_speak[:60])
+        if partial_tts_enabled:
+            if not is_speakable_live_delta(live_tts_delta):
+                await emit_live_text_final_turn(translated_text=refined)
+                return
+            candidate = live_tts_delta
+
+            # Accumulate into buffer — only start the clock on first text, never reset mid-speech
+            now = time()
+            if not phrase_accumulation_buffer:
+                phrase_accumulation_start = now
+            phrase_accumulation_buffer = candidate
+
+            # Fire when: interval elapsed OR enough words accumulated.
+            elapsed = now - last_partial_tts_at if last_partial_tts_at else None
+            word_count = len(phrase_accumulation_buffer.split())
+            time_accumulating = now - phrase_accumulation_start
+
+            too_soon = elapsed is not None and elapsed < PARTIAL_TTS_MIN_INTERVAL
+            too_short = word_count < PARTIAL_TTS_MIN_WORDS
+            # Force fire if we've been accumulating > 2s regardless of word count
+            force = bool(payload.get("final") and word_count >= 1) or (new_live_utterance and word_count >= 1) or (time_accumulating >= 1.5 and word_count >= 2)
+
+            if too_soon and not force:
+                await emit_live_text_final_turn(translated_text=refined)
+                return
+            if too_short and not force:
+                await emit_live_text_final_turn(translated_text=refined)
+                return
+
+            words = phrase_accumulation_buffer.split()
+            live_tts_to_speak = " ".join(words[:PARTIAL_TTS_MAX_WORDS])
+        else:
+            live_tts_to_speak = refined
+            if not is_speakable_live_delta(live_tts_to_speak):
+                await emit_live_text_final_turn(translated_text=refined)
+                return
+        fire_words = len(live_tts_to_speak.split())
+        logger.info("live_tts_firing words=%d text=%r", fire_words, live_tts_to_speak[:60])
         phrase_accumulation_buffer = ""
         phrase_accumulation_start = 0.0
 
         live_tts_threshold = live_assessed.get("confidence_threshold") or get_cip_confidence_threshold()
         if live_conf_score < live_tts_threshold:
+            await emit_live_text_final_turn(translated_text=refined)
             return
 
         live_intent = live_semantic.get("last_intent") or "statement"
@@ -1827,6 +1876,7 @@ async def websocket_audio_translation(
                     logger.error("live_tts_failed_all_attempts error=%s", exc)
                     live_tts_path = None
         if not live_tts_path:
+            await emit_live_text_final_turn(translated_text=refined)
             return
 
         try:
@@ -1837,6 +1887,7 @@ async def websocket_audio_translation(
             partial_tts_active = True
             audio_bytes = Path(live_tts_path).read_bytes()
             if len(audio_bytes) < 100:
+                await emit_live_text_final_turn(translated_text=refined)
                 return
             await websocket.send_json({
                 "type": "tts_start",
@@ -1874,12 +1925,13 @@ async def websocket_audio_translation(
                 "type": "tts_end",
                 "speaker": live_speaker,
                 "speaker_label": live_speaker_label,
-                "partial": True,
+                "partial": not bool(payload.get("final")),
                 "source_language": live_source_language,
                 "target_language": live_target_language,
                 "barrier_mode": live_barrier_mode,
                 "source": "browser_live_text",
             })
+            await emit_live_text_final_turn(translated_text=refined, skip_tts_end=True)
             await websocket.send_json({
                 "type": "latency",
                 "metric": "live_text_voice",

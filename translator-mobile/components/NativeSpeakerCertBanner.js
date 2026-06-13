@@ -54,6 +54,7 @@ export default function NativeSpeakerCertBanner({
       if (finished) setMounted(false);
     });
     return undefined;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mountedRef tracks mount without re-running the effect
   }, [message, step, show, opacity, translateY, setMounted]);
 
   if (!mounted || !message || step === "none") return null;

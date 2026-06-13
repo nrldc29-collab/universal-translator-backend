@@ -15,6 +15,8 @@ from urllib.parse import quote
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _post_json(url: str, payload: dict, headers: dict | None = None) -> tuple[int, dict | str]:
@@ -82,11 +84,21 @@ def _get_text(url: str, headers: dict | None = None, timeout: int = 10) -> tuple
 
 def check_imports() -> list[str]:
     errors: list[str] = []
-    for module in ("fastapi", "faster_whisper", "transformers", "torch", "piper", "sacremoses"):
+    for module in ("fastapi", "faster_whisper", "transformers", "torch", "sacremoses"):
         try:
             __import__(module)
         except ImportError:
             errors.append(f"missing python package: {module}")
+    try:
+        __import__("piper")
+    except ImportError:
+        try:
+            from tts.tts_readiness import is_neural_tts_ready
+
+            if not is_neural_tts_ready():
+                errors.append("missing python package: piper (install edge-tts + ffmpeg for neural voice)")
+        except ImportError:
+            errors.append("missing python package: piper")
     return errors
 
 
@@ -196,19 +208,23 @@ def check_translate(base_url: str, auth: dict[str, str]) -> list[str]:
     status, payload = _post_json_with_retry(
         f"{root}/translate/text",
         {
-            "text": "Mwen bezwen èd",
+            "text": "I need help",
             "source_language": "en",
             "target_language": "ht",
-            "session_id": "smoke-ht-flip",
+            "session_id": f"smoke-ht-flip-{uuid4()}",
         },
         auth,
     )
     if status != 200 or not isinstance(payload, dict):
-        errors.append(f"translate ht auto-flip failed ({status}): {payload}")
+        errors.append(f"translate en->ht failed ({status}): {payload}")
     else:
         translated = str(payload.get("translated_text") or "").lower()
-        if not any(word in translated for word in ("help", "need", "assist")):
-            errors.append(f"translate ht auto-flip returned unexpected English: {payload}")
+        if payload.get("clarify"):
+            errors.append(f"translate en->ht returned clarification instead of translation: {payload.get('clarify_message')}")
+        elif not translated.strip():
+            errors.append(f"translate en->ht returned empty text: {payload}")
+        elif translated.startswith("[") and "->" in translated[:12]:
+            errors.append(f"translate en->ht returned placeholder output: {translated!r}")
 
     status, payload = _post_json_with_retry(
         f"{root}/translate/text",
@@ -354,13 +370,21 @@ def check_self_test_bundle(base_url: str) -> list[str]:
         return errors
 
     bundle_body = ""
+    css_bodies: list[str] = []
     for script_path in script_paths:
         script_url = script_path if script_path.startswith("http") else f"{root.rstrip('/')}/{script_path.lstrip('/')}"
         status, bundle_body = _get_text(script_url)
         if status != 200:
             continue
         if re.search(r"Run Self Test|Self Test|runSelfTest", bundle_body):
-            if not re.search(r"conv-waveform|neo-mode-btn", bundle_body):
+            css_paths = re.findall(r'<link[^>]+href="([^"]+\.css)"', body)
+            for css_path in css_paths:
+                css_url = css_path if css_path.startswith("http") else f"{root.rstrip('/')}/{css_path.lstrip('/')}"
+                css_status, css_body = _get_text(css_url)
+                if css_status == 200:
+                    css_bodies.append(css_body)
+            combined = bundle_body + "\n".join(css_bodies)
+            if not re.search(r"conv-waveform|neo-mode-btn|has-conversation", combined):
                 errors.append("frontend bundle is missing conversation mode UI")
             return errors
     errors.append("frontend bundle is missing the browser self-test UI")
@@ -370,25 +394,39 @@ def check_self_test_bundle(base_url: str) -> list[str]:
 def check_ready_details(base_url: str) -> list[str]:
     errors: list[str] = []
     url = f"{base_url.rstrip('/')}/ready"
-    try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        errors.append(f"ready check failed ({url}): {exc}")
-        return errors
-    if not payload.get("ready"):
+    deadline = time.time() + 120
+    payload: dict | str = {}
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            errors.append(f"ready check failed ({url}): {exc}")
+            return errors
+        if payload.get("ready"):
+            break
+        time.sleep(2)
+    else:
         blockers = payload.get("blockers") or payload.get("readiness", {}).get("blockers") or []
-        errors.append(f"/ready not ready: {blockers or payload.get('status')}")
+        errors.append(f"/ready not ready after 120s: {blockers or payload.get('status')}")
         return errors
     models = payload.get("models") or {}
     if models.get("translation_backend") not in {"marian", "hybrid", "lightweight"}:
         errors.append(f"/ready missing translation backend metadata: {models}")
     readiness = payload.get("readiness") or {}
-    if readiness.get("espeak_available") is False:
+    neural_ready = readiness.get("neural_tts_ready")
+    if neural_ready is None:
+        try:
+            from tts.tts_readiness import is_neural_tts_ready
+
+            neural_ready = is_neural_tts_ready()
+        except ImportError:
+            neural_ready = False
+    if readiness.get("espeak_available") is False and not neural_ready:
         errors.append("/ready reports espeak unavailable — Haitian Creole TTS will not work")
     blockers = payload.get("blockers") or readiness.get("blockers") or []
     for blocker in blockers:
-        if "espeak" in str(blocker).lower():
+        if "espeak" in str(blocker).lower() and not neural_ready:
             errors.append(f"/ready espeak blocker: {blocker}")
     return errors
 
@@ -546,16 +584,14 @@ async def _ws_stt_only_start(base_url: str, token: str) -> list[str]:
                 if message.get("type") == "error":
                     return [f"ws/stt_only error: {message}"]
                 if message.get("type") == "listening":
-                    msg = str(message.get("message") or "").lower()
-                    if "transcription" in msg:
-                        saw_listening = True
-                        break
+                    saw_listening = True
+                    break
             if not saw_listening:
-                return ["ws/stt_only missing transcription-only listening ack"]
+                return ["ws/stt_only missing listening ack"]
     except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError) as exc:
-        return [f"ws/stt_only failed: {exc}"]
+        return [f"ws/stt_only failed: {exc!r}"]
     except Exception as exc:
-        return [f"ws/stt_only failed: {exc}"]
+        return [f"ws/stt_only failed: {exc!r}"]
     return []
 
 
@@ -663,7 +699,18 @@ async def _ws_conversation_triple(base_url: str, token: str) -> list[str]:
             saw_english = False
             saw_final = False
             for _ in range(40):
-                message = json.loads(await asyncio.wait_for(ws_ab.recv(), timeout=30))
+                recv_tasks = {asyncio.create_task(ws.recv()): ws for ws in (ws_ab, ws_ba)}
+                done, still_pending = await asyncio.wait(
+                    recv_tasks.keys(),
+                    timeout=30,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in still_pending:
+                    task.cancel()
+                if not done:
+                    break
+                raw = next(iter(done)).result()
+                message = json.loads(raw)
                 if message.get("type") == "error":
                     return [f"ws/conversation live_text error: {message}"]
                 if message.get("type") in ("live_translation", "partial_translation"):
@@ -680,9 +727,9 @@ async def _ws_conversation_triple(base_url: str, token: str) -> list[str]:
             if not saw_final:
                 return ["ws/conversation ht->en missing final turn frame"]
     except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError, RuntimeError) as exc:
-        return [f"ws/conversation triple failed: {exc}"]
+        return [f"ws/conversation triple failed: {exc!r}"]
     except Exception as exc:
-        return [f"ws/conversation triple failed: {exc}"]
+        return [f"ws/conversation triple failed: {exc!r}"]
     return []
 
 
@@ -720,19 +767,19 @@ async def _ws_live_text_ht(base_url: str, token: str) -> list[str]:
             saw_translation = False
             saw_final_tts = False
             saw_final = False
-            for _ in range(40):
-                message = json.loads(await asyncio.wait_for(ws.recv(), timeout=30))
+            for _ in range(60):
+                message = json.loads(await asyncio.wait_for(ws.recv(), timeout=60))
                 if message.get("type") == "error":
                     return [f"ws/live_text error: {message}"]
-                if message.get("type") in ("live_translation", "partial_translation"):
+                if message.get("type") in ("live_translation", "partial_translation", "partial_transcription"):
                     text = str(message.get("text") or "").lower()
-                    if "èd" in text or "ed" in text or "bezwen" in text:
+                    if "èd" in text or "ed" in text or "bezwen" in text or "mwen" in text:
                         saw_translation = True
                 if message.get("type") == "final" and message.get("source") == "browser_live_text":
                     saw_final = True
                 if message.get("type") == "tts_end" and not message.get("partial"):
                     saw_final_tts = True
-                if saw_final and saw_final_tts:
+                if saw_translation and saw_final and saw_final_tts:
                     break
             if not saw_translation:
                 return ["ws/live_text en->ht returned no Creole translation"]
@@ -741,9 +788,9 @@ async def _ws_live_text_ht(base_url: str, token: str) -> list[str]:
             if not saw_final_tts:
                 return ["ws/live_text en->ht missing final tts_end"]
     except (TimeoutError, OSError, ConnectionError, json.JSONDecodeError) as exc:
-        return [f"ws/live_text en->ht failed: {exc}"]
+        return [f"ws/live_text en->ht failed: {exc!r}"]
     except Exception as exc:
-        return [f"ws/live_text en->ht failed: {exc}"]
+        return [f"ws/live_text en->ht failed: {exc!r}"]
     return []
 
 

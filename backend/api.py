@@ -281,10 +281,17 @@ async def lifespan(app_instance: FastAPI):
         "vad": "silero",
     }
     runtime_state["warming"] = get_preload_models()
+    preload_data = None
     if get_preload_models():
-        runtime_state["models"]["preloaded"] = await run_in_threadpool(pipeline.preload)
+        preload_data = await run_in_threadpool(pipeline.preload)
+        runtime_state["models"]["preloaded"] = preload_data
+    from backend.model_readiness import evaluate_preload_result
+
+    runtime_state["readiness"] = evaluate_preload_result(
+        preload_data if isinstance(preload_data, dict) else None
+    )
     runtime_state["warming"] = False
-    runtime_state["ready"] = True
+    runtime_state["ready"] = bool(runtime_state["readiness"].get("ready", True))
 
     async def _run_ollama_warmup() -> None:
         runtime_state["ollama_warmup"] = await _warm_ollama()

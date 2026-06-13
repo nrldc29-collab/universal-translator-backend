@@ -33,6 +33,7 @@ export default function ClarifyPill({
       if (finished) setMounted(false);
     });
     return undefined;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mountedRef tracks mount without re-running the effect
   }, [show, opacity, translateY, setMounted]);
 
   if (!mounted || !message) return null;

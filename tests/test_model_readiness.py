@@ -55,7 +55,7 @@ def test_espeak_available_is_bool():
     assert isinstance(espeak_available(), bool)
 
 
-def test_evaluate_preload_blocks_when_espeak_missing_but_piper_present(monkeypatch):
+def test_evaluate_preload_warns_when_espeak_missing_but_neural_ready(monkeypatch):
     monkeypatch.setenv("STT_PROVIDER", "local")
     monkeypatch.setenv("TRANSLATION_BACKEND", "marian")
     monkeypatch.setattr(
@@ -63,6 +63,43 @@ def test_evaluate_preload_blocks_when_espeak_missing_but_piper_present(monkeypat
         lambda: {"present": [{"lang": "en", "path": "models/tts/en_US-lessac-medium.onnx"}], "missing": []},
     )
     monkeypatch.setattr("backend.model_readiness.espeak_available", lambda: False)
+    monkeypatch.setattr("backend.model_readiness.is_neural_tts_ready", lambda: True)
+    result = evaluate_preload_result({"stt": {"ok": True}, "tts": {"ok": True}, "translation": {"ok": True}})
+    assert result["ready"] is True
+    assert "espeak_missing_ht_tts_unavailable" not in result["blockers"]
+    assert "espeak_missing_using_neural_ht_tts" in result["warnings"]
+
+
+def test_evaluate_preload_blocks_when_espeak_and_neural_missing(monkeypatch):
+    monkeypatch.setenv("STT_PROVIDER", "local")
+    monkeypatch.setenv("TRANSLATION_BACKEND", "marian")
+    monkeypatch.setattr(
+        "backend.model_readiness.check_piper_voices",
+        lambda: {"present": [{"lang": "en", "path": "models/tts/en_US-lessac-medium.onnx"}], "missing": []},
+    )
+    monkeypatch.setattr("backend.model_readiness.espeak_available", lambda: False)
+    monkeypatch.setattr("backend.model_readiness.is_neural_tts_ready", lambda: False)
     result = evaluate_preload_result({"stt": {"ok": True}, "tts": {"ok": True}, "translation": {"ok": True}})
     assert result["ready"] is False
     assert "espeak_missing_ht_tts_unavailable" in result["blockers"]
+
+
+def test_evaluate_preload_ready_with_lazy_startup(monkeypatch):
+    monkeypatch.setenv("STT_PROVIDER", "local")
+    monkeypatch.setenv("TRANSLATION_BACKEND", "hybrid")
+    monkeypatch.setenv("PRELOAD_MODELS", "0")
+    monkeypatch.setattr("backend.model_readiness.espeak_available", lambda: False)
+    monkeypatch.setattr("backend.model_readiness.is_neural_tts_ready", lambda: True)
+    result = evaluate_preload_result(None)
+    assert result["ready"] is True
+    assert "stt_preload_failed" not in result["blockers"]
+    assert "stt_lazy_load_deferred" in result["warnings"]
+
+
+def test_evaluate_preload_blocks_streaming_stt_when_unreachable(monkeypatch):
+    monkeypatch.setenv("STT_PROVIDER", "streaming")
+    monkeypatch.setenv("TRANSLATION_BACKEND", "lightweight")
+    monkeypatch.setenv("PRELOAD_MODELS", "1")
+    result = evaluate_preload_result({"stt": {"ok": False}, "tts": {"ok": True}, "translation": {"ok": True}})
+    assert result["ready"] is False
+    assert "stt_streaming_provider_unreachable" in result["blockers"]

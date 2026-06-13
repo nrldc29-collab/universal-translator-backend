@@ -46,7 +46,6 @@ _HAITIAN_PHONETIC_REPLACEMENTS = (
     (r"\bkijan\s+ou\s+ye\b", "kijan ou ye"),
     (r"\bmesi\s+anpil\b", "mèsi anpil"),
     (r"\bmesianpil\b", "mèsi anpil"),
-    (r"\bbezwen\s+ede\b", "bezwen èd"),
     (r"\bbezwen\s+ed\b", "bezwen èd"),
     (r"\bgen\s+doulè\b", "gen doulè"),
     (r"\bgendoule\b", "gen doulè"),
@@ -257,7 +256,12 @@ def normalize_transcript(text: str, source_language=None) -> str:
     elif language == "ko":
         for pattern, replacement in _KOREAN_PHONETIC_REPLACEMENTS:
             result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-    return " ".join(result.split())
+    result = " ".join(result.split())
+    if language == "ht" and text:
+        original = text.strip()
+        if original and original[0].isupper() and result and result[0].islower():
+            result = result[0].upper() + result[1:]
+    return result
 
 
 class WhisperSpeechToText:

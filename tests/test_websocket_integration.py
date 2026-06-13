@@ -14,6 +14,7 @@ cleanly.
 from __future__ import annotations
 
 import importlib
+from contextlib import ExitStack
 
 import pytest
 from fastapi.testclient import TestClient
@@ -155,32 +156,30 @@ class TestWsAudio:
         monkeypatch.setitem(app_module.runtime_state, "ready", True)
         monkeypatch.setattr("backend.streaming.get_max_active_streams_per_user", lambda: 2)
         app_module.session_registry.cleanup()
-        open_sockets = []
 
-        def start_device(device_id: str):
-            ws = client.websocket_connect("/ws/audio").__enter__()
-            open_sockets.append(ws)
-            ws.receive_json()
-            ws.send_json(
-                {
-                    "type": "start",
-                    "session_id": "limit-test",
-                    "device_id": device_id,
-                    "speaker_mode": "auto",
-                    "source_language": "en",
-                    "target_language": "es",
-                    "mime_type": "audio/webm;codecs=opus",
-                }
-            )
-            for _ in range(15):
-                payload = ws.receive_json()
-                if payload.get("type") == "error":
-                    return payload
-                if payload.get("type") == "listening":
-                    return payload
-            raise AssertionError(f"timed out waiting for listening/error for {device_id}")
+        with ExitStack() as stack:
+            def start_device(device_id: str):
+                ws = stack.enter_context(client.websocket_connect("/ws/audio"))
+                ws.receive_json()
+                ws.send_json(
+                    {
+                        "type": "start",
+                        "session_id": "limit-test",
+                        "device_id": device_id,
+                        "speaker_mode": "auto",
+                        "source_language": "en",
+                        "target_language": "es",
+                        "mime_type": "audio/webm;codecs=opus",
+                    }
+                )
+                for _ in range(15):
+                    payload = ws.receive_json()
+                    if payload.get("type") == "error":
+                        return payload
+                    if payload.get("type") == "listening":
+                        return payload
+                raise AssertionError(f"timed out waiting for listening/error for {device_id}")
 
-        try:
             first = start_device("device-1")
             assert first["type"] == "listening"
             second = start_device("device-2")
@@ -188,10 +187,7 @@ class TestWsAudio:
             third = start_device("device-3")
             assert third["type"] == "error"
             assert "Too many active streams" in third["message"]
-        finally:
-            for ws in open_sockets:
-                ws.close()
-            app_module.session_registry.cleanup()
+        app_module.session_registry.cleanup()
 
 
 # ---------------------------------------------------------------------------

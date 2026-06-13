@@ -6,8 +6,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from backend.config import get_stt_provider, get_translation_backend
+from backend.config import get_preload_models, get_stt_provider, get_translation_backend
 from tts.piper_tts import DEFAULT_VOICES
+from tts.tts_readiness import is_neural_tts_ready
 
 
 def espeak_available() -> bool:
@@ -39,19 +40,22 @@ def _component_ok(value: Any) -> bool:
 def evaluate_preload_result(preload: dict[str, Any] | None) -> dict[str, Any]:
     """Return readiness summary from pipeline.preload() output."""
     preload = preload or {}
+    lazy_startup = not preload and not get_preload_models()
     blockers: list[str] = []
     warnings: list[str] = []
 
     stt_mode = get_stt_provider()
     if stt_mode == "streaming":
-        if not _component_ok(preload.get("stt")):
+        if not lazy_startup and not _component_ok(preload.get("stt")):
             blockers.append("stt_streaming_provider_unreachable")
-    elif not _component_ok(preload.get("stt")):
+    elif not lazy_startup and not _component_ok(preload.get("stt")):
         blockers.append("stt_preload_failed")
+    elif lazy_startup:
+        warnings.append("stt_lazy_load_deferred")
 
     translation = preload.get("translation")
     backend = get_translation_backend()
-    if backend in {"marian", "hybrid"}:
+    if not lazy_startup and backend in {"marian", "hybrid"}:
         if isinstance(translation, str) and translation.startswith("warmup_failed"):
             blockers.append("translation_preload_failed")
         elif isinstance(translation, dict) and not translation.get("ok", False):
@@ -60,14 +64,19 @@ def evaluate_preload_result(preload: dict[str, Any] | None) -> dict[str, Any]:
     voices = check_piper_voices()
     has_piper = bool(voices["present"])
     has_espeak = espeak_available()
-    if not _component_ok(preload.get("tts")):
+    neural_ready = is_neural_tts_ready()
+    if not lazy_startup and not _component_ok(preload.get("tts")):
         warnings.append("tts_piper_preload_failed")
-    if voices["missing"] and not has_espeak:
+    if voices["missing"] and not has_espeak and not neural_ready:
         blockers.append("tts_no_piper_voices_or_espeak")
     elif voices["missing"] and has_espeak:
         warnings.append("tts_using_espeak_fallback_for_missing_piper_voices")
-    if not has_espeak:
+    elif voices["missing"] and neural_ready:
+        warnings.append("tts_using_neural_fallback_for_missing_piper_voices")
+    if not has_espeak and not neural_ready:
         blockers.append("espeak_missing_ht_tts_unavailable")
+    elif not has_espeak and neural_ready:
+        warnings.append("espeak_missing_using_neural_ht_tts")
 
     return {
         "ready": len(blockers) == 0,
@@ -78,4 +87,5 @@ def evaluate_preload_result(preload: dict[str, Any] | None) -> dict[str, Any]:
         "piper_voices": voices,
         "espeak_available": has_espeak,
         "has_piper_voice": has_piper,
+        "neural_tts_ready": neural_ready,
     }

@@ -29,7 +29,7 @@ def test_haitian_transcription_uses_language_hints_and_normalizes_phonetics():
 
     result = stt._run_transcribe(model, "sample.wav", "ht")
 
-    assert result.text == "mwen bezwen yon dokte."
+    assert result.text == "Mwen bezwen yon dokte."
     assert model.options["language"] == "ht"
     assert model.options["beam_size"] >= 2
     assert model.options["vad_filter"] is True
@@ -39,13 +39,13 @@ def test_haitian_transcription_uses_language_hints_and_normalizes_phonetics():
 
 
 def test_haitian_phonetic_cleanup_covers_observed_field_failures():
-    assert normalize_transcript("Mesi empil pwedu.", "ht") == "Mesi anpil pou ed ou."
-    assert normalize_transcript("Mesi anpil poedu.", "ht") == "Mesi anpil pou ed ou."
-    assert normalize_transcript("Mesi anpil pu\u00e9du.", "ht") == "Mesi anpil pou ed ou."
+    assert normalize_transcript("Mesi empil pwedu.", "ht") == "Mèsi anpil pou ed ou."
+    assert normalize_transcript("Mesi anpil poedu.", "ht") == "Mèsi anpil pou ed ou."
+    assert normalize_transcript("Mesi anpil pu\u00e9du.", "ht") == "Mèsi anpil pou ed ou."
     assert normalize_transcript("mwen bezwen yandokte", "ht") == "mwen bezwen yon dokte"
-    assert normalize_transcript("Moin besoin yon dokte.", "ht") == "mwen bezwen yon dokte."
-    assert normalize_transcript("Mouin pa konprann", "ht") == "mwen pa konprann"
-    assert normalize_transcript("Mu en pa kontran.", "ht") == "mwen pa konprann."
+    assert normalize_transcript("Moin besoin yon dokte.", "ht") == "Mwen bezwen yon dokte."
+    assert normalize_transcript("Mouin pa konprann", "ht") == "Mwen pa konprann"
+    assert normalize_transcript("Mu en pa kontran.", "ht") == "Mwen pa konprann."
 
 
 def test_transcript_cleanup_does_not_rewrite_other_languages():

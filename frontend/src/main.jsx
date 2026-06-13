@@ -4456,6 +4456,8 @@ function App() {
           }}
           diagnostics={diagnostics}
           apiUrl={liveApiUrl}
+          selfTest={selfTest}
+          runSelfTest={runSelfTest}
         />
         {settings.debugMode && showDebugPanel && (
           <DebugPanel

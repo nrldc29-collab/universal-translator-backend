@@ -107,7 +107,14 @@ def runtime_payload(include_details: bool = False) -> dict:
         "consumer_open_and_go": bool(consumer_url),
         "consumer_cloud_url": consumer_url or None,
     }
-    readiness = runtime_state.get("readiness")
+    cached_readiness = runtime_state.get("readiness")
+    if cached_readiness and cached_readiness.get("blockers"):
+        payload["blockers"] = cached_readiness.get("blockers") or []
+        payload["warnings"] = cached_readiness.get("warnings") or []
+        if payload["blockers"]:
+            payload["ready"] = False
+            payload["status"] = "degraded" if runtime_state.get("ready") else "warming"
+    readiness = cached_readiness
     if readiness and not ready:
         payload["blockers"] = readiness.get("blockers") or []
         payload["warnings"] = readiness.get("warnings") or []

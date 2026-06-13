@@ -4188,7 +4188,6 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
     }
     const demo = getConsumerDemoCredentials();
     pinActiveWsUrl(cloud);
-    setWsUrl(cloud);
     await persistWsUrl(cloud);
     if (demo.username) setUsername(demo.username);
     if (demo.password) setPassword(demo.password);
