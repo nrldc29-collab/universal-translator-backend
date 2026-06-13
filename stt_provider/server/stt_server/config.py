@@ -15,8 +15,8 @@ Environment Variables:
     SPEAKER_EMBEDDING_ENCRYPTION_KEY: Encryption key for speaker embeddings (min 32 bytes)
 
 Example .env file:
-    STT_API_KEY=sk-1234567890abcdef
-    ADMIN_API_KEY=sk-admin-1234567890abcdef
+    STT_API_KEY=change-me-stt-key
+    ADMIN_API_KEY=change-me-admin-key
     DATABASE_URL=postgresql://user:pass@localhost:5432/stt
     REDIS_URL=redis://localhost:6379
 """

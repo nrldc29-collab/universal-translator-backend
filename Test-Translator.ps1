@@ -9,9 +9,19 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BaseUrl = $BaseUrl.TrimEnd("/")
 
-$Python = Join-Path $Root "venv\Scripts\python.exe"
-if (-not (Test-Path $Python)) {
-    $Python = "python"
+$Python = "python"
+$venvPython = Join-Path $Root "venv\Scripts\python.exe"
+if (Test-Path $venvPython) {
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    $null = & $venvPython -c "import sacremoses" 2>&1
+    $venvOk = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prevEap
+    if ($venvOk) {
+        $Python = $venvPython
+    } else {
+        Write-Output "Note: venv is missing smoke dependencies; using system python."
+    }
 }
 
 $SmokeScript = Join-Path $Root "scripts\smoke_local.py"

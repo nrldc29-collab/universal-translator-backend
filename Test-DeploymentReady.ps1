@@ -119,7 +119,9 @@ Test-WarningCheck "Working tree" {
 }
 
 Test-Check "Secret ignore rules" {
-    $trackedEnv = @(& $Git ls-files ".env" ".env.*")
+    $trackedEnv = @(& $Git ls-files ".env" ".env.*") | Where-Object {
+        $_ -notmatch '^\.env\.example$'
+    }
     if ($trackedEnv.Count) {
         throw "Tracked env files: $($trackedEnv -join ', ')"
     }
