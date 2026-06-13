@@ -199,6 +199,7 @@ jobs:
           docker run -d --name anai-smoke -p 18080:8080 \
             -e ENVIRONMENT=production \
             -e PORT=8080 \
+            -e PRELOAD_MODELS=0 \
             -e JWT_SECRET="$JWT" \
             -e USERS=smoke:smokepass \
             -e ALLOWED_ORIGINS=http://127.0.0.1:18080 \
