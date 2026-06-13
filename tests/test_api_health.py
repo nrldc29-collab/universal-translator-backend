@@ -243,6 +243,36 @@ def test_runtime_payload_not_ready_during_voice_warmup():
             runtime_state.pop("voice_warmup", None)
 
 
+def test_runtime_payload_health_and_ready_agree_on_ready_flag():
+    original_ready = runtime_state.get("ready")
+    original_readiness = runtime_state.get("readiness")
+    original_voice_warmup = runtime_state.get("voice_warmup")
+    try:
+        runtime_state["ready"] = True
+        runtime_state["readiness"] = {
+            "ready": False,
+            "blockers": ["stt_preload_failed"],
+            "warnings": [],
+        }
+        runtime_state["voice_warmup"] = {"status": "complete"}
+        basic = runtime_payload(include_details=False)
+        detailed = runtime_payload(include_details=True)
+        assert basic.get("ready") is False
+        assert detailed.get("ready") is False
+        assert basic.get("blockers") == ["stt_preload_failed"]
+    finally:
+        if original_ready is not None:
+            runtime_state["ready"] = original_ready
+        if original_readiness is not None:
+            runtime_state["readiness"] = original_readiness
+        else:
+            runtime_state.pop("readiness", None)
+        if original_voice_warmup is not None:
+            runtime_state["voice_warmup"] = original_voice_warmup
+        else:
+            runtime_state.pop("voice_warmup", None)
+
+
 def test_runtime_payload_basic_health_surfaces_readiness_blockers():
     original_ready = runtime_state.get("ready")
     original_readiness = runtime_state.get("readiness")

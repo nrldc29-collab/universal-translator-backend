@@ -132,6 +132,7 @@ def _smoke_login_credentials(base_url: str) -> tuple[str, str]:
 
 
 def check_health(base_url: str) -> list[str]:
+    """Wait up to 120s for `/health` to report ready."""
     errors: list[str] = []
     url = f"{base_url.rstrip('/')}/health"
     deadline = time.time() + 120
@@ -398,23 +399,18 @@ def check_self_test_bundle(base_url: str) -> list[str]:
 
 
 def check_ready_details(base_url: str) -> list[str]:
+    """Validate `/ready` metadata after `/health` already reports ready."""
     errors: list[str] = []
     url = f"{base_url.rstrip('/')}/ready"
-    deadline = time.time() + 120
-    payload: dict | str = {}
-    while time.time() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=10) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-            errors.append(f"ready check failed ({url}): {exc}")
-            return errors
-        if payload.get("ready"):
-            break
-        time.sleep(2)
-    else:
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        errors.append(f"ready check failed ({url}): {exc}")
+        return errors
+    if not payload.get("ready"):
         blockers = payload.get("blockers") or payload.get("readiness", {}).get("blockers") or []
-        errors.append(f"/ready not ready after 120s: {blockers or payload.get('status')}")
+        errors.append(f"/ready not ready: {blockers or payload.get('status')}")
         return errors
     models = payload.get("models") or {}
     if models.get("translation_backend") not in {"marian", "hybrid", "lightweight"}:
@@ -858,31 +854,37 @@ def main() -> int:
         errors.extend(check_remote_runtime())
 
     if base_url:
-        errors.extend(check_health(base_url))
-        errors.extend(check_ready_details(base_url))
+        readiness_errors: list[str] = []
+        readiness_errors.extend(check_health(base_url))
+        if not readiness_errors:
+            readiness_errors.extend(check_ready_details(base_url))
+        errors.extend(readiness_errors)
+
         errors.extend(check_languages(base_url))
         errors.extend(check_app_shell(base_url))
         errors.extend(check_self_test_bundle(base_url))
         errors.extend(check_diagnostics(base_url))
         errors.extend(check_pwa_assets(base_url))
-        username, password = _smoke_login_credentials(base_url)
-        login_status, login_payload = _post_json_with_retry(
-            f"{base_url.rstrip('/')}/auth/login",
-            {"username": username, "password": password},
-        )
-        if login_status != 200 or not isinstance(login_payload, dict) or not login_payload.get("access_token"):
-            errors.append(f"auth login failed ({login_status}): {login_payload}")
-        else:
-            token = login_payload["access_token"]
-            auth = {"Authorization": f"Bearer {token}"}
-            errors.extend(check_translate(base_url, auth))
-            errors.extend(check_tts(base_url, auth))
-            errors.extend(check_websocket_translate(base_url, token))
-            errors.extend(check_websocket_audio(base_url, token))
-            errors.extend(check_websocket_live_text_ht(base_url, token))
-            errors.extend(check_websocket_stt_only(base_url, token))
-            errors.extend(check_websocket_conversation_triple(base_url, token))
-            errors.extend(check_websocket_speaker_session(base_url, token))
+
+        if not readiness_errors:
+            username, password = _smoke_login_credentials(base_url)
+            login_status, login_payload = _post_json_with_retry(
+                f"{base_url.rstrip('/')}/auth/login",
+                {"username": username, "password": password},
+            )
+            if login_status != 200 or not isinstance(login_payload, dict) or not login_payload.get("access_token"):
+                errors.append(f"auth login failed ({login_status}): {login_payload}")
+            else:
+                token = login_payload["access_token"]
+                auth = {"Authorization": f"Bearer {token}"}
+                errors.extend(check_translate(base_url, auth))
+                errors.extend(check_tts(base_url, auth))
+                errors.extend(check_websocket_translate(base_url, token))
+                errors.extend(check_websocket_audio(base_url, token))
+                errors.extend(check_websocket_live_text_ht(base_url, token))
+                errors.extend(check_websocket_stt_only(base_url, token))
+                errors.extend(check_websocket_conversation_triple(base_url, token))
+                errors.extend(check_websocket_speaker_session(base_url, token))
 
     if errors:
         label = "Smoke check" if base_url and not _is_local_smoke_url(base_url) else "Local smoke check"

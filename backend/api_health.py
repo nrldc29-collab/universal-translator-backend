@@ -107,24 +107,32 @@ def runtime_payload(include_details: bool = False) -> dict:
         "consumer_open_and_go": bool(consumer_url),
         "consumer_cloud_url": consumer_url or None,
     }
-    cached_readiness = runtime_state.get("readiness")
-    if cached_readiness and cached_readiness.get("blockers"):
-        payload["blockers"] = cached_readiness.get("blockers") or []
-        payload["warnings"] = cached_readiness.get("warnings") or []
-        if payload["blockers"]:
-            payload["ready"] = False
-            payload["status"] = "degraded" if runtime_state.get("ready") else "warming"
-    readiness = cached_readiness
-    if readiness and not ready:
-        payload["blockers"] = readiness.get("blockers") or []
-        payload["warnings"] = readiness.get("warnings") or []
-        if payload["blockers"]:
-            payload["status"] = "degraded"
+
+    preload = runtime_state.get("models", {}).get("preloaded")
+    readiness = runtime_state.get("readiness") or evaluate_preload_result(
+        preload if isinstance(preload, dict) else None
+    )
+    blockers = readiness.get("blockers") or []
+    warnings = readiness.get("warnings") or []
+    if blockers:
+        payload["blockers"] = blockers
+    if warnings:
+        payload["warnings"] = warnings
+    ready = ready and bool(readiness.get("ready", True))
+    payload["ready"] = ready
+    if blockers:
+        payload["status"] = "degraded"
+    elif not ready:
+        payload["status"] = "warming"
+    else:
+        payload["status"] = "ok"
+
     if include_details:
         stt_provider = stt_provider_health_snapshot()
-        preload = runtime_state.get("models", {}).get("preloaded")
-        readiness = runtime_state.get("readiness") or evaluate_preload_result(preload if isinstance(preload, dict) else None)
-        ready = ready and bool(readiness.get("ready", True))
+        if stt_provider["mode"] == "streaming" and not stt_provider.get("reachable"):
+            ready = False
+            payload["ready"] = False
+            payload["status"] = "degraded"
         payload.update(
             {
                 "models": runtime_state["models"],
@@ -134,11 +142,8 @@ def runtime_payload(include_details: bool = False) -> dict:
                 "stt_provider": stt_provider,
             }
         )
-        if stt_provider["mode"] == "streaming" and not stt_provider.get("reachable"):
-            ready = False
-        payload["ready"] = ready
-        if not ready:
-            payload["status"] = "degraded" if runtime_state.get("ready") else "warming"
+        if not payload["ready"] and payload.get("status") == "ok":
+            payload["status"] = "warming"
     return payload
 
 
