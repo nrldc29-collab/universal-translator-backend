@@ -62,6 +62,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
     curl \
     ffmpeg \
     git \
@@ -79,11 +80,11 @@ COPY translation translation/
 COPY tts tts/
 COPY ailang ailang/
 COPY ailang_integration ailang_integration/
-RUN mkdir -p models/tts && \
-    curl -L --fail -o models/tts/en_US-lessac-medium.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx && \
-    curl -L --fail -o models/tts/en_US-lessac-medium.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json && \
-    curl -L --fail -o models/tts/es_MX-claude-high.onnx https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx && \
-    curl -L --fail -o models/tts/es_MX-claude-high.onnx.json https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx.json
+COPY scripts/docker_fetch_piper.sh scripts/docker_fetch_piper.sh
+COPY models/tts models/tts
+ARG HF_TOKEN=""
+ENV HF_TOKEN=${HF_TOKEN}
+RUN bash scripts/docker_fetch_piper.sh models/tts
 COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000
