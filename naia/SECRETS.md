@@ -108,7 +108,6 @@ For enhanced security, integrate with external secret managers:
 
 - **AWS Secrets Manager**: Use AWS EKS integration
 - **HashiCorp Vault**: Use Vault Agent Sidecar
-- **Azure Key Vault**: Use Azure Key Vault provider
 
 ## Cloud-Native Secret Managers
 

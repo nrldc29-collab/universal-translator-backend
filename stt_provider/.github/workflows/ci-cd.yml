@@ -103,9 +103,12 @@ jobs:
         uses: actions/checkout@v4
       
       - name: Configure kubectl
-        uses: azure/k8s-set-context@v4
-        with:
-          kubeconfig: ${{ secrets.STAGING_KUBECONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBECONFIG_CONTENT" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.STAGING_KUBECONFIG }}
       
       - name: Update deployment image
         run: |
@@ -140,9 +143,12 @@ jobs:
         uses: actions/checkout@v4
       
       - name: Configure kubectl
-        uses: azure/k8s-set-context@v4
-        with:
-          kubeconfig: ${{ secrets.PRODUCTION_KUBECONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBECONFIG_CONTENT" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.PRODUCTION_KUBECONFIG }}
       
       - name: Create backup before deployment
         run: |
@@ -212,9 +218,12 @@ jobs:
         uses: actions/checkout@v4
       
       - name: Configure kubectl
-        uses: azure/k8s-set-context@v4
-        with:
-          kubeconfig: ${{ secrets.STAGING_KUBECONFIG }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          printf '%s' "$KUBECONFIG_CONTENT" > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+        env:
+          KUBECONFIG_CONTENT: ${{ secrets.STAGING_KUBECONFIG }}
       
       - name: Run load test
         run: |
