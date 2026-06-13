@@ -8,6 +8,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def _repo_path(relative: str) -> Path:
+    return ROOT / relative.replace("\\", "/")
+
+
 # Patterns that MUST NOT appear (block continuous speech incorrectly)
 FORBIDDEN = [
     (r'clarify:\s*cip_clarify\s+or\s+low_confidence_warn', "backend/streaming.py", "clarify must not include low_confidence_warn"),
@@ -53,7 +58,7 @@ def main() -> int:
 
     for pattern, file_hint, msg in FORBIDDEN:
         if file_hint:
-            paths = [ROOT / file_hint.replace("/", "\\")]
+            paths = [_repo_path(file_hint)]
         else:
             paths = [
                 ROOT / "frontend" / "src",
@@ -78,12 +83,12 @@ def main() -> int:
                     failures.append(f"FORBIDDEN [{msg}]: {candidate.relative_to(ROOT)}")
 
     for pattern, file_hint, msg in REQUIRED:
-        path = ROOT / file_hint.replace("/", "\\")
+        path = _repo_path(file_hint)
         if not re.search(pattern, read(path), re.MULTILINE):
             failures.append(f"MISSING [{msg}] in {file_hint}")
 
     resume_pat = re.compile(r"resumeMicAfterVoicePlayback|resumeMicAfterPlayback|resumeAudioUpload")
-    if not any(resume_pat.search(read(ROOT / p.replace("/", "\\"))) for p in RESUME_HINTS):
+    if not any(resume_pat.search(read(_repo_path(p))) for p in RESUME_HINTS):
         failures.append("MISSING [mic resume after TTS] in web/mobile clients")
 
     print("Continuous speech static audit\n")
