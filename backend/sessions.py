@@ -303,5 +303,11 @@ class SessionRegistry:
             for key in expired_shared_keys:
                 del self.shared_sessions[key]
 
+    def reset_all(self) -> None:
+        """Clear all in-memory session state (test isolation)."""
+        with self._lock:
+            self.sessions.clear()
+            self.shared_sessions.clear()
+
 
 session_registry = SessionRegistry()

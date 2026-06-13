@@ -37,9 +37,9 @@ def client(app_module):
 
 @pytest.fixture(autouse=True)
 def _cleanup_session_registry(app_module):
-    app_module.session_registry.cleanup()
+    app_module.session_registry.reset_all()
     yield
-    app_module.session_registry.cleanup()
+    app_module.session_registry.reset_all()
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +155,8 @@ class TestWsAudio:
     def test_stream_limit_blocks_extra_device(self, app_module, client, monkeypatch):
         monkeypatch.setitem(app_module.runtime_state, "ready", True)
         monkeypatch.setattr("backend.streaming.get_max_active_streams_per_user", lambda: 2)
-        app_module.session_registry.cleanup()
+        monkeypatch.setattr("backend.config.get_max_active_streams_per_user", lambda: 2)
+        app_module.session_registry.reset_all()
 
         with ExitStack() as stack:
             def start_device(device_id: str):
@@ -187,7 +188,7 @@ class TestWsAudio:
             third = start_device("device-3")
             assert third["type"] == "error"
             assert "Too many active streams" in third["message"]
-        app_module.session_registry.cleanup()
+        app_module.session_registry.reset_all()
 
 
 # ---------------------------------------------------------------------------

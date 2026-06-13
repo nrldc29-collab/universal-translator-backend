@@ -41,7 +41,7 @@ def _verify_websocket_barrier_routing() -> list[str]:
     failures: list[str] = []
     api = importlib.import_module("backend.api")
     api.runtime_state["ready"] = True
-    api.session_registry.cleanup()
+    api.session_registry.reset_all()
 
     original_translate = api.pipeline.translate_text
 
@@ -123,7 +123,7 @@ def _verify_websocket_barrier_routing() -> list[str]:
         config.get_stt_provider = original_provider
         api.get_stt_provider = original_api_provider
         api_health.voice_warmup_blocks_ready = original_warmup
-        api.session_registry.cleanup()
+        api.session_registry.reset_all()
 
     return failures
 
