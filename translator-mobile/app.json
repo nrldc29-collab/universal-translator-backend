@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Anai",
-    "slug": "anai-interpreter-v2",
+    "slug": "anai-translator",
     "version": "1.0.2",
     "description": "Real-time conversation bridge — tap Start talking for cloud mode, or connect your own bridge. EN↔HT and 14 languages.",
     "runtimeVersion": "2026-06-11-fix152",
