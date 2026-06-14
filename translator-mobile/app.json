@@ -39,7 +39,7 @@
     },
     "android": {
       "package": "com.anaitranslator.app",
-      "versionCode": 4,
+      "versionCode": 5,
       "adaptiveIcon": {
         "backgroundColor": "#03050a",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
