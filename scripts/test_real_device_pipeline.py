@@ -71,7 +71,7 @@ class RealDevicePipelineTester:
         waveform = waveform * envelope
         
         # Convert to 16-bit PCM
-        waveform = np.clip(waveframe, -1, 1)
+        waveform = np.clip(waveform, -1, 1)
         waveform_int16 = (waveform * 32767).astype(np.int16)
         
         return waveform_int16.tobytes()
@@ -307,18 +307,18 @@ class RealDevicePipelineTester:
         # Benchmark evaluation
         print("BENCHMARK EVALUATION:")
         if report['success_rate'] >= 90:
-            print("  ✓ Pipeline Validation: 10/10 (90%+ success rate)")
+            print("  [OK] Pipeline Validation: 10/10 (90%+ success rate)")
         elif report['success_rate'] >= 80:
             print("  ○ Pipeline Validation: 8/10 (80-90% success rate)")
         else:
-            print("  ✗ Pipeline Validation: <8/10 (<80% success rate)")
+            print("  [FAIL] Pipeline Validation: <8/10 (<80% success rate)")
         
         if avg_e2e < 1000:
-            print("  ✓ Latency: 10/10 (<1s average)")
+            print("  [OK] Latency: 10/10 (<1s average)")
         elif avg_e2e < 2000:
             print("  ○ Latency: 8/10 (1-2s average)")
         else:
-            print("  ✗ Latency: <8/10 (>2s average)")
+            print("  [FAIL] Latency: <8/10 (>2s average)")
         
         return report
 
