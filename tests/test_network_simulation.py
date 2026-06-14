@@ -473,7 +473,7 @@ class TestAudioStreamingResilience:
     @pytest.mark.asyncio
     async def test_audio_stream_recovery_after_drop(self):
         """Test audio stream recovery after packet drop."""
-        simulator = NetworkSimulator()
+        simulator = NetworkSimulator(seed=1)
         simulator.apply_packet_loss(0.20)  # 20% loss
         
         chunks_received = 0

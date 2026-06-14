@@ -83,6 +83,10 @@ class TestWsTranslate:
             )
 
         monkeypatch.setattr(app_module.pipeline, "translate_text", stub_translate_text)
+        monkeypatch.setattr(
+            "backend.streaming._apply_ailang_enhancements",
+            lambda translated_text, *args, **kwargs: translated_text,
+        )
 
     def test_ready_frame_on_connect(self, client):
         with client.websocket_connect("/ws/translate") as ws:

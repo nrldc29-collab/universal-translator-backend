@@ -129,8 +129,15 @@ def _verify_websocket_barrier_routing() -> list[str]:
 
 
 def main() -> int:
+    import os
+
+    # Offline routing checks must not call local Ollama/LLM (minutes per phrase on dev machines).
+    os.environ["OLLAMA_ENABLED"] = "0"
+    os.environ["USE_LLM_AGENTS"] = "0"
+    os.environ.pop("OPENAI_API_KEY", None)
+
     failures: list[str] = []
-    pipeline = AnaiTranslatorPipeline()
+    pipeline = AnaiTranslatorPipeline(enable_ailang=False)
 
     print("=== BARRIER ROUTING (en -> each target) ===")
     for tgt, phrase in TARGET_SAMPLES.items():
