@@ -10,6 +10,8 @@ module.exports = defineConfig([
       'dist-verify/**',
       '.expo/**',
       '.expo-export-test*/**',
+      '.expo-export-check/**',
+      '.expo-export-android/**',
       '.expo-verify-*/**',
       'logs/**',
     ],
@@ -39,6 +41,12 @@ module.exports = defineConfig([
     languageOptions: {
       globals: {
         Buffer: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        console: 'readonly',
+        module: 'readonly',
+        process: 'readonly',
+        require: 'readonly',
       },
     },
   },

@@ -41,8 +41,8 @@ if ! grep -q "MAX_ACTIVE_STREAMS_PER_USER=5" "$ROOT/Dockerfile"; then
   failures+=("Dockerfile missing MAX_ACTIVE_STREAMS_PER_USER=5 for conversation mode")
 fi
 
-if ! grep -q "QUOTA_REQUESTS_PER_HOUR=500" "$ROOT/Dockerfile"; then
-  failures+=("Dockerfile missing QUOTA_REQUESTS_PER_HOUR=500")
+if ! grep -qE 'QUOTA_REQUESTS_PER_HOUR=[1-9][0-9]*' "$ROOT/Dockerfile"; then
+  failures+=("Dockerfile missing QUOTA_REQUESTS_PER_HOUR (hourly quota env)")
 fi
 
 if ! grep -q "\.up\.railway\.app" "$ROOT/frontend/src/utils.js"; then
@@ -57,12 +57,12 @@ if ! grep -q "embedded_dist" "$ROOT/backend/api.py"; then
   failures+=("backend/api.py must expose embedded_dist mode for bundled production")
 fi
 
-if ! grep -q "QUOTA_REQUESTS_PER_HOUR = \"500\"" "$ROOT/Get-Railway-Variables.ps1"; then
-  failures+=("Get-Railway-Variables.ps1 missing QUOTA_REQUESTS_PER_HOUR=500")
+if ! grep -qE 'QUOTA_REQUESTS_PER_HOUR\s*=\s*"[0-9]+"' "$ROOT/Get-Railway-Variables.ps1"; then
+  failures+=("Get-Railway-Variables.ps1 missing QUOTA_REQUESTS_PER_HOUR")
 fi
 
-if ! grep -qE 'QUOTA_REQUESTS_PER_HOUR.*500' "$ROOT/Get-Railway-Variables.sh"; then
-  failures+=("Get-Railway-Variables.sh missing QUOTA_REQUESTS_PER_HOUR=500")
+if ! grep -qE 'QUOTA_REQUESTS_PER_HOUR.*[0-9]+' "$ROOT/Get-Railway-Variables.sh"; then
+  failures+=("Get-Railway-Variables.sh missing QUOTA_REQUESTS_PER_HOUR")
 fi
 
 if [[ -f "$ROOT/.env.example" ]]; then

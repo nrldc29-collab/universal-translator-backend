@@ -13,6 +13,7 @@ import {
   resolveServerUrl,
   tunnelFetchHeaders,
 } from "../utils/discoverServer";
+import { mobileError } from "../utils/mobileLogger";
 
 let activeLoginAbort = null;
 let activeDiscoveryGeneration = 0;
@@ -122,6 +123,24 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
         } catch {
           setBackendReachable(null);
         }
+      } else if (cloudUrl && validateUrl(cloudUrl)) {
+        try {
+          const cloudHost = new URL(cloudUrl).hostname;
+          if (isOffLanBackendHost(cloudHost)) {
+            const cloudReady = await checkBackendHealthUrl(cloudUrl, {
+              timeoutMs: 10000,
+              requireReady: true,
+            });
+            if (discoveryStale()) return;
+            if (cloudReady) {
+              envUrl = cloudUrl;
+              setBackendReachable(true);
+              skipHeavyDiscovery = true;
+            }
+          }
+        } catch {
+          if (discoveryStale()) return;
+        }
       }
       if (!skipHeavyDiscovery && envUrl && validateUrl(envUrl)) {
         try {
@@ -163,7 +182,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
           }
         } catch (error) {
           if (discoveryStale()) return;
-          console.error("Server discovery failed:", error);
+          mobileError("Server discovery failed:", error, { expected: true });
           setBackendReachable(await checkBackendHealthUrl(envUrl));
         }
       }
@@ -221,7 +240,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
         setSetupComplete(false);
       }
     } catch (error) {
-      console.error("Error loading stored data:", error);
+      mobileError("Error loading stored data:", error, { expected: true });
     } finally {
       if (!discoveryStale()) {
         setDiscoveryComplete(true);
@@ -256,7 +275,7 @@ export function useMobileAuth({ defaultUrl = "", onStatus }) {
       setRecentUrls(updated);
       await SecureStore.setItemAsync(RECENT_URLS_KEY, JSON.stringify(updated));
     } catch (error) {
-      console.error("Error saving recent URL:", error);
+      mobileError("Error saving recent URL:", error, { expected: true });
     }
   }
 

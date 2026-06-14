@@ -11,11 +11,10 @@
     "userInterfaceStyle": "dark",
     "extra": {
       "apiUrl": "",
-      "cloudApiUrl": "",
+      "cloudApiUrl": "https://universal-translator-backend-production.up.railway.app",
       "cloudDemoUser": "demo",
-      "cloudDemoPass": "demo",
       "consumerOpenAndGo": true,
-      "privacyPolicyUrl": "https://your-service.up.railway.app/privacy.html",
+      "privacyPolicyUrl": "https://universal-translator-backend-production.up.railway.app/privacy.html",
       "eas": {
         "projectId": "38c5acaf-9582-4533-8822-a31f06a6e21d"
       }

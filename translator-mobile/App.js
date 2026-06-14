@@ -83,6 +83,8 @@ import {
   getConsumerCloudApiUrl,
   getConsumerDemoCredentials,
   hasConsumerCloudBackend,
+  hasConsumerDemoCredentials,
+  isConsumerCloudUrl,
 } from "./constants/consumerCloud";
 import { FOCUSED_PRODUCT_UI, showAdvancedInterpreterChrome } from "./constants/productMode";
 import {
@@ -133,6 +135,7 @@ import {
   resolveServerUrl,
   waitForBackendReady,
 } from "./utils/discoverServer";
+import { mobileDebug, mobileError } from "./utils/mobileLogger";
 import {
   isLocalLanServerUrl,
   isNetworkTypeKnown,
@@ -150,7 +153,6 @@ const API_URL =
   Constants.expoConfig?.extra?.apiUrl ||
   deriveApiUrlFromExpo() ||
   "";
-const DEBUG_LOGS = Boolean(__DEV__ || process.env.EXPO_PUBLIC_DEBUG_LOGS === "1");
 const BRIDGE_CONN = connectionLifecycleMessages();
 const WS_STATUS = wsBridgeStatuses();
 const BRIDGE_ACTION = bridgeActionMessages();
@@ -192,7 +194,11 @@ async function tapHaptic(style = "light") {
 }
 
 function debugLog(...args) {
-  if (DEBUG_LOGS) console.debug(...args);
+  mobileDebug(...args);
+}
+
+function logExpectedError(label, error) {
+  mobileError(label, error, { expected: true });
 }
 
 function getStatusColor(statusType) {
@@ -911,7 +917,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
     try {
       DevSettings.reload();
     } catch (error) {
-      console.error("DevSettings.reload failed:", error);
+      logExpectedError("DevSettings.reload failed:", error);
       showToast("Shake phone and tap Reload in Expo Go", "error");
     }
   }
@@ -929,7 +935,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
           await SecureStore.setItemAsync(MOBILE_BUILD_KEY, MOBILE_BUILD_ID);
         }
       } catch (error) {
-        console.error("Build version check failed:", error);
+        logExpectedError("Build version check failed:", error);
       }
     })();
     return () => {
@@ -1104,7 +1110,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
       try {
         await loadStoredData();
       } catch (error) {
-        console.error("Error loading stored auth data:", error);
+        logExpectedError("Error loading stored auth data:", error);
       } finally {
         if (!cancelled) {
           setAuthLoaded(true);
@@ -1537,12 +1543,26 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
       autoLoginAttemptedRef.current = false;
     }
     if (!tokenRef.current) {
-      if (!autoLoginAttemptedRef.current && !loginInFlightRef.current) {
+      if (loginInFlightRef.current) {
+        releaseConnect();
+        return;
+      }
+      if (!autoLoginAttemptedRef.current) {
+        const demoCreds = getConsumerDemoCredentials();
+        if (isConsumerCloudUrl(activeUrl) && !hasConsumerDemoCredentials()) {
+          autoLoginAttemptedRef.current = true;
+          setStatus("Cloud sign-in required — run Start-ExpoCloud.ps1 or set EXPO_PUBLIC_CLOUD_DEMO_PASS");
+          setStatusType("error");
+          releaseConnect();
+          return;
+        }
         autoLoginAttemptedRef.current = true;
         loginInFlightRef.current = true;
         login({
           skipHealthCheck: true,
           apiUrl: activeUrl,
+          username: demoCreds.username,
+          password: demoCreds.password,
           onSuccess: (accessToken) => {
             if (!mountedRef.current || userPausedConnectionRef.current || appStateRef.current !== "active") return;
             connect(accessToken);
@@ -1551,6 +1571,11 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
           .then((ok) => {
             if (!mountedRef.current || userPausedConnectionRef.current || appStateRef.current !== "active") return;
             if (!ok) {
+              if (isConsumerCloudUrl(activeUrl)) {
+                setStatus("Cloud login failed — rerun Start-ExpoCloud.ps1 to sync Railway password");
+                setStatusType("error");
+                return;
+              }
               autoLoginAttemptedRef.current = false;
               noteLanConnectFailure();
               scheduleServerConnection(3000);
@@ -1558,8 +1583,13 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
           })
           .catch((error) => {
             if (!mountedRef.current || userPausedConnectionRef.current || appStateRef.current !== "active") return;
+            logExpectedError("Auto-login failed:", error);
+            if (isConsumerCloudUrl(activeUrl)) {
+              setStatus("Cloud login failed — check Wi‑Fi and Railway credentials");
+              setStatusType("error");
+              return;
+            }
             autoLoginAttemptedRef.current = false;
-            console.error("Auto-login failed:", error);
             noteLanConnectFailure();
             scheduleServerConnection(3000);
           })
@@ -1571,10 +1601,12 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
             }
             releaseConnect();
           });
-      } else {
+      } else if (!isConsumerCloudUrl(activeUrl)) {
         autoLoginAttemptedRef.current = false;
         releaseConnect();
         scheduleServerConnection(2500);
+      } else {
+        releaseConnect();
       }
       return;
     }
@@ -1951,7 +1983,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
         || activeHandlerGenerationRef.current !== connectGenerationRef.current
       ) return;
       if (resumeAfterTtsRef.current && isInterpreterActiveRef.current) {
-        resumeMicAfterPlayback().catch((error) => console.error("Error resuming mic after playback:", error));
+        resumeMicAfterPlayback().catch((error) => logExpectedError("Error resuming mic after playback:", error));
       }
     });
     // Playback resumption is ref-driven; resetting this handler on every render would interrupt continuous mode.
@@ -2191,7 +2223,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
       if (resolved.apiUrl === url) return false;
       return await switchToRemoteApiUrl(resolved.apiUrl);
     } catch (error) {
-      console.error("Tunnel refresh failed:", error);
+      logExpectedError("Tunnel refresh failed:", error);
       return false;
     } finally {
       tunnelRefreshInFlightRef.current = false;
@@ -2252,7 +2284,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
       if (resolved.apiUrl === url || isLocalLanServerUrl(resolved.apiUrl)) return false;
       return await switchToRemoteApiUrl(resolved.apiUrl);
     } catch (error) {
-      console.error("Remote server fallback failed:", error);
+      logExpectedError("Remote server fallback failed:", error);
       return false;
     } finally {
       tunnelFallbackInFlightRef.current = false;
@@ -2420,7 +2452,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
       const state = await Network.getNetworkStateAsync();
       applyNetworkState(state);
     } catch (error) {
-      console.error("Network check error:", error);
+      logExpectedError("Network check error:", error);
     }
   }
 
@@ -2716,12 +2748,12 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
         startingStreamRef.current = false;
         if (nextStatus.includes("max retries")) {
           setIsStreaming(false);
-          stopAudioStream().catch((error) => console.error("Error stopping mic after disconnect:", error));
+          stopAudioStream().catch((error) => logExpectedError("Error stopping mic after disconnect:", error));
         } else if (isInterpreterActiveRef.current) {
           pauseAudioUpload();
         } else {
           setIsStreaming(false);
-          stopAudioStream().catch((error) => console.error("Error stopping mic after disconnect:", error));
+          stopAudioStream().catch((error) => logExpectedError("Error stopping mic after disconnect:", error));
         }
       }
       if (nextStatus.includes("max retries")) {
@@ -2995,7 +3027,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
     setStatus(option.label || "Please repeat");
     setStatusType("warning");
     if (!isStreamingRef.current && !isPlayingTtsRef.current && isInterpreterActiveRef.current) {
-      startListening().catch((error) => console.error("Error restarting listening after repair:", error));
+      startListening().catch((error) => logExpectedError("Error restarting listening after repair:", error));
     }
   }
 
@@ -3109,7 +3141,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
     }
 
     if (command.type === "replay") {
-      replayLastTranslation().catch((error) => console.error("Replay command failed:", error));
+      replayLastTranslation().catch((error) => logExpectedError("Replay command failed:", error));
       const replayMsgs = replayStatusMessages();
       setVoiceIntent(hasReplayAudio ? replayMsgs.replayingShort : replayMsgs.noReplay);
       setStatus(hasReplayAudio ? replayMsgs.replaying : replayMsgs.noReplay);
@@ -3526,7 +3558,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
           break;
         }
         setStatus(message.chunks ? BRIDGE_ACTION.speakingVoiceChunk(1, message.chunks) : BRIDGE_CONN.voiceDelivered);
-        pauseMicForPlayback().catch((error) => console.error("Error pausing mic for TTS:", error));
+        pauseMicForPlayback().catch((error) => logExpectedError("Error pausing mic for TTS:", error));
         break;
       case "tts_audio_chunk":
         syncRouteFromMessage(message);
@@ -3567,7 +3599,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
           resumeAfterTtsRef.current = true;
           setStatus(BRIDGE_CONN.listeningSpeak);
           if (!isPlayingTtsRef.current) {
-            resumeMicAfterPlayback().catch((error) => console.error("Error resuming mic after TTS:", error));
+            resumeMicAfterPlayback().catch((error) => logExpectedError("Error resuming mic after TTS:", error));
           }
         } else {
           resumeAfterTtsRef.current = false;
@@ -3790,7 +3822,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
         try {
           await restoreRecordingAudioMode();
         } catch (error) {
-          console.error("Error restoring recording audio mode:", error);
+          logExpectedError("Error restoring recording audio mode:", error);
         }
         resumeAudioUpload();
         setStatus(BRIDGE_CONN.listeningSpeak);
@@ -3830,7 +3862,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
     try {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (error) {
-      console.error("Haptic feedback error:", error);
+      logExpectedError("Haptic feedback error:", error);
     }
     setStatus(BRIDGE_ACTION.openingMic);
     const streamConnectGen = connectGenerationRef.current;
@@ -3963,7 +3995,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
       try {
         await restoreRecordingAudioMode();
       } catch (error) {
-        console.error("Error restoring recording audio mode:", error);
+        logExpectedError("Error restoring recording audio mode:", error);
       }
       resumeAudioUpload();
       setStatus(BRIDGE_CONN.listeningSpeak);
@@ -4186,6 +4218,11 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
       setStatusType("error");
       return;
     }
+    if (!hasConsumerDemoCredentials()) {
+      setStatus("Cloud sign-in required — run Start-ExpoCloud.ps1 or set EXPO_PUBLIC_CLOUD_DEMO_PASS");
+      setStatusType("error");
+      return;
+    }
     const demo = getConsumerDemoCredentials();
     pinActiveWsUrl(cloud);
     await persistWsUrl(cloud);
@@ -4198,7 +4235,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
       setStatusType("error");
       return;
     }
-    await login({
+    const loggedIn = await login({
       apiUrl: cloud,
       username: demo.username,
       password: demo.password,
@@ -4209,12 +4246,18 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
         setDismissedError("");
         userPausedConnectionRef.current = false;
         autoConnectStartedRef.current = true;
+        autoLoginAttemptedRef.current = true;
         if (appStateRef.current === "active" && networkStateRef.current?.isConnected !== false) {
           connect(accessToken);
         }
         await showFirstRunHelpIfNeeded();
       },
     });
+    if (!mountedRef.current) return;
+    if (!loggedIn) {
+      setStatus("Cloud login failed — rerun Start-ExpoCloud.ps1 to sync Railway password");
+      setStatusType("error");
+    }
   }
 
   async function finishSetup() {
@@ -4564,7 +4607,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
                 setStatus(BRIDGE_ACTION.listeningSpeakAgain);
                 setStatusType("success");
                 if (isInterpreterActiveRef.current && !isStreamingRef.current && !isPlayingTtsRef.current) {
-                  startListening().catch((error) => console.error("Error resuming after clarify:", error));
+                  startListening().catch((error) => logExpectedError("Error resuming after clarify:", error));
                 }
               }}
               onDismiss={() => {

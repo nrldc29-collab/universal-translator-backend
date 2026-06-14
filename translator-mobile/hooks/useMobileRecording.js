@@ -4,6 +4,7 @@ import { playTtsAudio } from "../services/audio-stream";
 import * as SecureStore from "expo-secure-store";
 
 import { AUDIO_QUALITIES, AUDIO_QUALITY_KEY, buildRecordingOptions } from "../constants/audioQuality";
+import { mobileError } from "../utils/mobileLogger";
 
 const MAX_RETRIES = 3;
 const UPLOAD_TIMEOUT = 30000;
@@ -75,7 +76,7 @@ export function useMobileRecording({
         setInternalAudioQuality(storedQuality);
       }
     } catch (error) {
-      console.error("Error loading audio quality setting:", error);
+      mobileError("Error loading audio quality setting:", error, { expected: true });
     }
   }
 
@@ -83,7 +84,7 @@ export function useMobileRecording({
     try {
       await SecureStore.setItemAsync(AUDIO_QUALITY_KEY, quality);
     } catch (error) {
-      console.error("Error saving audio quality setting:", error);
+      mobileError("Error saving audio quality setting:", error, { expected: true });
     }
   }
 
@@ -242,7 +243,7 @@ export function useMobileRecording({
           setUploadProgress(0);
           return;
         }
-        console.error(`Upload attempt ${attempt + 1} failed:`, error);
+        mobileError(`Upload attempt ${attempt + 1} failed:`, error, { expected: true });
         
         if (attempt === MAX_RETRIES - 1) {
           setStatus(`Upload failed after ${MAX_RETRIES} attempts: ${error.message}`);

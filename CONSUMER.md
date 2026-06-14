@@ -60,6 +60,24 @@ Anai is a **conversation bridge** with trust UX — not a replacement for Google
 ## Verify consumer readiness
 
 ```powershell
-.\Score-Product.ps1 -Full
-python scripts/product_readiness.py --consumer
+.\Deploy-ConsumerCloud.ps1 -CloudUrl "https://YOUR-SERVICE.up.railway.app"
+.\Score-Product.ps1 -Full -BackendUrl "https://YOUR-SERVICE.up.railway.app"
+python scripts/product_readiness.py --live https://YOUR-SERVICE.up.railway.app
+```
+
+### EAS production build
+
+1. Set the demo password as an EAS secret (matches Railway `USERS`):
+
+```powershell
+cd translator-mobile
+eas secret:create --scope project --name EXPO_PUBLIC_CLOUD_DEMO_PASS --value "your-railway-password" --type string
+```
+
+2. Build and submit:
+
+```powershell
+.\Build-ConsumerApp.ps1 -CloudUrl "https://YOUR-SERVICE.up.railway.app" -DemoPass "your-railway-password"
+eas submit --platform ios    # uses App Store Connect login interactively
+eas submit --platform android
 ```

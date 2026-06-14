@@ -27,8 +27,13 @@ jest.mock("../utils/discoverServer", () => ({
   checkBackendHealthUrl: jest.fn(async () => true),
   deriveApiUrlFromExpo: jest.fn(() => "http://192.168.12.243:8000"),
   fetchMobileConnectInfo: jest.fn(async () => ({ hostname: "192.168.12.243", apiUrl: "http://192.168.12.243:8000" })),
-  probeMetroBuildId: jest.fn(async () => "2026-06-11-fix134"),
-  resolveServerUrl: jest.fn(async () => ({ url: "http://192.168.12.243:8000", healthy: true })),
+  probeMetroBuildId: jest.fn(async () => ({ buildId: "2026-06-11-fix134", metroBase: "" })),
+  resolveServerUrl: jest.fn(async () => ({
+    apiUrl: "http://192.168.12.243:8000",
+    healthy: true,
+    mobileInfo: null,
+    hostname: "192.168.12.243",
+  })),
   waitForBackendReady: jest.fn(async () => true),
 }));
 

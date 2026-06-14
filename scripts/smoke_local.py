@@ -114,14 +114,36 @@ def check_model_files() -> list[str]:
     return errors
 
 
+def _read_dotenv(path: Path) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if not path.is_file():
+        return env
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        env[key.strip()] = value.strip()
+    return env
+
+
 def _smoke_login_credentials(base_url: str) -> tuple[str, str]:
     user = os.getenv("SMOKE_USERNAME", "").strip()
     password = os.getenv("SMOKE_PASSWORD", "").strip()
     if user and password:
         return user, password
+
+    remote = not _is_local_smoke_url(base_url)
+    if remote:
+        mobile_env = _read_dotenv(ROOT / "translator-mobile" / ".env")
+        env_user = mobile_env.get("EXPO_PUBLIC_CLOUD_DEMO_USER", "").strip()
+        env_pass = mobile_env.get("EXPO_PUBLIC_CLOUD_DEMO_PASS", "").strip()
+        if env_user and env_pass:
+            return env_user, env_pass
+
     use_users_env = (
         os.getenv("SMOKE_REMOTE", "").strip().lower() in {"1", "true", "yes", "on"}
-        or not _is_local_smoke_url(base_url)
+        or remote
     )
     if use_users_env:
         raw_users = os.getenv("USERS", "demo:demo").strip()

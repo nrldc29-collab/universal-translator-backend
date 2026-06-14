@@ -22,10 +22,16 @@ export function rememberDiscoveredConsumerCloudUrl(url) {
   }
 }
 
+function isHttpsCloudUrl(url) {
+  return normalizeUrl(url).startsWith("https://");
+}
+
 /** Hosted bridge URL baked into production builds (Railway, etc.). */
 export function getConsumerCloudApiUrl() {
   const fromEnv = normalizeUrl(process.env.EXPO_PUBLIC_CLOUD_API_URL || "");
   if (isHttpUrl(fromEnv)) return fromEnv;
+  const fromApiEnv = normalizeUrl(process.env.EXPO_PUBLIC_API_URL || "");
+  if (isHttpsCloudUrl(fromApiEnv)) return fromApiEnv;
   const fromExtra = normalizeUrl(Constants.expoConfig?.extra?.cloudApiUrl || "");
   if (isHttpUrl(fromExtra)) return fromExtra;
   if (isHttpUrl(discoveredConsumerCloudUrl)) return discoveredConsumerCloudUrl;
@@ -42,15 +48,29 @@ export function isConsumerCloudUrl(url) {
   return normalizeUrl(url) === cloud;
 }
 
+function readCredential(candidates, fallback = "") {
+  for (const raw of candidates) {
+    if (raw === undefined || raw === null) continue;
+    const trimmed = String(raw).trim();
+    if (trimmed) return trimmed;
+  }
+  return fallback;
+}
+
 export function getConsumerDemoCredentials() {
   return {
-    username:
-      process.env.EXPO_PUBLIC_CLOUD_DEMO_USER
-      || Constants.expoConfig?.extra?.cloudDemoUser
-      || "demo",
-    password:
-      process.env.EXPO_PUBLIC_CLOUD_DEMO_PASS
-      || Constants.expoConfig?.extra?.cloudDemoPass
-      || "demo",
+    username: readCredential(
+      [process.env.EXPO_PUBLIC_CLOUD_DEMO_USER, Constants.expoConfig?.extra?.cloudDemoUser],
+      "demo",
+    ),
+    password: readCredential(
+      [process.env.EXPO_PUBLIC_CLOUD_DEMO_PASS, Constants.expoConfig?.extra?.cloudDemoPass],
+      "",
+    ),
   };
+}
+
+export function hasConsumerDemoCredentials() {
+  const { password } = getConsumerDemoCredentials();
+  return Boolean(String(password || "").trim());
 }

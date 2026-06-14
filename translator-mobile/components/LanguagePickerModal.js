@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Modal, View, Text, TextInput, Pressable, ScrollView, SafeAreaView } from "react-native";
+import { Modal, View, Text, TextInput, Pressable, ScrollView } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import pickerStyles from "./LanguagePickerModal.styles";

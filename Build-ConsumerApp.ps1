@@ -10,7 +10,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$CloudUrl,
     [string]$DemoUser = "demo",
-    [string]$DemoPass = "demo",
+    [string]$DemoPass = "",
     [ValidateSet("all", "ios", "android")]
     [string]$Platform = "all"
 )
@@ -18,10 +18,25 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = $PSScriptRoot
 $Mobile = Join-Path $Root "translator-mobile"
+$EnvPath = Join-Path $Mobile ".env"
 
 $CloudUrl = $CloudUrl.Trim().TrimEnd("/")
 if ($CloudUrl -notmatch '^https?://') {
     throw "CloudUrl must start with http:// or https://"
+}
+
+if (-not $DemoPass -and (Test-Path -LiteralPath $EnvPath)) {
+    Get-Content -LiteralPath $EnvPath | ForEach-Object {
+        if ($_ -match '^EXPO_PUBLIC_CLOUD_DEMO_PASS=(.+)$') {
+            $DemoPass = $Matches[1].Trim()
+        }
+        if ($_ -match '^EXPO_PUBLIC_CLOUD_DEMO_USER=(.+)$') {
+            $DemoUser = $Matches[1].Trim()
+        }
+    }
+}
+if (-not $DemoPass) {
+    throw "DemoPass required (or set EXPO_PUBLIC_CLOUD_DEMO_PASS in translator-mobile/.env). Also run: eas secret:create --scope project --name EXPO_PUBLIC_CLOUD_DEMO_PASS"
 }
 
 Write-Host "`n=== Anai consumer app build ===" -ForegroundColor Cyan

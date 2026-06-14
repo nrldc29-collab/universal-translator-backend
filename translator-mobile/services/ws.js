@@ -1,5 +1,6 @@
 import Constants from 'expo-constants';
 import { wsBridgeStatuses } from '../constants/productVoice';
+import { mobileDebug, mobileError } from '../utils/mobileLogger';
 
 const WS_STATUS = wsBridgeStatuses();
 
@@ -13,10 +14,9 @@ const TUNNEL_CONNECTION_TIMEOUT = 35000;
 const PING_TIMEOUT = 5000; // 5 seconds for pong response
 export const MAX_RECONNECT_ATTEMPTS = 10;
 const MAX_SEND_QUEUE = 32;
-const DEBUG_LOGS = Boolean(__DEV__ || process.env.EXPO_PUBLIC_DEBUG_LOGS === '1');
 
 const debugLog = (...args) => {
-  if (DEBUG_LOGS) console.debug(...args);
+  mobileDebug(...args);
 };
 
 export function wsSocketHasAuthToken(url) {
@@ -124,7 +124,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
         }
         sendQueue.shift();
       } catch (error) {
-        console.error('Queued send error:', error);
+        mobileError("Queued send error:", error, { expected: true });
         break;
       }
     }
@@ -175,7 +175,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
             }
           }, PING_TIMEOUT);
         } catch (e) {
-          console.error('Heartbeat send error:', e);
+          mobileError("Heartbeat send error:", e, { expected: true });
         }
       }
     }, heartbeatIntervalMs());
@@ -281,13 +281,13 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
         }
         currentOnMessage(data);
       } catch (error) {
-        console.error("Message parse error:", error);
+        mobileError("Message parse error:", error, { expected: true });
       }
     };
     
     newWs.onerror = (error) => {
       if (ws !== newWs) return;
-      console.error("WebSocket error:", error);
+      mobileError("WebSocket error:", error, { expected: true });
       // Don't set status here - onclose will be called next
     };
     
@@ -368,7 +368,7 @@ export const connectWS = (url, onMessage, setStatus, options = {}) => {
           }
           return true;
         } catch (e) {
-          console.error('Send error:', e);
+          mobileError("Send error:", e, { expected: true });
           enqueueSend(data);
           return false;
         }

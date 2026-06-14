@@ -54,8 +54,8 @@ If you skip steps 4–5 on first deploy, Railway auto-bootstrap derives `JWT_SEC
 | `SERVE_FRONTEND_DIST` | `1` (set in Dockerfile) |
 | `STT_PROVIDER` | `local` |
 | `MAX_ACTIVE_STREAMS_PER_USER` | `5` (conversation uses 3 WebSockets) |
-| `REQUESTS_PER_MINUTE` | `120` |
-| `QUOTA_REQUESTS_PER_HOUR` | `500` |
+| `REQUESTS_PER_MINUTE` | `180` |
+| `QUOTA_REQUESTS_PER_HOUR` | `1000` |
 
 `Get-Railway-Variables.ps1` emits the full recommended set.
 
@@ -64,9 +64,10 @@ If you skip steps 4–5 on first deploy, Railway auto-bootstrap derives `JWT_SEC
 From your machine (replace URL; only needs `pip install websockets` when testing a remote deploy):
 
 ```bash
+# Sync translator-mobile/.env from Railway USERS first (see Start-ExpoCloud.ps1), then:
 python scripts/smoke_local.py https://YOUR-SERVICE.up.railway.app
 # or
-make smoke-production URL=https://YOUR-SERVICE.up.railway.app
+make smoke-production URL=https://YOUR-SERVICE.up.railway.app USERS=demo:your-password
 ```
 
 Or locally before push:

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system/legacy";
 import * as SecureStore from "expo-secure-store";
+import { mobileDebug, mobileError, mobileWarn } from "../utils/mobileLogger";
 
 const VOLUME_KEY = "tts_volume";
 const SPEED_KEY = "tts_speed";
@@ -60,7 +61,7 @@ export function useMobileTts(appStateRef) {
       if (storedVolume !== null) setVolume(parseFloat(storedVolume));
       if (storedSpeed !== null) setPlaybackSpeed(parseFloat(storedSpeed));
     } catch (error) {
-      console.error("Error loading TTS settings:", error);
+      mobileError("Error loading TTS settings:", error, { expected: true });
     }
   }
 
@@ -69,7 +70,7 @@ export function useMobileTts(appStateRef) {
       await SecureStore.setItemAsync(VOLUME_KEY, nextVolume.toString());
       await SecureStore.setItemAsync(SPEED_KEY, nextSpeed.toString());
     } catch (error) {
-      console.error("Error saving TTS settings:", error);
+      mobileError("Error saving TTS settings:", error, { expected: true });
     }
   }
 
@@ -125,11 +126,11 @@ export function useMobileTts(appStateRef) {
       }
     } catch (error) {
       if (playbackEpochRef.current !== epoch) return;
-      console.error("TTS playback error:", error);
+      mobileError("TTS playback error:", error, { expected: true });
       retryCountRef.current++;
       
       if (retryCountRef.current < MAX_RETRIES) {
-        console.log(`Retrying TTS playback (${retryCountRef.current}/${MAX_RETRIES})`);
+        mobileDebug(`Retrying TTS playback (${retryCountRef.current}/${MAX_RETRIES})`);
         ttsQueueRef.current.unshift(message);
         setTtsQueue([...ttsQueueRef.current]);
         if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
@@ -140,7 +141,7 @@ export function useMobileTts(appStateRef) {
         }, 500);
         return;
       } else {
-        console.error("Max retries reached for TTS playback");
+        mobileError("Max retries reached for TTS playback", null, { expected: true });
         retryCountRef.current = 0;
       }
     }
@@ -224,7 +225,7 @@ export function useMobileTts(appStateRef) {
           });
           await sound.playAsync();
         } catch (error) {
-          console.error("Error starting TTS audio:", error);
+          mobileError("Error starting TTS audio:", error, { expected: true });
           if (playbackSound) {
             try {
               await playbackSound.unloadAsync();
@@ -236,7 +237,7 @@ export function useMobileTts(appStateRef) {
         }
       });
     } catch (error) {
-      console.error("Error playing TTS audio:", error);
+      mobileError("Error playing TTS audio:", error, { expected: true });
       await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
       return false;
     }
@@ -276,7 +277,7 @@ export function useMobileTts(appStateRef) {
     rememberReplayChunk(message);
     
     if (ttsQueueRef.current.length >= MAX_QUEUE_SIZE) {
-      console.warn("TTS queue full, dropping oldest chunk");
+      mobileWarn("TTS queue full, dropping oldest chunk");
       ttsQueueRef.current.shift();
     }
     

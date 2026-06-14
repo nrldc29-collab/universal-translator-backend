@@ -1,5 +1,6 @@
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
+import "./configure-runtime";
 import { registerRootComponent } from "expo";
 import { Component, useEffect, useState } from "react";
 import { DevSettings, ScrollView, Text, View, Pressable, ActivityIndicator, Linking } from "react-native";
@@ -11,9 +12,12 @@ import { StatusBar } from "expo-status-bar";
 
 import App from "./App";
 import { MOBILE_BUILD_ID, isRemoteBuildNewer } from "./constants/mobileBuild";
+import { hasConsumerCloudBackend, getConsumerCloudApiUrl } from "./constants/consumerCloud";
 import { shouldAutoReloadForMetro } from "./utils/metroBuildReload";
+import { mobileError } from "./utils/mobileLogger";
 import { cancelDiscovery, cancelLogin } from "./hooks/useMobileAuth";
 import {
+  checkBackendHealthUrl,
   deriveApiUrlFromExpo,
   deriveExpoUrlFromInfo,
   deriveLanHostFromExpo,
@@ -40,8 +44,8 @@ class RootErrorBoundary extends Component {
   }
 
   componentDidCatch(error) {
-    console.error("Anai startup error:", error);
     const message = String(error?.message || error || "");
+    mobileError("Anai startup error:", error, { expected: true });
     if (!this.state.retried && RECOVERABLE_STARTUP.test(message)) {
       this.setState({ autoReloading: true, retried: true });
       setTimeout(() => {
@@ -173,9 +177,27 @@ function BootstrapGate({ children }) {
     };
     (async () => {
       try {
+        const cloudUrl = getConsumerCloudApiUrl();
+        if (cloudUrl && isOffLanBackendUrl(cloudUrl)) {
+          try {
+            await bootstrapWithTimeout(
+              checkBackendHealthUrl(cloudUrl, { timeoutMs: 15000, requireReady: true }),
+              18000,
+            );
+          } catch {
+            // Cloud may be warming; App.js waits on /ready while connecting.
+          }
+          if (cancelled) return;
+          setGate({ phase: "ready", apiUrl: cloudUrl });
+          return;
+        }
+
         const bootstrapFallback = deriveApiUrlFromExpo();
         let resolved = await bootstrapWithTimeout(
-          resolveServerUrl(bootstrapFallback, { shouldAbort: () => cancelled }),
+          resolveServerUrl(bootstrapFallback, {
+            preferCloud: hasConsumerCloudBackend(),
+            shouldAbort: () => cancelled,
+          }),
         );
         if (!resolved.healthy) {
           const tunnelResolved = await bootstrapWithTimeout(
@@ -202,10 +224,14 @@ function BootstrapGate({ children }) {
         const info = resolved.mobileInfo || (resolved.apiUrl
           ? await fetchMobileConnectInfo(resolved.apiUrl, { shouldAbort: () => cancelled })
           : null);
+        const isCloudSession = Boolean(resolved.apiUrl && isOffLanBackendUrl(resolved.apiUrl));
         const preferredExpoPort = info?.expo_port || "";
-        const metroProbe = await probeMetroBuildId(resolved.hostname, preferredExpoPort, {
-          shouldAbort: () => cancelled,
-        });
+        let metroProbe = null;
+        if (!isCloudSession) {
+          metroProbe = await probeMetroBuildId(resolved.hostname, preferredExpoPort, {
+            shouldAbort: () => cancelled,
+          });
+        }
         if (cancelled) return;
         if (!resolved.healthy && resolved.apiUrl && !cancelled) {
           const warmedLate = await waitForBackendReady(resolved.apiUrl, {
@@ -218,7 +244,7 @@ function BootstrapGate({ children }) {
             resolved = { ...resolved, healthy: true };
           }
         }
-        if (await shouldAutoReloadForMetro(metroProbe?.buildId, MOBILE_BUILD_ID)) {
+        if (!isCloudSession && await shouldAutoReloadForMetro(metroProbe?.buildId, MOBILE_BUILD_ID)) {
           try {
             DevSettings.reload();
             return;
@@ -227,7 +253,7 @@ function BootstrapGate({ children }) {
           }
         }
 
-        const needsMetro = !Boolean(resolved.apiUrl && isOffLanBackendUrl(resolved.apiUrl));
+        const needsMetro = !isCloudSession;
         if (needsMetro && metroProbe?.metroBase) {
           if (!cancelled) {
             setGate({ phase: "bundling", buildId: MOBILE_BUILD_ID, bundleBytes: 0 });
@@ -280,10 +306,10 @@ function BootstrapGate({ children }) {
           info?.web_app_https_url
           || (info?.backend_https_url ? `${String(info.backend_https_url).replace(/\/+$/, "")}/mobile/app` : ""),
         ).trim();
-        const buildMismatch = isRemoteBuildNewer(metroProbe?.buildId, MOBILE_BUILD_ID);
+        const buildMismatch = !isCloudSession && isRemoteBuildNewer(metroProbe?.buildId, MOBILE_BUILD_ID);
         const canReachMetro = Boolean(metroProbe?.buildId);
         const metroUnreachable = needsMetro && !canReachMetro;
-        const needsSetup = buildMismatch || metroUnreachable;
+        const needsSetup = !isCloudSession && (buildMismatch || metroUnreachable);
         const setupReason = buildMismatch
           ? "build"
           : metroUnreachable
@@ -315,10 +341,14 @@ function BootstrapGate({ children }) {
           }
         }
       } catch (error) {
-        console.error("Bootstrap gate failed:", error);
+        mobileError("Bootstrap gate failed:", error, { expected: true });
         if (!cancelled) {
           const tunnelApi = String(process.env.EXPO_PUBLIC_TUNNEL_API_URL || "").trim().replace(/\/+$/, "");
-          const fallbackApi = deriveApiUrlFromExpo() || tunnelApi;
+          const fallbackApi = getConsumerCloudApiUrl() || deriveApiUrlFromExpo() || tunnelApi;
+          if (fallbackApi && isOffLanBackendUrl(fallbackApi)) {
+            setGate({ phase: "ready", apiUrl: fallbackApi.replace(/\/+$/, "") });
+            return;
+          }
           const expoUrl = deriveExpoUrlFromInfo(deriveLanHostFromExpo(), null);
           const lanHost = deriveLanHostFromExpo();
           const httpsFallback = lanHost ? `https://${lanHost}:8443/mobile/app` : "";

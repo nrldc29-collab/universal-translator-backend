@@ -582,7 +582,16 @@ if ($tunnelBackendUrl) {
     $envLines.Remove("EXPO_PUBLIC_TUNNEL_API_URL")
 }
 if (-not $envLines.ContainsKey("EXPO_PUBLIC_DEBUG_LOGS")) {
-    $envLines["EXPO_PUBLIC_DEBUG_LOGS"] = "1"
+    $envLines["EXPO_PUBLIC_DEBUG_LOGS"] = "0"
+}
+# Keep cloud credentials when present (Railway open-and-go mode).
+foreach ($cloudKey in @("EXPO_PUBLIC_CLOUD_API_URL", "EXPO_PUBLIC_CLOUD_DEMO_USER", "EXPO_PUBLIC_CLOUD_DEMO_PASS")) {
+    if (-not $envLines.ContainsKey($cloudKey) -and $cloudKey -eq "EXPO_PUBLIC_CLOUD_API_URL") {
+        $railwayUrl = "https://universal-translator-backend-production.up.railway.app"
+        if ($envLines["EXPO_PUBLIC_API_URL"] -match "\.railway\.app") {
+            $envLines[$cloudKey] = $envLines["EXPO_PUBLIC_API_URL"]
+        }
+    }
 }
 ($envLines.GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Key)=$($_.Value)" }) |
     Set-Content -LiteralPath $EnvPath -Encoding ascii
@@ -651,7 +660,8 @@ if (-not $expoStatusOk -or $RestartExpo) {
     } else {
         Remove-Item Env:EXPO_PUBLIC_TUNNEL_API_URL -ErrorAction SilentlyContinue
     }
-    $env:EXPO_PUBLIC_DEBUG_LOGS = "1"
+    $debugLogs = if ($envLines.ContainsKey("EXPO_PUBLIC_DEBUG_LOGS")) { $envLines["EXPO_PUBLIC_DEBUG_LOGS"] } else { "0" }
+    $env:EXPO_PUBLIC_DEBUG_LOGS = $debugLogs
     $env:EXPO_NO_TELEMETRY = "1"
     Remove-Item Env:CI -ErrorAction SilentlyContinue
     $env:REACT_NATIVE_PACKAGER_HOSTNAME = $LanIp
@@ -682,7 +692,7 @@ if (-not $expoStatusOk -or $RestartExpo) {
         "set REACT_NATIVE_PACKAGER_HOSTNAME=$LanIp",
         "set ANAI_MOBILE_BUILD_ID=$MobileBuildId",
         "set EXPO_PUBLIC_API_URL=$effectiveBackendUrl",
-        "set EXPO_PUBLIC_DEBUG_LOGS=1"
+        "set EXPO_PUBLIC_DEBUG_LOGS=$debugLogs"
     )
     if ($tunnelBackendUrl) {
         $expoEnvLines += "set EXPO_PUBLIC_TUNNEL_API_URL=$tunnelBackendUrl"

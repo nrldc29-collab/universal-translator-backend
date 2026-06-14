@@ -29,8 +29,22 @@ try {
         Write-Host "Consumer open-and-go: enabled" -ForegroundColor Green
     }
 } catch {
-    throw "Cannot reach $CloudUrl/health — deploy Railway first (see RAILWAY-DEPLOY.md)"
+    throw "Cannot reach $CloudUrl/health - deploy Railway first (see RAILWAY-DEPLOY.md)"
 }
+
+$mobileEnv = Join-Path $Root "translator-mobile\.env"
+$demoUser = "demo"
+$demoPass = ""
+if (Test-Path -LiteralPath $mobileEnv) {
+    Get-Content -LiteralPath $mobileEnv | ForEach-Object {
+        if ($_ -match '^EXPO_PUBLIC_CLOUD_DEMO_USER=(.+)$') { $demoUser = $Matches[1].Trim() }
+        if ($_ -match '^EXPO_PUBLIC_CLOUD_DEMO_PASS=(.+)$') { $demoPass = $Matches[1].Trim() }
+    }
+}
+if ($demoUser -and $demoPass) {
+    $env:USERS = "${demoUser}:${demoPass}"
+}
+$env:SMOKE_REMOTE = "1"
 
 python (Join-Path $Root "scripts\smoke_local.py") $CloudUrl
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -38,7 +52,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 python (Join-Path $Root "scripts\product_readiness.py") --live $CloudUrl
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host "`n=== Cloud verified — build consumer app ===" -ForegroundColor Green
+Write-Host "`n=== Cloud verified - build consumer app ===" -ForegroundColor Green
 Write-Host "  .\Build-ConsumerApp.ps1 -CloudUrl `"$CloudUrl`""
 Write-Host "`nWeb/PWA (same URL, no app): open $CloudUrl in mobile browser and Add to Home Screen."
 Write-Host "Privacy: $CloudUrl/privacy.html`n"

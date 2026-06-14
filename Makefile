@@ -67,7 +67,7 @@ release-ready: validate verify-all preflight-deploy
 
 smoke-production:
 	@test -n "$(URL)" || (echo "Usage: make smoke-production URL=https://YOUR-SERVICE.up.railway.app [USERS=user:pass]" >&2; exit 1)
-	USERS="$(USERS)" $(PYTHON) scripts/smoke_local.py "$(URL)"
+	SMOKE_REMOTE=1 USERS="$(USERS)" $(PYTHON) scripts/smoke_local.py "$(URL)"
 
 railway-public-setup:
 	@test -n "$$RAILWAY_TOKEN" || (echo "Usage: RAILWAY_TOKEN=... make railway-public-setup [USERS=user:pass]" >&2; exit 1)

@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 import { Audio } from "expo-av";
 import * as FileSystem from "expo-file-system/legacy";
 import { buildRecordingOptions } from "../constants/audioQuality";
+import { mobileError } from "../utils/mobileLogger";
 
 let activeRecording = null;
 let onChunkCallback = null;
@@ -135,7 +136,7 @@ const captureUtteranceLoop = async (generation) => {
         durationMs: captured.durationMs,
       });
     } catch (error) {
-      console.error("Utterance upload error:", error);
+      mobileError("Utterance upload error:", error, { expected: true });
     }
   }
 };
@@ -274,7 +275,7 @@ const captureSingleUtterance = async (generation) => {
       durationMs: Date.now() - startedAt,
     };
   } catch (error) {
-    console.error("Utterance capture error:", error);
+    mobileError("Utterance capture error:", error, { expected: true });
     await unloadRecording(recording);
     const message = String(error?.message || error || "Microphone error");
     if (/permission|denied|record|audio/i.test(message)) {
@@ -329,7 +330,7 @@ export const stopAudioStream = async () => {
       }
       return uri;
     } catch (error) {
-      console.error("Stop stream error:", error);
+      mobileError("Stop stream error:", error, { expected: true });
       activeRecording = null;
       return null;
     }
@@ -367,7 +368,7 @@ export const playTtsAudio = async (audioBase64, mimeType = "audio/wav") => {
 
     return true;
   } catch (error) {
-    console.error("TTS playback error:", error);
+    mobileError("TTS playback error:", error, { expected: true });
     return false;
   }
 };

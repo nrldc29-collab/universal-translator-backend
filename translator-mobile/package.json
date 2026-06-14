@@ -4,13 +4,17 @@
   "version": "1.0.0",
   "scripts": {
     "start": "expo start --lan --max-workers 1",
+    "start:clean": "node scripts/clear-metro-cache.js && expo start --lan --max-workers 1 --clear",
+    "start:cloud": "node scripts/preflight-expo.js && node scripts/clear-metro-cache.js && expo start --lan --max-workers 1 --clear",
     "build": "expo export --platform web",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "eslint App.js AppStyles.js index.js components constants hooks scripts services utils __tests__",
-    "test": "jest --passWithNoTests"
+    "lint": "eslint App.js AppStyles.js configure-runtime.js index.js components constants hooks scripts services utils __tests__",
+    "test": "jest --passWithNoTests",
+    "verify:expo": "npm test && npm run lint && npx expo-doctor && node scripts/clear-metro-cache.js && npx expo export --platform ios --output-dir .expo-export-check && npx expo export --platform android --output-dir .expo-export-android",
+    "preflight:expo": "node scripts/preflight-expo.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
