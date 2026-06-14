@@ -21,7 +21,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     USE_GPU=0 \
     WHISPER_DEVICE=cpu \
     WHISPER_COMPUTE_TYPE=int8 \
-    WHISPER_MODEL_SIZE=tiny \
+    WHISPER_MODEL_SIZE=small \
     WHISPER_CPU_THREADS=4 \
     WHISPER_NUM_WORKERS=1 \
     PRELOAD_MODELS=0 \
@@ -48,8 +48,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NEAR_ZERO_LATENCY_MODE=1 \
     STREAM_BUFFER_MAX_MB=12 \
     MAX_ACTIVE_STREAMS_PER_USER=5 \
-    QUOTA_REQUESTS_PER_HOUR=500 \
-    REQUESTS_PER_MINUTE=120 \
+    QUOTA_REQUESTS_PER_HOUR=1000 \
+    REQUESTS_PER_MINUTE=180 \
+    FREE_DAILY_AUDIO_MINUTES=60 \
     PREDICTIVE_CACHE_SIZE=1000 \
     PREDICTIVE_CACHE_TTL=3600 \
     CIP_DEFAULT_MODE=ut_first \
@@ -80,11 +81,11 @@ COPY translation translation/
 COPY tts tts/
 COPY ailang ailang/
 COPY ailang_integration ailang_integration/
-COPY scripts/docker_fetch_piper.sh scripts/docker_fetch_piper.sh
+COPY scripts/setup_models.py scripts/setup_models.py
 COPY models/tts models/tts
 ARG HF_TOKEN=""
 ENV HF_TOKEN=${HF_TOKEN}
-RUN bash scripts/docker_fetch_piper.sh models/tts
+RUN python scripts/setup_models.py --piper-only
 COPY --from=frontend-build /frontend/dist frontend/dist
 
 EXPOSE 8000

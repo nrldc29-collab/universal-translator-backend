@@ -211,7 +211,47 @@ def warm_tts_ht() -> None:
     print("warm  tts (ht)")
 
 
+def download_piper_voices_only(*, include_optional: bool = True) -> int:
+    """Download bundled Piper voice files only (used by Docker builds)."""
+    _configure_hf_hub()
+    TTS_DIR.mkdir(parents=True, exist_ok=True)
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    for filename, url in REQUIRED_PIPER_VOICE_URLS.items():
+        try:
+            download_file(url, TTS_DIR / filename)
+        except (OSError, urllib.error.URLError) as exc:
+            errors.append(f"failed to download {filename}: {exc}")
+        time.sleep(0.5)
+
+    if include_optional:
+        for filename, url in OPTIONAL_PIPER_VOICE_URLS.items():
+            try:
+                download_file(url, TTS_DIR / filename)
+            except (OSError, urllib.error.URLError) as exc:
+                warnings.append(f"optional voice not downloaded ({filename}): {exc}")
+            time.sleep(0.5)
+
+    if warnings:
+        print("\nPiper download warnings:")
+        for warn in warnings:
+            print(f"  - {warn}")
+
+    if errors:
+        print("\nPiper download incomplete:")
+        for err in errors:
+            print(f"  - {err}")
+        return 1
+
+    print("\nPiper voice download complete.")
+    return 0
+
+
 def main() -> int:
+    if "--piper-only" in sys.argv:
+        return download_piper_voices_only()
+
     _configure_hf_hub()
     errors: list[str] = []
     warnings: list[str] = []
