@@ -4655,7 +4655,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
           <MicPanelFrame isListening={isStreaming} isArmed={isInterpreterActive} isBridgingOut={isPlayingTts}>
             <MicOrbButton
               onPress={needsServerLink ? retryConnection : toggleInterpreter}
-              disabled={isConnecting && !isInterpreterActive && !needsServerLink}
+              disabled={false}
               isListening={isStreaming}
               isSpeaking={isPlayingTts}
               isArmed={isInterpreterActive}
@@ -4942,7 +4942,7 @@ export default function App({ bootstrapApiUrl = "" } = {}) {
         isListening={isStreaming}
         isArmed={isInterpreterActive}
         audioLevel={liveAudioLevel}
-        disabled={isConnecting && !isInterpreterActive}
+        disabled={false}
         accessibilityLabel={
           isStreaming
             ? "Scroll to microphone"

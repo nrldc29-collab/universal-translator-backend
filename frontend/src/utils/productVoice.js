@@ -13,6 +13,12 @@ export function targetPlaceholder() {
   return 'Bridged words appear here';
 }
 
+export function micInteractionAllowed({ connectionStatus, micPermission }) {
+  if (connectionStatus === 'offline') return false;
+  if (micPermission === 'denied' || micPermission === 'unavailable') return false;
+  return true;
+}
+
 export function micLabels({ connectionStatus, micReady, playing, perceivedListening, processing }) {
   if (connectionStatus === 'checking') return 'Linking bridge…';
   if (connectionStatus === 'warming') return 'Opening bridge…';
@@ -30,6 +36,9 @@ export function micHints({ perceivedListening, processing, playing, connectionSt
   if (processing) return 'Understanding your words…';
   if (playing) return 'Meaning bridges out loud — mic resumes automatically';
   if (connectionStatus === 'online') return 'One tap opens the conversation bridge';
+  if (connectionStatus === 'warming' || connectionStatus === 'checking') {
+    return 'Bridge is opening — tap mic to start';
+  }
   return 'Link to the bridge server to begin';
 }
 

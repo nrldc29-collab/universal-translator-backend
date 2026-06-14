@@ -70,7 +70,7 @@ import useReliabilityMonitor from './hooks/useReliabilityMonitor';
 import { getFriendlyStatusLabel, getFriendlyStatusDetail } from './utils/friendlyStatus';
 import { humanCertStep, shouldBlockTtsForCert, certificationBanner, asCertBool } from './utils/humanCertification';
 import { showAdvancedInterpreterChrome } from './constants/productMode';
-import { targetPlaceholder, micLabels, micHints, pipelineStages, pipelineStageLabels, dockQuickActionLabels, clarifyMessages, bridgeErrors, formatBrainModeLabel, bridgeStatusMessages, normalizePipelineStage } from './utils/productVoice';
+import { targetPlaceholder, micLabels, micHints, micInteractionAllowed, pipelineStages, pipelineStageLabels, dockQuickActionLabels, clarifyMessages, bridgeErrors, formatBrainModeLabel, bridgeStatusMessages, normalizePipelineStage } from './utils/productVoice';
 import {
   // host detection + URL helpers
   isLocalHost,
@@ -2102,6 +2102,16 @@ function App() {
       return;
     }
     synchronousAudioUnlock();
+    if (!micInteractionAllowed({ connectionStatus, micPermission })) {
+      if (micPermission === 'denied' || micPermission === 'unavailable') {
+        setStatus('Microphone permission blocked');
+        setPipelineStage('Mic unavailable');
+      } else {
+        setStatus(BRIDGE_STATUS.linkFirst);
+        setPipelineStage('Offline');
+      }
+      return;
+    }
     if (autoConversation.active) {
       haptic(8);
       if (socketRef.current) stopContinuousStream();
@@ -2181,17 +2191,18 @@ function App() {
   }
 
   async function handleMicPointerDown(event) {
-    debugLog('MIC BUTTON CLICKED');
+    debugLog('MIC BUTTON POINTER DOWN');
     synchronousAudioUnlock();
     if (isIosOrSafariRecorder() && !EXPERIMENTAL_IOS_STREAMING) return;
     if (socketRef.current || processing || playing) return;
+    if (!micInteractionAllowed({ connectionStatus, micPermission })) return;
     haptic(8);
-    setInstantListening(true);
     event.currentTarget.setPointerCapture?.(event.pointerId);
     holdToTalkTimerRef.current = window.setTimeout(() => {
       holdToTalkActiveRef.current = true;
       holdToTalkReleasePendingRef.current = false;
       ignoreNextMicClickRef.current = true;
+      setInstantListening(true);
       toggleStreaming({ interpreter: true, speakerMode: 'auto', holdToTalk: true });
     }, shouldPreferHoldToTalk() ? 0 : HOLD_TO_TALK_DELAY_MS);
   }
@@ -4158,7 +4169,7 @@ function App() {
   const interpreterSessionLive = interpreterMode && speakerMode === 'auto' && interpreterSocketOpen;
   const perceivedListening = liveSpeechSession || interpreterSessionLive || streaming || instantListening;
   const displayMicLevel = micLevel;
-  const micReady = connectionStatus === 'online' && micPermission !== 'denied' && micPermission !== 'unavailable';
+  const micReady = micInteractionAllowed({ connectionStatus, micPermission });
   const micState = playing ? 'speaking' : perceivedListening ? 'listening' : processing ? 'processing' : 'idle';
   const micLabel = micLabels({
     connectionStatus,
