@@ -39,7 +39,7 @@
     },
     "android": {
       "package": "com.anaitranslator.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#03050a",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -67,7 +67,8 @@
           "android": {
             "compileSdkVersion": 35,
             "targetSdkVersion": 35,
-            "buildToolsVersion": "35.0.0"
+            "buildToolsVersion": "35.0.0",
+            "usesCleartextTraffic": true
           }
         }
       ],
@@ -89,9 +90,7 @@
           "microphonePermission": "Anai needs microphone access to capture speech for real-time translation."
         }
       ],
-      "./plugins/withAndroidCleartext",
-      "expo-font",
-      "expo-build-properties"
+      "expo-font"
     ]
   }
 }
