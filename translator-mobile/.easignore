@@ -1,0 +1,8 @@
+.expo-export-check/
+.expo-export-android/
+.expo-export-test/
+.expo-export-test*/
+__tests__/
+*.md
+android/
+ios/
