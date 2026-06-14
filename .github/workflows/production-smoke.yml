@@ -24,6 +24,9 @@ jobs:
       - name: Install smoke client dependency
         run: python -m pip install websockets
       - name: Run EN↔HT production smoke
+        env:
+          SMOKE_REMOTE: "1"
+          USERS: ${{ secrets.PRODUCTION_USERS }}
         run: python scripts/smoke_local.py "${{ inputs.base_url }}"
 
   smoke-auto:
