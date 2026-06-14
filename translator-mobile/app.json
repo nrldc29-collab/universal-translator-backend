@@ -19,7 +19,7 @@
         "projectId": "38c5acaf-9582-4533-8822-a31f06a6e21d"
       }
     },
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.anaitranslator.app",
@@ -39,7 +39,7 @@
     },
     "android": {
       "package": "com.anaitranslator.app",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "backgroundColor": "#03050a",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
