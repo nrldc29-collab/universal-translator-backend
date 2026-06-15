@@ -10,7 +10,7 @@ torchaudio==2.6.0+cpu
 soundfile>=0.12.1
 sentencepiece>=0.2.0
 sacremoses>=0.1.1
-python-multipart>=0.0.9
+python-multipart>=0.0.32
 piper-tts>=1.2.0
 requests>=2.31.0
 # Required by backend/api.py (rate limiting) and backend streaming/STT client.
