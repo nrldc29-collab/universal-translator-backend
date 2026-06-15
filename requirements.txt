@@ -1,7 +1,7 @@
 # Pinned to the versions validated by the passing test suite (Python 3.12).
 # Regenerate after intentional upgrades: python -m pip freeze.
 fastapi==0.136.1
-uvicorn[standard]==0.34.0
+uvicorn[standard]==0.49.0
 pydantic==2.13.4
 faster-whisper==1.1.0
 transformers==5.9.0
