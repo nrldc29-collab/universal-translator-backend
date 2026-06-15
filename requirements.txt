@@ -14,7 +14,7 @@ edge-tts==7.2.8
 python-multipart==0.0.29
 torchaudio==2.11.0
 requests==2.34.2
-websockets==14.1
+websockets==16.0
 pytest==9.0.3
 pytest-asyncio==1.4.0
 sacrebleu==2.5.1

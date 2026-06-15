@@ -16,7 +16,7 @@ requests>=2.31.0
 # Required by backend/api.py (rate limiting) and backend streaming/STT client.
 # Must stay in sync with requirements.txt or the Railway image crashes on startup.
 slowapi>=0.1.9
-websockets>=14.1
+websockets>=16.0
 # Audio enhancement (noise reduction / AGC) in streaming hot path.
 scipy>=1.11.0
 # Free cloud TTS fallback when Piper voices are unavailable.
