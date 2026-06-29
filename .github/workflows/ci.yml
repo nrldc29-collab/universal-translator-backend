@@ -25,7 +25,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
       - name: Restore model cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/huggingface
@@ -85,7 +85,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
       - name: Restore model cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cache/huggingface
@@ -174,7 +174,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Cache Piper voices for Docker context
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             models/tts/en_US-lessac-medium.onnx
